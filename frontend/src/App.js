@@ -1,6 +1,45 @@
-import { Box, Container, Typography, useTheme } from "@mui/material";
-
+import { useState } from "react";
+import { Box, Button, Container, Paper, Typography, useTheme, Stack } from "@mui/material";
 import MetricsDashboard from "./components/MetricsDashboard";
+
+function UseStateExample() {
+  const [count, setCount] = useState(0);
+ 
+  return (
+    <Paper
+      elevation={3} sx={{maxWidth: 400, mx: "auto", mt: 4, p: 3, borderRadius: 3, }}>
+        
+      <Stack spacing={2} alignItems="center">
+        <Typography variant="h5" component="h2" fontWeight="bold">
+          React useState Example
+        </Typography>
+
+        <Typography color="text.secondary">
+          Current count
+        </Typography>
+
+        <Typography variant="h3" fontWeight="bold">
+          {count}
+        </Typography>
+
+        <Stack direction="row" spacing={1} flexWrap="wrap" justifyContent="center">
+          <Button variant="contained" onClick={() => setCount(prev => prev + 1)}>
+            +1
+          </Button>
+
+          <Button variant="contained" onClick={() => setCount(prev => prev + 5)}>
+            +5
+          </Button>
+
+          <Button variant="outlined" color="error" onClick={() => setCount(0)}>
+            Reset
+          </Button>
+        </Stack>
+      </Stack>
+    </Paper>
+  );
+}
+
 
 export default function App() {
   const theme = useTheme();
@@ -39,6 +78,9 @@ export default function App() {
           throughput across the Dynamics pipeline.
         </Typography>
         <MetricsDashboard />
+        <Box>
+          <UseStateExample />
+        </Box>
       </Container>
     </Box>
   );
