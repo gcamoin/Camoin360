@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { Box, Button, Container, Paper, Typography, useTheme, Stack } from "@mui/material";
 import MetricsDashboard from "./components/MetricsDashboard";
+import Login from "./login";
+import SignUp from "./signup";
+
 
 function UseStateExample() {
   const [count, setCount] = useState(0);
@@ -43,6 +46,26 @@ function UseStateExample() {
 
 export default function App() {
   const theme = useTheme();
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [authView, setAuthView] = useState("login");
+
+  if (!isLoggedIn){
+    if (authView === "signup") {
+      return (
+        <SignUp
+          onShowLogin={() => setAuthView("login")}
+          onSignup={() => setIsLoggedIn(true)}
+        />
+      );
+    }
+
+    return (
+      <Login
+        onLogin={() => setIsLoggedIn(true)}
+        onShowSignup={() => setAuthView("signup")}
+      />
+    );
+  }
 
   return (
     <Box
