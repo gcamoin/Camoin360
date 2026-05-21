@@ -11,14 +11,33 @@ import {
   useTheme,
 } from "@mui/material";
 
+import { getApiErrorMessage } from "./auth";
+
 export default function Login({ onLogin, onShowSignup }){
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [error, setError] = useState("");
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const theme = useTheme();
 
-    function handleSubmit(event){
+    async function handleSubmit(event){
         event.preventDefault();
-        onLogin();
+        const formData = new FormData(event.currentTarget);
+        const loginCredentials = {
+            email: String(formData.get("email") || "").trim(),
+            password: String(formData.get("password") || ""),
+        };
+
+        setError("");
+        setIsSubmitting(true);
+
+        try {
+            await onLogin(loginCredentials);
+        } catch (loginError) {
+            setError(getApiErrorMessage(loginError, "Unable to sign in."));
+        } finally {
+            setIsSubmitting(false);
+        }
     }
 
     return(
@@ -139,7 +158,9 @@ export default function Login({ onLogin, onShowSignup }){
                             <TextField
                                 autoComplete="email"
                                 fullWidth
+                                id="login-email"
                                 label="Email"
+                                name="email"
                                 onChange={(event) => setEmail(event.target.value)}
                                 required
                                 type="email"
@@ -148,13 +169,21 @@ export default function Login({ onLogin, onShowSignup }){
                             <TextField
                                 autoComplete="current-password"
                                 fullWidth
+                                id="login-password"
                                 label="Password"
+                                name="password"
                                 onChange={(event) => setPassword(event.target.value)}
                                 required
                                 type="password"
                                 value={password}
                             />
+                            {error ? (
+                                <Typography color="error" variant="body2">
+                                    {error}
+                                </Typography>
+                            ) : null}
                             <Button
+                                disabled={isSubmitting}
                                 fullWidth
                                 size="large"
                                 type="submit"
@@ -165,7 +194,7 @@ export default function Login({ onLogin, onShowSignup }){
                                     boxShadow: "0 12px 24px rgba(0, 51, 108, 0.20)",
                                 }}
                             >
-                                Sign in
+                                {isSubmitting ? "Signing in..." : "Sign in"}
                             </Button>
                             <Typography
                                 color="text.secondary"

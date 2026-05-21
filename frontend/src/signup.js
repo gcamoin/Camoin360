@@ -11,20 +11,41 @@ import {
   useTheme,
 } from "@mui/material";
 
+import { getApiErrorMessage } from "./auth";
+
 export default function SignUp({ onSignup, onShowLogin }) {
     const [name, setName] = useState("");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
+    const [error, setError] = useState("");
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const theme = useTheme();
     const passwordMismatch = confirmPassword.length > 0 && password !== confirmPassword;
 
-    function handleSubmit(event) {
+    async function handleSubmit(event) {
         event.preventDefault();
         if (passwordMismatch) {
             return;
         }
-        onSignup();
+
+        const formData = new FormData(event.currentTarget);
+        const signupCredentials = {
+            name: String(formData.get("name") || "").trim(),
+            email: String(formData.get("email") || "").trim(),
+            password: String(formData.get("password") || ""),
+        };
+
+        setError("");
+        setIsSubmitting(true);
+
+        try {
+            await onSignup(signupCredentials);
+        } catch (signupError) {
+            setError(getApiErrorMessage(signupError, "Unable to create account."));
+        } finally {
+            setIsSubmitting(false);
+        }
     }
 
     return (
@@ -141,7 +162,9 @@ export default function SignUp({ onSignup, onShowLogin }) {
                             <TextField
                                 autoComplete="name"
                                 fullWidth
+                                id="signup-name"
                                 label="Full name"
+                                name="name"
                                 onChange={(event) => setName(event.target.value)}
                                 required
                                 value={name}
@@ -149,7 +172,9 @@ export default function SignUp({ onSignup, onShowLogin }) {
                             <TextField
                                 autoComplete="email"
                                 fullWidth
+                                id="signup-email"
                                 label="Email"
+                                name="email"
                                 onChange={(event) => setEmail(event.target.value)}
                                 required
                                 type="email"
@@ -158,7 +183,11 @@ export default function SignUp({ onSignup, onShowLogin }) {
                             <TextField
                                 autoComplete="new-password"
                                 fullWidth
+                                helperText="Use at least 8 characters."
+                                id="signup-password"
                                 label="Password"
+                                inputProps={{ minLength: 8 }}
+                                name="password"
                                 onChange={(event) => setPassword(event.target.value)}
                                 required
                                 type="password"
@@ -169,15 +198,22 @@ export default function SignUp({ onSignup, onShowLogin }) {
                                 error={passwordMismatch}
                                 fullWidth
                                 helperText={passwordMismatch ? "Passwords do not match." : " "}
+                                id="signup-confirm-password"
                                 label="Confirm password"
+                                name="confirmPassword"
                                 onChange={(event) => setConfirmPassword(event.target.value)}
                                 required
                                 type="password"
                                 value={confirmPassword}
                             />
+                            {error ? (
+                                <Typography color="error" variant="body2">
+                                    {error}
+                                </Typography>
+                            ) : null}
                             <Button
                                 fullWidth
-                                disabled={passwordMismatch}
+                                disabled={passwordMismatch || isSubmitting}
                                 size="large"
                                 type="submit"
                                 variant="contained"
@@ -187,7 +223,7 @@ export default function SignUp({ onSignup, onShowLogin }) {
                                     boxShadow: "0 12px 24px rgba(0, 51, 108, 0.20)",
                                 }}
                             >
-                                Create account
+                                {isSubmitting ? "Creating account..." : "Create account"}
                             </Button>
                             <Typography
                                 color="text.secondary"

@@ -9,7 +9,9 @@ import {
   useTheme,
 } from "@mui/material";
 
-const API_URL = "http://localhost:8000/metrics";
+import { API_BASE_URL, getAuthHeaders } from "../auth";
+
+const API_URL = `${API_BASE_URL}/metrics`;
 
 const valueSx = {
   fontSize: { xs: "2rem", md: "2.4rem" },
@@ -65,7 +67,7 @@ export default function MetricsDashboard() {
 
     const fetchMetrics = async () => {
       try {
-        const response = await axios.get(API_URL);
+        const response = await axios.get(API_URL, { headers: getAuthHeaders() });
         if (isMounted) {
           setMetrics(response.data);
         }

@@ -1,5 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from .auth import require_user
 from ..services.metrics import load_metrics
 from ..services.usage import load_usage, WEEKLY_LIMIT
 
@@ -7,7 +8,7 @@ router = APIRouter()
 
 
 @router.get("/metrics")
-async def get_metrics():
+async def get_metrics(_user=Depends(require_user)):
     usage = load_usage()
     metrics = load_metrics()
 

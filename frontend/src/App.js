@@ -1,71 +1,13 @@
 import { useState } from "react";
-import { Box, Button, Container, Paper, Typography, useTheme, Stack } from "@mui/material";
+import { Box, Button, Container, Stack, Typography, useTheme } from "@mui/material";
+
+import { clearAuthToken, getAuthToken, loginUser, signupUser } from "./auth";
 import MetricsDashboard from "./components/MetricsDashboard";
 import Login from "./login";
 import SignUp from "./signup";
 
-
-function UseStateExample() {
-  const [count, setCount] = useState(0);
- 
-  return (
-    <Paper
-      elevation={3} sx={{maxWidth: 400, mx: "auto", mt: 4, p: 3, borderRadius: 3, }}>
-        
-      <Stack spacing={2} alignItems="center">
-        <Typography variant="h5" component="h2" fontWeight="bold">
-          React useState Example
-        </Typography>
-
-        <Typography color="text.secondary">
-          Current count
-        </Typography>
-
-        <Typography variant="h3" fontWeight="bold">
-          {count}
-        </Typography>
-
-        <Stack direction="row" spacing={1} flexWrap="wrap" justifyContent="center">
-          <Button variant="contained" onClick={() => setCount(prev => prev + 1)}>
-            +1
-          </Button>
-
-          <Button variant="contained" onClick={() => setCount(prev => prev + 5)}>
-            +5
-          </Button>
-
-          <Button variant="outlined" color="error" onClick={() => setCount(0)}>
-            Reset
-          </Button>
-        </Stack>
-      </Stack>
-    </Paper>
-  );
-}
-
-
-export default function App() {
+function Dashboard({ onLogout }) {
   const theme = useTheme();
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [authView, setAuthView] = useState("login");
-
-  if (!isLoggedIn){
-    if (authView === "signup") {
-      return (
-        <SignUp
-          onShowLogin={() => setAuthView("login")}
-          onSignup={() => setIsLoggedIn(true)}
-        />
-      );
-    }
-
-    return (
-      <Login
-        onLogin={() => setIsLoggedIn(true)}
-        onShowSignup={() => setAuthView("signup")}
-      />
-    );
-  }
 
   return (
     <Box
@@ -77,34 +19,81 @@ export default function App() {
       }}
     >
       <Container maxWidth="lg">
-        <Typography
-          component="h1"
-          sx={{
-            color: "primary.main",
-            fontSize: { xs: "2rem", md: "3rem" },
-            fontWeight: 800,
-            letterSpacing: "-0.04em",
-            mb: 1,
-          }}
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={2}
+          sx={{ alignItems: { xs: "flex-start", sm: "center" }, mb: 4 }}
         >
-          Sophie - Seamless AI Updates Dashboard
-        </Typography>
-        <Typography
-          sx={{
-            color: "text.secondary",
-            fontSize: { xs: "1rem", md: "1.1rem" },
-            mb: 4,
-            maxWidth: 720,
-          }}
-        >
-          Live view of weekly Seamless credit consumption and enrichment
-          throughput across the Dynamics pipeline.
-        </Typography>
+          <Box sx={{ flex: 1 }}>
+            <Typography
+              component="h1"
+              sx={{
+                color: "primary.main",
+                fontSize: { xs: "2rem", md: "3rem" },
+                fontWeight: 800,
+                mb: 1,
+              }}
+            >
+              Sophie - Seamless AI Updates Dashboard
+            </Typography>
+            <Typography
+              sx={{
+                color: "text.secondary",
+                fontSize: { xs: "1rem", md: "1.1rem" },
+                maxWidth: 720,
+              }}
+            >
+              Live view of weekly Seamless credit consumption and enrichment
+              throughput across the Dynamics pipeline.
+            </Typography>
+          </Box>
+          <Button onClick={onLogout} variant="outlined">
+            Sign out
+          </Button>
+        </Stack>
         <MetricsDashboard />
-        <Box>
-          <UseStateExample />
-        </Box>
       </Container>
     </Box>
+  );
+}
+
+export default function App() {
+  const [isLoggedIn, setIsLoggedIn] = useState(() => Boolean(getAuthToken()));
+  const [authView, setAuthView] = useState("login");
+
+  async function handleLogin(credentials) {
+    await loginUser(credentials);
+    setIsLoggedIn(true);
+  }
+
+  async function handleSignup(credentials) {
+    await signupUser(credentials);
+    setIsLoggedIn(true);
+  }
+
+  function handleLogout() {
+    clearAuthToken();
+    setIsLoggedIn(false);
+    setAuthView("login");
+  }
+
+  if (isLoggedIn) {
+    return <Dashboard onLogout={handleLogout} />;
+  }
+
+  if (authView === "signup") {
+    return (
+      <SignUp
+        onShowLogin={() => setAuthView("login")}
+        onSignup={handleSignup}
+      />
+    );
+  }
+
+  return (
+    <Login
+      onLogin={handleLogin}
+      onShowSignup={() => setAuthView("signup")}
+    />
   );
 }
