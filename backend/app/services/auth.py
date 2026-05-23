@@ -1,12 +1,13 @@
 import os
 import httpx
 from dotenv import load_dotenv
+from pathlib import Path
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
-TENANT_ID = os.getenv("TENANT_ID")
-CLIENT_ID = os.getenv("CLIENT_ID")
-CLIENT_SECRET = os.getenv("CLIENT_SECRET")
+TENANT_ID = os.getenv("TENANT_ID") or os.getenv("Tenant_ID")
+CLIENT_ID = os.getenv("CLIENT_ID") or os.getenv("Application_ID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET") or os.getenv("Client_Secret")
 SCOPE = os.getenv("DYNAMICS_SCOPE")
 
 

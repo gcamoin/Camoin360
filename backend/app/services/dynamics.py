@@ -2,12 +2,13 @@ import os
 import asyncio
 import httpx
 from dotenv import load_dotenv
+from pathlib import Path
 from .auth import get_access_token
 from .metrics import increment_processed, increment_updated
 from .seamless import enrich_with_seamless
 from .usage import can_make_request, increment_usage, load_usage, WEEKLY_LIMIT
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 API_URL = os.getenv("DYNAMICS_API_URL")
 
@@ -61,6 +62,34 @@ async def get_accounts_missing_data():
         f"{API_URL}/accounts?"
         "$select=name,accountid,emailaddress1,telephone1,address1_city,address1_stateorprovince&"
         "$filter=(emailaddress1 eq null or telephone1 eq null)&"
+        "$top=100"
+    )
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "OData-Version": "4.0"
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers=headers)
+
+    if response.status_code != 200:
+        raise Exception(f"Dynamics GET error: {response.text}")
+
+    return response.json().get("value", [])
+
+
+# -------------------------------
+# GET ACCOUNTS FOR DATA QUALITY
+# -------------------------------
+async def get_accounts_data_quality():
+    token = await get_access_token()
+
+    url = (
+        f"{API_URL}/accounts?"
+        "$select=name,address1_stateorprovince,new_sector,description,websiteurl&"
+        "$orderby=name asc&"
         "$top=100"
     )
 

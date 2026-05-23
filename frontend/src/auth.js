@@ -1,6 +1,11 @@
 import axios from "axios";
 
-export const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || "http://127.0.0.1:8000";
+function getDefaultApiBaseUrl() {
+  const hostname = window.location.hostname || "127.0.0.1";
+  return `http://${hostname}:8000`;
+}
+
+export const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || getDefaultApiBaseUrl();
 const AUTH_STORAGE_KEY = "sophie:authToken";
 
 export function getAuthToken() {

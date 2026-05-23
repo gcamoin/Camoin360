@@ -1,6 +1,9 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, status
+
+from .auth import require_user
 from ..services.dynamics import (
     get_accounts_missing_data,
+    get_accounts_data_quality,
     get_accounts_needing_enrichment,
     enrich_single_account_test,
     enrich_account,
@@ -14,6 +17,22 @@ router = APIRouter()
 @router.get("/accounts/missing-data")
 async def fetch_accounts():
     accounts = await get_accounts_missing_data()
+    return {
+        "count": len(accounts),
+        "data": accounts
+    }
+
+
+@router.get("/accounts/data-quality")
+async def fetch_accounts_data_quality(_user=Depends(require_user)):
+    try:
+        accounts = await get_accounts_data_quality()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to load Dynamics account data: {exc}",
+        ) from exc
+
     return {
         "count": len(accounts),
         "data": accounts
