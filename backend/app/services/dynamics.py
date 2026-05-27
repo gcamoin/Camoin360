@@ -29,9 +29,6 @@ STATE_ABBREVIATIONS = {
 }
 
 
-# -------------------------------
-# GET SINGLE ACCOUNT
-# -------------------------------
 async def get_account(account_id: str, select_fields: str = "name,websiteurl"):
     token = await get_access_token()
 
@@ -52,9 +49,6 @@ async def get_account(account_id: str, select_fields: str = "name,websiteurl"):
     return response.json()
 
 
-# -------------------------------
-# GET ACCOUNTS (LIMIT 100)
-# -------------------------------
 async def get_accounts_missing_data():
     token = await get_access_token()
 
@@ -80,17 +74,14 @@ async def get_accounts_missing_data():
     return response.json().get("value", [])
 
 
-# -------------------------------
-# GET ACCOUNTS FOR DATA QUALITY
-# -------------------------------
 async def get_accounts_data_quality():
     token = await get_access_token()
 
     url = (
         f"{API_URL}/accounts?"
-        "$select=name,address1_stateorprovince,new_sector,description,websiteurl&"
+        "$select=name,address1_stateorprovince,new_sector,description,websiteurl,telephone1,new_datasource,new_employees&"
         "$orderby=name asc&"
-        "$top=100"
+        "$top=2000"
     )
 
     headers = {
@@ -108,9 +99,6 @@ async def get_accounts_data_quality():
     return response.json().get("value", [])
 
 
-# -------------------------------
-# GET ACCOUNTS NEEDING ENRICHMENT
-# -------------------------------
 async def get_accounts_needing_enrichment():
     token = await get_access_token()
 
@@ -136,9 +124,6 @@ async def get_accounts_needing_enrichment():
     return response.json().get("value", [])
 
 
-# -------------------------------
-# UPDATE ACCOUNT (PATCH)
-# -------------------------------
 async def update_account(account_id: str, updates: dict):
     token = await get_access_token()
 
@@ -159,9 +144,6 @@ async def update_account(account_id: str, updates: dict):
     return True
 
 
-# -------------------------------
-# ENRICH ONE ACCOUNT (SAFE TEST)
-# -------------------------------
 async def enrich_single_account_test(account_id: str):
     account = await get_account(account_id, "name,emailaddress1,telephone1")
 
@@ -187,9 +169,6 @@ async def enrich_single_account_test(account_id: str):
     }
 
 
-# -------------------------------
-# REVERT ACCOUNT FIELD(S)
-# -------------------------------
 async def revert_account_fields(account_id: str, fields: dict = None):
     token = await get_access_token()
 
@@ -219,9 +198,6 @@ async def revert_account_fields(account_id: str, fields: dict = None):
     }
 
 
-# -------------------------------
-# ENRICH ACCOUNT (🔥 FIXED)
-# -------------------------------
 async def enrich_account(account_id: str):
     increment_processed()
 
@@ -323,9 +299,6 @@ async def enrich_account(account_id: str):
     }
 
 
-# -------------------------------
-# BULK ENRICHMENT
-# -------------------------------
 async def enrich_accounts():
     accounts = await get_accounts_needing_enrichment()
     results = []
@@ -341,7 +314,7 @@ async def enrich_accounts():
         result = await enrich_account(account_id)
         results.append(result)
 
-        # 🔥 Rate limit safety
+        # Rate limit safety
         await asyncio.sleep(1)
 
     updated_count = sum(1 for result in results if result["updated"])

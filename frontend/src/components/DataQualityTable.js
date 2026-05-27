@@ -3,9 +3,15 @@ import axios from "axios";
 import {
   Alert,
   Box,
+  Card,
+  CardContent,
   CircularProgress,
+  FormControl,
+  InputLabel,
   Link,
+  MenuItem,
   Paper,
+  Select,
   Table,
   TableBody,
   TableCell,
@@ -25,12 +31,19 @@ const columns = [
   { key: "new_sector", label: "Sector" },
   { key: "description", label: "Description" },
   { key: "websiteurl", label: "Website" },
+  { key: "telephone1", label: "Telephone" },
+  { key: "new_datasource", label: "Data Source" },
+  { key: "new_employees", label: "Employees" },
 ];
+
+function isMissingValue(value) {
+  return value === null || value === undefined || String(value).trim() === "";
+}
 
 function renderCell(account, columnKey) {
   const value = account[columnKey];
 
-  if (!value) {
+  if (isMissingValue(value)) {
     return (
       <Typography color="text.secondary" variant="body2">
         Missing
@@ -55,6 +68,26 @@ export default function DataQualityTable() {
   const [accounts, setAccounts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
+  const [selectedSector, setSelectedSector] = useState("all");
+
+  const sectors = Array.from(
+    new Set(
+      accounts
+        .map((account) => account.new_sector)
+        .filter((sector) => !isMissingValue(sector))
+        .map((sector) => String(sector).trim())
+    )
+  ).sort((a, b) => a.localeCompare(b));
+
+  const filteredAccounts =
+    selectedSector === "all"
+      ? accounts
+      : accounts.filter((account) => String(account.new_sector || "").trim() === selectedSector);
+
+  const missingCounts = columns.map((column) => ({
+    ...column,
+    missing: filteredAccounts.filter((account) => isMissingValue(account[column.key])).length,
+  }));
 
   useEffect(() => {
     let isMounted = true;
@@ -99,64 +132,121 @@ export default function DataQualityTable() {
   }
 
   return (
-    <Paper
-      elevation={0}
-      sx={{
-        border: "1px solid rgba(0, 51, 108, 0.10)",
-        borderRadius: 2,
-        overflow: "hidden",
-      }}
-    >
-      <TableContainer sx={{ maxHeight: "calc(100vh - 230px)" }}>
-        <Table stickyHeader>
-          <TableHead>
-            <TableRow>
-              {columns.map((column) => (
-                <TableCell
-                  key={column.key}
-                  sx={{
-                    backgroundColor: "primary.main",
-                    color: "common.white",
-                    fontWeight: 800,
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {column.label}
-                </TableCell>
-              ))}
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {accounts.length ? (
-              accounts.map((account, index) => (
-                <TableRow key={account.accountid || `${account.name}-${index}`} hover>
-                  {columns.map((column) => (
-                    <TableCell
-                      key={column.key}
-                      sx={{
-                        maxWidth: column.key === "description" ? 420 : 220,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        verticalAlign: "top",
-                      }}
-                    >
-                      {renderCell(account, column.key)}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            ) : (
+    <Box sx={{ display: "grid", gap: 3 }}>
+      <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+        <FormControl sx={{ minWidth: { xs: "100%", sm: 280 } }} size="small">
+          <InputLabel id="sector-filter-label">Sector</InputLabel>
+          <Select
+            label="Sector"
+            labelId="sector-filter-label"
+            onChange={(event) => setSelectedSector(event.target.value)}
+            value={selectedSector}
+          >
+            <MenuItem value="all">All sectors</MenuItem>
+            {sectors.map((sector) => (
+              <MenuItem key={sector} value={sector}>
+                {sector}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+      </Box>
+
+      <Box
+        sx={{
+          display: "grid",
+          gap: 2,
+          gridTemplateColumns: {
+            xs: "1fr",
+            sm: "repeat(2, minmax(0, 1fr))",
+            lg: "repeat(4, minmax(0, 1fr))",
+          },
+        }}
+      >
+        {missingCounts.map((column) => (
+          <Card
+            key={column.key}
+            elevation={0}
+            sx={{
+              border: "1px solid rgba(0, 51, 108, 0.10)",
+              borderRadius: 2,
+              boxShadow: "0 10px 30px rgba(0, 51, 108, 0.06)",
+            }}
+          >
+            <CardContent sx={{ p: 2.5, "&:last-child": { pb: 2.5 } }}>
+              <Typography color="text.secondary" variant="overline">
+                Missing {column.label}
+              </Typography>
+              <Typography color="primary.main" sx={{ fontSize: "2rem", fontWeight: 800, lineHeight: 1.1 }}>
+                {column.missing}
+              </Typography>
+              <Typography color="text.secondary" variant="body2">
+                of {filteredAccounts.length} accounts
+              </Typography>
+            </CardContent>
+          </Card>
+        ))}
+      </Box>
+
+      <Paper
+        elevation={0}
+        sx={{
+          border: "1px solid rgba(0, 51, 108, 0.10)",
+          borderRadius: 2,
+          overflow: "hidden",
+        }}
+      >
+        <TableContainer sx={{ maxHeight: "calc(100vh - 360px)" }}>
+          <Table stickyHeader>
+            <TableHead>
               <TableRow>
-                <TableCell colSpan={columns.length}>
-                  <Typography color="text.secondary" sx={{ py: 3, textAlign: "center" }}>
-                    No account records found.
-                  </Typography>
-                </TableCell>
+                {columns.map((column) => (
+                  <TableCell
+                    key={column.key}
+                    sx={{
+                      backgroundColor: "primary.main",
+                      color: "common.white",
+                      fontWeight: 800,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {column.label}
+                  </TableCell>
+                ))}
               </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
-    </Paper>
+            </TableHead>
+            <TableBody>
+              {filteredAccounts.length ? (
+                filteredAccounts.map((account, index) => (
+                  <TableRow key={account.accountid || `${account.name}-${index}`} hover>
+                    {columns.map((column) => (
+                      <TableCell
+                        key={column.key}
+                        sx={{
+                          maxWidth: column.key === "description" ? 420 : 220,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          verticalAlign: "top",
+                        }}
+                      >
+                        {renderCell(account, column.key)}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={columns.length}>
+                    <Typography color="text.secondary" sx={{ py: 3, textAlign: "center" }}>
+                      No account records found.
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
+    </Box>
   );
 }
