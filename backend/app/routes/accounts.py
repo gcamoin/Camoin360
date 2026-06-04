@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from .auth import require_user
 from ..services.dynamics import (
+    get_account_sector_counts,
     get_accounts_missing_data,
     get_accounts_data_quality,
     get_accounts_needing_enrichment,
@@ -37,6 +38,17 @@ async def fetch_accounts_data_quality(_user=Depends(require_user)):
         "count": len(accounts),
         "data": accounts
     }
+
+
+@router.get("/accounts/summary-analytics")
+async def fetch_account_summary_analytics(_user=Depends(require_user)):
+    try:
+        return await get_account_sector_counts()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to load Dynamics sector summary: {exc}",
+        ) from exc
 
 
 @router.get("/accounts/missing-website")
