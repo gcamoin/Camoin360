@@ -11,6 +11,7 @@ import {
 
 import DataQualityTable from "./components/DataQualityTable";
 import MetricsDashboard from "./components/MetricsDashboard";
+import SummaryAnalytics from "./components/SummaryAnalytics";
 
 const views = {
   seamless: {
@@ -25,10 +26,16 @@ const views = {
     description:
       "Review Dynamics account fields used for enrichment quality: name, state or province, sector, description, and website.",
   },
+  summaryAnalytics: {
+    label: "Summary Analytics",
+    title: "Summary Analytics",
+    description: "See how many Dynamics accounts belong to each sector with cards, a bar chart, and a count table.",
+  }
 };
 
 export default function LandingPage({ onLogout }) {
   const [activeView, setActiveView] = useState("seamless");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const theme = useTheme();
   const currentView = views[activeView];
 
@@ -43,8 +50,12 @@ export default function LandingPage({ onLogout }) {
       <Box
         sx={{
           display: "grid",
-          gridTemplateColumns: { xs: "1fr", md: "260px minmax(0, 1fr)" },
+          gridTemplateColumns: {
+            xs: "1fr",
+            md: sidebarCollapsed ? "88px minmax(0, 1fr)" : "260px minmax(0, 1fr)",
+          },
           minHeight: "100vh",
+          transition: "grid-template-columns 180ms ease",
         }}
       >
         <Box
@@ -53,6 +64,7 @@ export default function LandingPage({ onLogout }) {
             backgroundColor: "primary.main",
             color: "common.white",
             p: { xs: 2, md: 3 },
+            transition: "padding 180ms ease",
           }}
         >
           <Stack
@@ -62,20 +74,59 @@ export default function LandingPage({ onLogout }) {
               minHeight: { md: "calc(100vh - 48px)" },
             }}
           >
-            <Box>
-              <Typography
-                component="h1"
+            <Box
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 2,
+              }}
+            >
+              <Box
                 sx={{
-                  fontSize: "1.55rem",
-                  fontWeight: 800,
-                  lineHeight: 1.1,
+                  display: "flex",
+                  justifyContent: sidebarCollapsed ? "center" : "space-between",
+                  alignItems: "flex-start",
+                  gap: 2,
                 }}
               >
-                Sophie
-              </Typography>
-              <Typography sx={{ color: "rgba(255,255,255,0.72)", mt: 0.75 }} variant="body2">
-                Enrichment operations
-              </Typography>
+                {!sidebarCollapsed && (
+                  <Box>
+                    <Typography
+                      component="h1"
+                      sx={{
+                        fontSize: "1.55rem",
+                        fontWeight: 800,
+                        lineHeight: 1.1,
+                      }}
+                    >
+                      Sophie
+                    </Typography>
+                    <Typography sx={{ color: "rgba(255,255,255,0.72)", mt: 0.75 }} variant="body2">
+                      Enrichment operations
+                    </Typography>
+                  </Box>
+                )}
+
+                <Button
+                  aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                  onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+                  sx={{
+                    borderColor: "rgba(255,255,255,0.32)",
+                    color: "common.white",
+                    minWidth: 0,
+                    px: sidebarCollapsed ? 1 : 1.25,
+                    py: 0.75,
+                    "&:hover": {
+                      borderColor: "common.white",
+                      backgroundColor: "rgba(255,255,255,0.10)",
+                    },
+                  }}
+                  title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                  variant="outlined"
+                >
+                  {sidebarCollapsed ? ">" : "<"}
+                </Button>
+              </Box>
             </Box>
 
             <Divider sx={{ borderColor: "rgba(255,255,255,0.18)" }} />
@@ -90,12 +141,13 @@ export default function LandingPage({ onLogout }) {
                     fullWidth
                     onClick={() => setActiveView(viewKey)}
                     sx={{
-                      justifyContent: "flex-start",
+                      justifyContent: sidebarCollapsed ? "center" : "flex-start",
                       borderRadius: 1,
                       color: isActive ? "primary.main" : "common.white",
                       backgroundColor: isActive ? "common.white" : "transparent",
                       fontWeight: 800,
-                      px: 2,
+                      minWidth: 0,
+                      px: sidebarCollapsed ? 1 : 2,
                       py: 1.25,
                       "&:hover": {
                         backgroundColor: isActive
@@ -103,8 +155,9 @@ export default function LandingPage({ onLogout }) {
                           : "rgba(255,255,255,0.12)",
                       },
                     }}
+                    title={view.label}
                   >
-                    {view.label}
+                    {sidebarCollapsed ? view.label.charAt(0) : view.label}
                   </Button>
                 );
               })}
@@ -120,14 +173,17 @@ export default function LandingPage({ onLogout }) {
                 color: "common.white",
                 borderRadius: 1,
                 fontWeight: 800,
+                minWidth: 0,
+                px: sidebarCollapsed ? 1 : 2,
                 "&:hover": {
                   borderColor: "common.white",
                   backgroundColor: "rgba(255,255,255,0.10)",
                 },
               }}
+              title="Sign out"
               variant="outlined"
             >
-              Sign out
+              {sidebarCollapsed ? "Out" : "Sign out"}
             </Button>
           </Stack>
         </Box>
@@ -159,7 +215,9 @@ export default function LandingPage({ onLogout }) {
                 </Typography>
               </Box>
 
-              {activeView === "seamless" ? <MetricsDashboard /> : <DataQualityTable />}
+              {activeView === "seamless" && <MetricsDashboard />}
+              {activeView === "dataQuality" && <DataQualityTable />}
+              {activeView === "summaryAnalytics" && <SummaryAnalytics />}
             </Stack>
           </Container>
         </Box>
