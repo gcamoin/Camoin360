@@ -36,8 +36,7 @@ export default function LandingPage({ onLogout }) {
     <Box
       sx={{
         minHeight: "100vh",
-        background:
-          `radial-gradient(circle at top left, ${theme.palette.secondary.main}22, transparent 32%), linear-gradient(180deg, #f8fbf5 0%, #edf3e3 100%)`,
+        background: `radial-gradient(circle at top left, ${theme.palette.secondary.main}22, transparent 32%), linear-gradient(180deg, #f8fbf5 0%, #edf3e3 100%)`,
       }}
     >
       <Box
@@ -71,9 +70,12 @@ export default function LandingPage({ onLogout }) {
                   lineHeight: 1.1,
                 }}
               >
-                Sophie
+                Camoin 360
               </Typography>
-              <Typography sx={{ color: "rgba(255,255,255,0.72)", mt: 0.75 }} variant="body2">
+              <Typography
+                sx={{ color: "rgba(255,255,255,0.72)", mt: 0.75 }}
+                variant="body2"
+              >
                 Enrichment operations
               </Typography>
             </Box>
@@ -93,7 +95,9 @@ export default function LandingPage({ onLogout }) {
                       justifyContent: "flex-start",
                       borderRadius: 1,
                       color: isActive ? "primary.main" : "common.white",
-                      backgroundColor: isActive ? "common.white" : "transparent",
+                      backgroundColor: isActive
+                        ? "common.white"
+                        : "transparent",
                       fontWeight: 800,
                       px: 2,
                       py: 1.25,
@@ -159,7 +163,11 @@ export default function LandingPage({ onLogout }) {
                 </Typography>
               </Box>
 
-              {activeView === "seamless" ? <MetricsDashboard /> : <DataQualityTable />}
+              {activeView === "seamless" ? (
+                <MetricsDashboard />
+              ) : (
+                <DataQualityTable />
+              )}
             </Stack>
           </Container>
         </Box>
