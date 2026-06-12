@@ -18,22 +18,23 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  Tooltip,
   Typography,
 } from "@mui/material";
 
-import { API_BASE_URL, getApiErrorMessage, getAuthHeaders } from "../auth";
+import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
 
 const API_URL = `${API_BASE_URL}/accounts/data-quality`;
 
 const columns = [
-  { key: "name", label: "Account Name" },
-  { key: "address1_stateorprovince", label: "Address" },
-  { key: "new_sector", label: "Sector" },
-  { key: "description", label: "Description" },
-  { key: "websiteurl", label: "Website" },
-  { key: "telephone1", label: "Telephone" },
-  { key: "new_datasource", label: "Data Source" },
-  { key: "new_employees", label: "Employees" },
+  { key: "name", label: "Account Name", width: "17%" },
+  { key: "address1_stateorprovince", label: "Address", width: "9%" },
+  { key: "new_sector", label: "Sector", width: "14%" },
+  { key: "description", label: "Description", width: "25%" },
+  { key: "websiteurl", label: "Website", width: "12%" },
+  { key: "telephone1", label: "Telephone", width: "8%" },
+  { key: "new_datasource", label: "Data Source", width: "7%" },
+  { key: "new_employees", label: "Employees", width: "8%" },
 ];
 
 function isMissingValue(value) {
@@ -55,9 +56,39 @@ function renderCell(account, columnKey) {
     const href = String(value).startsWith("http") ? value : `https://${value}`;
 
     return (
-      <Link href={href} rel="noreferrer" target="_blank" underline="hover">
+      <Link
+        href={href}
+        rel="noreferrer"
+        sx={{
+          display: "block",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+        target="_blank"
+        underline="hover"
+      >
         {value}
       </Link>
+    );
+  }
+
+  if (columnKey === "description") {
+    return (
+      <Tooltip arrow title={String(value)}>
+        <Typography
+          component="span"
+          sx={{
+            display: "-webkit-box",
+            overflow: "hidden",
+            WebkitBoxOrient: "vertical",
+            WebkitLineClamp: 3,
+          }}
+          variant="body2"
+        >
+          {value}
+        </Typography>
+      </Tooltip>
     );
   }
 
@@ -102,6 +133,10 @@ export default function DataQualityTable() {
           setAccounts(response.data?.data || []);
         }
       } catch (fetchError) {
+        if (handleUnauthorized(fetchError)) {
+          return;
+        }
+
         if (isMounted) {
           setError(getApiErrorMessage(fetchError, "Unable to load account data."));
         }
@@ -197,7 +232,7 @@ export default function DataQualityTable() {
         }}
       >
         <TableContainer sx={{ maxHeight: "calc(100vh - 360px)" }}>
-          <Table stickyHeader>
+          <Table stickyHeader sx={{ tableLayout: "fixed", width: "100%" }}>
             <TableHead>
               <TableRow>
                 {columns.map((column) => (
@@ -208,6 +243,7 @@ export default function DataQualityTable() {
                       color: "common.white",
                       fontWeight: 800,
                       whiteSpace: "nowrap",
+                      width: column.width,
                     }}
                   >
                     {column.label}
@@ -223,10 +259,12 @@ export default function DataQualityTable() {
                       <TableCell
                         key={column.key}
                         sx={{
-                          maxWidth: column.key === "description" ? 420 : 220,
                           overflow: "hidden",
+                          px: 1.5,
                           textOverflow: "ellipsis",
                           verticalAlign: "top",
+                          whiteSpace: column.key === "description" ? "normal" : "nowrap",
+                          wordBreak: column.key === "description" ? "break-word" : "normal",
                         }}
                       >
                         {renderCell(account, column.key)}

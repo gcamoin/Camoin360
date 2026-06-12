@@ -137,7 +137,10 @@ export default function LandingPage({ onLogout }) {
         </Box>
 
         <Box component="main" sx={{ py: { xs: 3, md: 6 } }}>
-          <Container maxWidth="lg">
+          <Container
+            maxWidth={activeView === "dataQuality" ? false : "lg"}
+            sx={{ px: { xs: 2, md: activeView === "dataQuality" ? 3 : 4 } }}
+          >
             <Stack spacing={3}>
               <Box>
                 <Typography

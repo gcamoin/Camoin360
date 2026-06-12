@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { clearAuthToken, getAuthToken, loginUser, signupUser } from "./auth";
+import { useEffect, useState } from "react";
+import { clearAuthToken, getAuthToken, loginUser, onUnauthorized, signupUser } from "./auth";
 import LandingPage from "./landingPage";
 import Login from "./login";
 import ManagementDashboard from "./managementDashboard";
@@ -9,6 +9,14 @@ export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(() => Boolean(getAuthToken()));
   const [authView, setAuthView] = useState("login");
   const [dashboardView, setDashboardView] = useState("main");
+
+  useEffect(() => {
+    return onUnauthorized(() => {
+      setIsLoggedIn(false);
+      setAuthView("login");
+      setDashboardView("main");
+    });
+  }, []);
 
   async function handleLogin(credentials) {
     await loginUser(credentials);
