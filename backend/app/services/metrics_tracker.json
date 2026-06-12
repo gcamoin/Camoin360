@@ -1,4 +1,663 @@
 {
-  "accounts_processed": 0,
-  "accounts_updated": 0
+  "accounts_processed": 95,
+  "accounts_updated": 32,
+  "updates_log": [
+    {
+      "company": "Adler Pelzer Group",
+      "timestamp": "2026-05-06T23:11:58.942837",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": null,
+          "new": "https://adler-pelzergroup.com"
+        }
+      ]
+    },
+    {
+      "company": "Tooling Specialists Inc",
+      "timestamp": "2026-05-06T23:12:05.490408",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": null,
+          "new": "https://toolingspecialists.com"
+        }
+      ]
+    },
+    {
+      "company": "Ida International Inc",
+      "timestamp": "2026-05-06T23:12:11.186884",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": null,
+          "new": "https://ida-intl.com"
+        }
+      ]
+    },
+    {
+      "company": "Crown Pipe Shops Inc",
+      "timestamp": "2026-05-06T23:12:33.376562",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": null,
+          "new": "https://crownpipe.com"
+        }
+      ]
+    },
+    {
+      "company": "Michael Feldman Inc",
+      "timestamp": "2026-05-06T23:16:51.912156",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": null,
+          "new": "https://feldmanmanufacturing.net"
+        }
+      ]
+    },
+    {
+      "company": "Aggressively Organic",
+      "timestamp": "2026-05-06T23:17:03.597812",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": null,
+          "new": "https://aggressivelyorganic.com"
+        }
+      ]
+    },
+    {
+      "company": "Plastic Molded Products",
+      "timestamp": "2026-05-06T23:17:42.168343",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": null,
+          "new": "https://tgmpmp.com"
+        }
+      ]
+    },
+    {
+      "company": "Peri",
+      "timestamp": "2026-05-06T23:25:53.015526",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "https://myperi.com/",
+          "new": "https://peri.com"
+        },
+        {
+          "field": "address1_stateorprovince",
+          "old": "California",
+          "new": "MD"
+        },
+        {
+          "field": "numberofemployees",
+          "old": 5,
+          "new": 3000
+        },
+        {
+          "field": "description",
+          "old": "Manufacturer of bluetooth speakers intended to develop tech-enabled audio and power products with elegant industrial design. The company's products includes mobile accessories, portable consumer electronics and automotive components, enabling customers to",
+          "new": "Headquartered in Elkridge, MD, PERI Formwork Systems, Inc., is a leading manufacturer and provider of formwork and industrial scaffolding that help to bring some of the nation's tallest and most challenging structures to life. With 11 locations across the U.S. and more than 450 employees, PERI\u2019s expertly engineered products enable contractors, builders, engineers, and architects to construct buildings in a safer, faster, and more efficient manner. PERI Formwork Systems, Inc., is part of PERI AG, which is based in Weissenhorn, Germany near Ulm in Southern Germany since the founding of the company in 1969. With a turnover of EUR 1,429 million in 2020, PERI is one of the world's largest manufacturers and suppliers of formwork and scaffolding systems. Through its 9,400 employees, over 60 subsidiaries, and more than 120 efficiently run storage sites, PERI serves its customers worldwide with innovative system equipment and a comprehensive range of services related to formwork and scaffolding technology.\nPERI's innovative strength, high level of engineering service expertise, and top-quality materials ensure cost-effective, efficient, and safe solutions for formwork and scaffolding projects around the globe.\nThis LinkedIn-Page is owned and operated by:\nPERI USA Headquarters (Baltimore)\nPERI Formwork Systems, Inc. \n7135 Dorsey Run Road\nElkridge, MD 21075 \nPhone: +1 (410) 712-7225 \nFax: +1 (410) 712-7080 \nwww.peri-usa.com\nLocation of Global Headquarters: Wei\u00dfenhorn, Germany\nJurisdictional Court Memmingen HRB 6100\nManagement Board: Christian Schw\u00f6rer , Leonhard Braig, Carl Heathcote, Thomas Imbacher\nVAT No. DE 811204371"
+        }
+      ]
+    },
+    {
+      "company": "Kannaway",
+      "timestamp": "2026-05-06T23:25:57.485405",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "https://kannaway.com/",
+          "new": "https://kannaway.com"
+        },
+        {
+          "field": "address1_stateorprovince",
+          "old": "California",
+          "new": "CA"
+        },
+        {
+          "field": "numberofemployees",
+          "old": 857,
+          "new": 750
+        },
+        {
+          "field": "description",
+          "old": "Provider of hemp based botanical products. The company sells wellness products containing CBD-Rich hemp oil. It is a network sales and marketing company providing sales and marketing of hemp-based botanical products.",
+          "new": "The World's Premier Hemp & Wellness Company\nOur Purpose: We are the movement committed to taking action and driving positive global change.\nOur Vision: Hemp in Every Home \nOur Values: Clarity, Action, Relationships, Accountability, and Social Responsibility"
+        }
+      ]
+    },
+    {
+      "company": "Popular Ink",
+      "timestamp": "2026-05-06T23:26:02.612611",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "popular-ink.com",
+          "new": "https://popular-ink.com"
+        },
+        {
+          "field": "address1_stateorprovince",
+          "old": "Texas",
+          "new": "TX"
+        },
+        {
+          "field": "numberofemployees",
+          "old": 50,
+          "new": 6
+        },
+        {
+          "field": "description",
+          "old": "Provider of custom printed flexible packaging. The company offers stick packs, pouches, stand up bags, printed labels, shrink sleeves and printed boxes for consumer products market throughout the United States. It also functions as an extension of its cli",
+          "new": "Popular Ink is a printer of flexible packaging materials, founded by Ray Salinas and Dru Riess. At Popular Ink, we are here to print popular products, build a brand, create a unique culture, and be consistent at our craft. We promise every impression we print will be treated as our first impression. We are invested in protecting our customer\u2019s brand, by recognizing their success is directly proportional to our own."
+        }
+      ]
+    },
+    {
+      "company": "Anova",
+      "timestamp": "2026-05-06T23:26:04.876200",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "https://anovaculinary.com/",
+          "new": "https://anova.com"
+        },
+        {
+          "field": "address1_stateorprovince",
+          "old": "California",
+          "new": "NJ"
+        },
+        {
+          "field": "numberofemployees",
+          "old": 65,
+          "new": 350
+        },
+        {
+          "field": "description",
+          "old": "Anova Culinary is a San Francisco-based smart kitchen company that provides connected precision cooking appliances, such as a sous vide device for the home cook in 2013 with the Anova One.",
+          "new": "We are the leading global provider of IIoT solutions to remotely manage industrial assets. We have over 30 years of experience in the design, installation and maintenance of wireless hardware, software technologies and cloud-based analytics. With hundreds of thousands of devices monitoring cryogenic gases, LPG/propane, LNG, chemicals, oils, lubricants, fuels, and water, Anova is connecting the industrial world, for better."
+        }
+      ]
+    },
+    {
+      "company": "Consolidated Pipe & Supply Co",
+      "timestamp": "2026-05-06T23:26:07.174981",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "https://www.consolidatedpipe.com/",
+          "new": "https://consolidatedpipe.com"
+        },
+        {
+          "field": "numberofemployees",
+          "old": 530,
+          "new": 750
+        },
+        {
+          "field": "description",
+          "old": "Consolidated Pipe and Supply, founded in 1960, is a supplier of a wide range of fittings, valves and piping systems to industries, including energy, oil and gas, chemical, water and waste treatment, petrochemical, mining, pulp and paper, and nuclear gener",
+          "new": "Consolidated Pipe & Supply Company, Incorporated is a Birmingham, Alabama based company with branch locations and sales offices located in 19 states.\r\n\r\nFounded in 1960, it has provided materials and services to the energy, oil & gas, chemical, petro-chemical, mining, pulp & paper and construction industries for over 50 years."
+        }
+      ]
+    },
+    {
+      "company": "Boss Controls",
+      "timestamp": "2026-05-06T23:26:09.308608",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "https://bosscontrols.com/",
+          "new": "https://bosscontrols.com"
+        },
+        {
+          "field": "numberofemployees",
+          "old": 5,
+          "new": 30
+        },
+        {
+          "field": "description",
+          "old": "Designer of WiFi products designed to offer a complete energy efficiency management. The company's cloud based WiFi enabled product which is an integrated virtual energy management and control system, enabling education, government and commercial sectors",
+          "new": "Boss Controls is a cloud based, IoT energy management company focused on cyber secure and energy resilient solutions and services for small to medium size buildings, grid edge intelligence, and control down to the device load. We provide commercial real estate owners a turn key, fully integrated solution of software, hardware and services, providing energy efficiency savings, enabling them to  participate in current Demand Response (DR) wholesale markets, and manage additional Distributed Energy Resources (DER). We also provide insight to utilities to better manage the grid and increase resilience while helping them lower their peak demand costs via access to virtual power from DR down to the device level."
+        }
+      ]
+    },
+    {
+      "company": "Audeze",
+      "timestamp": "2026-05-06T23:26:14.057410",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "https://www.audeze.com/",
+          "new": "https://audeze.com"
+        },
+        {
+          "field": "address1_stateorprovince",
+          "old": "California",
+          "new": "CA"
+        },
+        {
+          "field": "description",
+          "old": "Owner and operator of an audio manufacturing company. The company designs and develops headphones, speakers, home audio systems and other similar products for their customers in the States.",
+          "new": "Audeze LLC is a California-based high-end audio manufacturer delivering the most accurate sound reproduction available today. Audeze products are engineered with the latest innovations in materials science and technology matched with precision craftsmanship to produce an astonishingly dynamic and immersive sound. Audeze\u2019s commitment to research and development is reflected in every facet of our products."
+        }
+      ]
+    },
+    {
+      "company": "Forney",
+      "timestamp": "2026-05-06T23:26:16.326319",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "https://forneyonline.com/?SID=697t1icutcuo56ia3qja3jqeq1",
+          "new": "https://forneyisd.net"
+        },
+        {
+          "field": "address1_stateorprovince",
+          "old": "PA",
+          "new": "TX"
+        },
+        {
+          "field": "numberofemployees",
+          "old": 27,
+          "new": 750
+        },
+        {
+          "field": "description",
+          "old": "Manufacturer of construction testing equipment. The company manufactures, sells and services scientific instruments for testing instruments and equipment for the construction industry worldwide.",
+          "new": "FORNEY ISD is a primary/secondary education company based out of 600 S BOIS D ARC ST, Forney, Texas, United States."
+        }
+      ]
+    },
+    {
+      "company": "Sun America",
+      "timestamp": "2026-05-06T23:26:20.884204",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "www.sun-america.com",
+          "new": "https://sunamerican.com"
+        },
+        {
+          "field": "address1_stateorprovince",
+          "old": "OH",
+          "new": "AZ"
+        },
+        {
+          "field": "numberofemployees",
+          "old": 120,
+          "new": 125
+        },
+        {
+          "field": "description",
+          "old": "Manufacturer of specialty paper baking cups and thermoformed plastic trays. The company provides fluted paper cups, loaf liners and cake liners to the industrial baking and candy industries.",
+          "new": "Sun American Mortgage Company began in 1984 with the dream of making homeownership in the southwestern U.S. a seamless process. We are an independent mortgage banking firm that has been rated top amongst home lenders in the region, and we are dedicated to seeing all our clients succeed with their mortgage needs. For more than 30 years, we have helped individuals, families and seniors with a variety of mortgage needs; home purchase, reverse mortgages, rate and term refinances, cash-out refinances, FHA loans, VA loans, construction loans and many more. At Sun American Mortgage, we view each transaction as life changing for our clients, because very little changes lives more than the American dream of homeownership. We change lives for the better, one home at a time."
+        }
+      ]
+    },
+    {
+      "company": "Foremost Machine Builders Inc",
+      "timestamp": "2026-05-06T23:26:23.057743",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "https://foremostmachine.com/",
+          "new": "https://foremostmachine.com"
+        },
+        {
+          "field": "numberofemployees",
+          "old": 51,
+          "new": 30
+        },
+        {
+          "field": "description",
+          "old": "Establishments primarily engaged in manufacturing machinery and equipment and parts, not elsewhere classified, such as amusement park equipment and flexible metal hose and tubing. This industry also includes establishments primarily engaged in producing o",
+          "new": "Plastic processing equipment for the plastics industry including granulators, blenders, pneumatic conveyors, railcar unloaders, metal separators, dryers, recycling and reclaim equipment."
+        }
+      ]
+    },
+    {
+      "company": "Amaryllo Inc.",
+      "timestamp": "2026-05-06T23:26:25.305066",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "www.amaryllo.us",
+          "new": "https://amaryllo.us"
+        },
+        {
+          "field": "address1_stateorprovince",
+          "old": "California",
+          "new": "CA"
+        },
+        {
+          "field": "numberofemployees",
+          "old": 40,
+          "new": 30
+        },
+        {
+          "field": "description",
+          "old": "Amaryllo is the world's number-one camera robot company. Amaryllo develops biometric security cameras protected by military grade encryption technologies.",
+          "new": "Amaryllo Inc., headquartered in the United States, is a leading Platform as a Service (PaaS) company, specializing in delivering comprehensive cloud solutions and high-performance data center services. Through innovative integration, we provide service-driven products to partners across over 100 countries, helping them drive revenue growth and business success. As a direct vendor of Supermicro, we offer enterprise-grade, high-performance solutions that enable clients to seamlessly execute digital transformation.\nAs the official brand licensee of Hewlett Packard (HP), we oversee B2B and B2C cloud services and offer a diverse range of products. Our myHPcloud one-time payment cloud storage is tailored for consumers, providing permanent cloud storage without the need for subscriptions. With an intuitive interface and advanced security features, myHPcloud ensures reliable data backup and storage solutions for individuals and families.\nOur innovative achievements have earned multiple accolades, with prominent international recognition at the Consumer Electronics Show (CES), cementing our position as leaders in cloud and AI technologies."
+        }
+      ]
+    },
+    {
+      "company": "Ironform",
+      "timestamp": "2026-05-06T23:26:32.378227",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "http://www.ironform.com/",
+          "new": "https://ironform.com"
+        },
+        {
+          "field": "numberofemployees",
+          "old": 850,
+          "new": 125
+        },
+        {
+          "field": "description",
+          "old": "Manufacturer and supplier of metal fabrication parts and components. The company's components are manufactured in its facilities located in the Texas, Tennessee, Washington, Virginia and Missouri regions of the United States, enabling the heavy truck, agr",
+          "new": "Ironform is a trusted Tier 1 metal fabricator, supplying market leaders in Class 8 transportation, construction, agriculture, mining, off-road, material handling, and industrial equipment. Combining world-class dimensional control with a disciplined execution model, we consistently deliver the lowest PPM in the business.\nWith three subsidiaries\u2014Detroit Tool Metal Products, Imperial Group, and SF Tube\u2014and six fully integrated manufacturing locations nationwide, Ironform offers uniform process capabilities within 300 miles of the markets we serve."
+        }
+      ]
+    },
+    {
+      "company": "Jasper Rubber Products Inc",
+      "timestamp": "2026-05-06T23:26:34.705540",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "https://www.jasperrubber.com/",
+          "new": "https://jasperrubber.com"
+        },
+        {
+          "field": "numberofemployees",
+          "old": 869,
+          "new": 125
+        },
+        {
+          "field": "description",
+          "old": "For over 50 years, Jasper Rubber Products Inc. engages in the manufacture of rubber and its allied products. The company is located at Jasper, Ind. It offers a full range of rubber, thermoplastic and plastic materials that can be custom compounded as per",
+          "new": "Jasper Rubber Products, Inc., is an industry-recognized manufacturer of high quality rubber, plastic, and thermoplastic elastomer (TPE) materials. We specialize in custom compounding materials that always meet or exceed our customers\u2019 exacting specs. And we utilize the latest technology in lathe cut / mandrel-forming, molding, and extrusion manufacturing processes. Our research and development, manufacturing, and \u2026 Continue reading \"Jasper Rubber\""
+        }
+      ]
+    },
+    {
+      "company": "Jireh Metal Products",
+      "timestamp": "2026-05-06T23:26:36.838078",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "http://jirehmetal.com/",
+          "new": "https://jirehmetal.com"
+        },
+        {
+          "field": "numberofemployees",
+          "old": 100,
+          "new": 125
+        },
+        {
+          "field": "description",
+          "old": "Manufacturer of progressive metal stampings. The company develops metal fabrications, stampings and assemblies and sub-assemblies for the office furniture, hardware and automotive industries.",
+          "new": "Jireh Metal Products, Inc. is a Minority Business Enterprise (MBE) and ISO9001:2015 certified manufacturer of progressive metal stampings, fabrications and assemblies. Jireh produces parts and assemblies to OEMs and Tier 1 suppliers in a wide array of industries, and for customers across the US. \nWith Jireh, it's less about the transaction, and more about the relationship. Not only do our people matter, they distinguish us from others within our industry. The relentless problem solving from our experienced team delivers VA/VE opportunities and continuous improvement initiatives. Because of our exceptional quality, on-time delivery and competitive pricing, Jireh provides a best-in-class overall value for our customers. \nWe want it to be an easy decision for our customers to choose Jireh each and every time there's a business opportunity."
+        }
+      ]
+    },
+    {
+      "company": "Clark Precision Machined Components",
+      "timestamp": "2026-05-06T23:26:39.001049",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "https://clarkprecision.com/",
+          "new": "https://clarkcolddrawn.com"
+        },
+        {
+          "field": "numberofemployees",
+          "old": 100,
+          "new": 30
+        },
+        {
+          "field": "description",
+          "old": "Producer of precision machined metal components. The company offers steel, brass, aluminum, cold drawn steel bars for cutting, forming and machining customers and also provides tube cutting and bar cut-off services.",
+          "new": "Our Mission is to manufacture and supply precision machine metal products and services to a diverse base of North American industries, in such a manner that we form long-term, on-going relationships with all of our customers."
+        }
+      ]
+    },
+    {
+      "company": "Compact Container Systems",
+      "timestamp": "2026-05-06T23:26:43.525986",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "https://www.compactcontainers.com/",
+          "new": "https://compactcontainers.com"
+        },
+        {
+          "field": "address1_stateorprovince",
+          "old": "Florida",
+          "new": "FL"
+        },
+        {
+          "field": "numberofemployees",
+          "old": 5,
+          "new": 6
+        },
+        {
+          "field": "description",
+          "old": "Developer and manufacturer of transportation and shipping containers. The company's transportation and shipping containers are manufactured in accordance with all provisions of the international organization for standardization (ISO) standards and can be",
+          "new": "Compact Containers serves the global shipping and intermodal industry with an efficient, low-cost means to transport containers either by Road, Rail, or Sea."
+        }
+      ]
+    },
+    {
+      "company": "AcousticSheep",
+      "timestamp": "2026-05-06T23:26:50.566505",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "https://www.acousticsheep.com/",
+          "new": "https://acousticsheep.com"
+        },
+        {
+          "field": "numberofemployees",
+          "old": 26,
+          "new": 30
+        },
+        {
+          "field": "description",
+          "old": "Developer of headphones designed to promote healthy sleep. The company's wireless headbands stream music via Bluetooth technology, enabling consumers to relax by listening to music, without the use of heavy headphones",
+          "new": "AcousticSheep LLC was founded in 2007 by Dr. Wei-Shin Lai, a family physician, and her husband, Jason Wolfe, a video game developer. Dr. Lai struggled with getting back to sleep after patient phone calls in the middle of the night. She needed to listen to some relaxing music to help her sleep. But headphones were bulky, and ear buds were uncomfortable. Since there were no headphones specifically designed for sleeping on the market, she invented her own.\r\n \r\nSleepPhones worked so well for her that she decided she had to offer them to all of her patients taking sleeping pills. Her husband soldered and she sewed the first 500 pieces themselves on their kitchen table. Initial feedback was phenomenal. One lady was able to come off of sleeping pills after taking them for 10 years. Another said that she could finally sleep in the same bed as her snoring spouse, which saved their marriage. Dr. Lai and her husband decided to patent their invention and completely sold out in their first year.\r\n\r\nIn 2010, AcousticSheep LLC developed RunPhones\u00ae by popular customer request. RunPhones wick away sweat and don't fall out like ear buds. Both SleepPhones and RunPhones contain removable thin padded speakers within a comfortable stretchy headband.\r\n\r\nCustomers love AcousticSheep products, and sales have grown tremendously. AcousticSheep products can be found on SleepPhones.com, RunPhones.com, Amazon.com, Hammacher Schlemmer, Sam's Club, Best Buy.com, Walmart.com, and a variety of retailers. Press hits include Dr. Oz, CNN, Travel and Leisure, The Today Show, and many others. SleepPhones and RunPhones are in over 50 countries on all 7 continents.\r\n\r\nAcousticSheep LLC operates direct to consumer sales and wholesale distribution. AcousticSheep respects environmental and social responsibility. The company works closely with local businesses to improve the Erie, PA economy. AcousticSheep believes in doing good in the world by producing helpful quality products that customers love."
+        }
+      ]
+    },
+    {
+      "company": "AMERICAN HOWA KENTUCKY, INC.",
+      "timestamp": "2026-05-06T23:26:52.751568",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "ahk-howa.com",
+          "new": "https://ahk-howa.com"
+        },
+        {
+          "field": "numberofemployees",
+          "old": 18,
+          "new": 125
+        },
+        {
+          "field": "description",
+          "old": "Special industry machinery, nec, nsk",
+          "new": "AMERICAN HOWA KENTUCKY INC is an automotive components manufacturer, with corporate offices located at 445 JODY RICHARDS DR, Bowling Green, Kentucky, United States."
+        }
+      ]
+    },
+    {
+      "company": "OAV Air Bearings",
+      "timestamp": "2026-05-13T17:22:30.289902",
+      "changes": [
+        {
+          "field": "numberofemployees",
+          "old": null,
+          "new": 30
+        },
+        {
+          "field": "description",
+          "old": "OAV Air Bearings manufactures precision, frictionless motion systems (air bearings) that eliminate mechanical contact to achieve ultra\u2011low friction, wear\u2011free operation, and extreme accuracy.",
+          "new": "Rely on OAV for state-of-the-art solutions and unmatched dependability in the realm of  Motion Systems and Air bearings, Optomechanics, Energy , Engineering, and Manufacturing. Our products and engineering expertise cater to a wide range of industries."
+        }
+      ]
+    },
+    {
+      "company": "Kingway Material Handling",
+      "timestamp": "2026-05-13T17:22:36.106207",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "http://king-way.com",
+          "new": "https://king-way.com"
+        },
+        {
+          "field": "address1_stateorprovince",
+          "old": "GA",
+          "new": "NH"
+        },
+        {
+          "field": "numberofemployees",
+          "old": null,
+          "new": 6
+        },
+        {
+          "field": "description",
+          "old": "Kingway designs and manufactures storage, handling, and order selection systems for the material handling industry in the United States.",
+          "new": "Kingway Material Handling is a company based out of 3 Holland Way # 102, Exeter, New Hampshire, United States."
+        }
+      ]
+    },
+    {
+      "company": "Equipto",
+      "timestamp": "2026-05-13T17:22:45.601449",
+      "changes": [
+        {
+          "field": "numberofemployees",
+          "old": 87,
+          "new": 125
+        },
+        {
+          "field": "description",
+          "old": "equipto has been a leader in the space utilization market for years. a consistently better product, outstanding customer service and an attitude that keeps clients coming back has made equipto what it is today. equipto continues to bring new products to new markets by adding new products, and modifying existing products for the ever growing need for storage solutions.",
+          "new": "Equipto has been a leader in the material handling and storage industry since 1907.   A broad range of products,  sales engineering support , outstanding customer service,   installation services and Made in the USA keep clients coming back.   We have a dedicated set of district sales managers located throughout the United States to help design and specify the storage solution for your problem.\nWe offer a broad range of solutions from shelving with drawers to general and specialty cabinets, mobile aisles , mezzanines, stairways, weapons storage systems and  much much more.   Our online catalog is available at http:\\\\catalog.equipto.com."
+        }
+      ]
+    },
+    {
+      "company": "Lafarge Cement",
+      "timestamp": "2026-05-13T17:22:47.976976",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": "https://lafarge.cz",
+          "new": "https://lafargenorthamerica.com"
+        },
+        {
+          "field": "address1_stateorprovince",
+          "old": "PA",
+          "new": "VA"
+        },
+        {
+          "field": "numberofemployees",
+          "old": null,
+          "new": 30
+        },
+        {
+          "field": "description",
+          "old": null,
+          "new": "Lafarge Construction Materials (a subsidiary of Lafarge Canada Inc.) are manufacturers of quality concrete aggregate and block used in the construction of schools and commercial buildings, as well as apartment and single family dwellings."
+        }
+      ]
+    },
+    {
+      "company": "Ocean Spray",
+      "timestamp": "2026-05-13T17:22:50.277297",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": null,
+          "new": "https://oceanspray.com"
+        },
+        {
+          "field": "address1_stateorprovince",
+          "old": "PA",
+          "new": "MA"
+        },
+        {
+          "field": "numberofemployees",
+          "old": null,
+          "new": 3000
+        },
+        {
+          "field": "description",
+          "old": null,
+          "new": "Ocean Spray is a vibrant agricultural cooperative owned by more than 700 cranberry farmers in the United States, Canada and Chile who have helped preserve the family farming way of life for generations. Formed in 1930, Ocean Spray is now the world\u2019s leading producer of cranberry juices, juice drinks and dried cranberries and is the best-selling brand in the bottled juice category. The cooperative\u2019s cranberries are currently featured in more than a thousand great-tasting, good-for-you products in roughly 100 countries worldwide. With approximately 2,000 team members and nearly 20 cranberry receiving and processing facilities worldwide, Ocean Spray is committed to managing our business in a way that respects  and cares for our communities, team members and the environment. For more information about our family-farmer owned cooperative, visit www.oceanspray.com.\nFor close to 90 years, Ocean Spray, its family-farmer owners, and our team members have had a long-standing passion for health, taste and authenticity in all our products. The innovative, entrepreneurial spirit of our founders remains rooted in our cooperative's culture and our commitment to be a farm-to-family, health and wellness company. Our north star is our purpose: connecting our farms to families for a better life."
+        }
+      ]
+    },
+    {
+      "company": "Soltech",
+      "timestamp": "2026-05-13T17:22:52.649902",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": null,
+          "new": "https://soltech.net"
+        },
+        {
+          "field": "address1_stateorprovince",
+          "old": "PA",
+          "new": "GA"
+        },
+        {
+          "field": "numberofemployees",
+          "old": null,
+          "new": 125
+        },
+        {
+          "field": "description",
+          "old": null,
+          "new": "At SOLTECH, artificial intelligence is integrated into the way we design, build, and deliver technology solutions for our clients. Based in Atlanta and proudly women-owned, we help organizations nationwide build technology to innovate with confidence, operate more efficiently, and achieve measurable business outcomes. \nFor nearly 30 years, SOLTECH has been a trusted technology partner to organizations locally and nationwide. Our engineers, designers, and strategists deliver custom software applications, technology consulting, IT staffing, and advanced AI and data engineering services that modernize systems, address complex business challenges, and accelerate digital transformation. \nSOLTECH\u2019s over-arching purpose is to make the world a better place by bringing to life innovative software solutions that make our lives easier, safer, healthier, and more productive."
+        }
+      ]
+    },
+    {
+      "company": "Sunopta",
+      "timestamp": "2026-05-13T17:22:57.346966",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": null,
+          "new": "https://sunopta.com"
+        },
+        {
+          "field": "address1_stateorprovince",
+          "old": "PA",
+          "new": "MN"
+        },
+        {
+          "field": "numberofemployees",
+          "old": null,
+          "new": 750
+        },
+        {
+          "field": "description",
+          "old": null,
+          "new": "SunOpta Inc. is a leading global company focused on helping make the planet and its people healthier through plant-based foods and beverages, fruit-based foods and beverages, and organic ingredient sourcing and production. \nSunOpta specializes in the sourcing, processing and packaging of organic, conventional, non-GMO food products. Integrated from seed through packaged products, SunOpta has a primary focus on strategic vertically integrated business models.\nThroughout its history SunOpta has evolved to become a strong, vibrant organization with a robust commitment to organic, non-GMO and specialty foods and environmental responsibility. \nSunOpta's Mission:\nTo deliver organic, healthy, and sustainable food solutions that improve lives. To maintain purity of our products and be the market leader in organic integrity. To be the leader in our fast-moving industry, with better execution than our competitors. To develop and retain great employees \u2013 great companies are made of great people."
+        }
+      ]
+    }
+  ]
 }

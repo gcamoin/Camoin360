@@ -23,4 +23,6 @@ async def get_metrics(_user=Depends(require_user)):
         "usage_percent": round(usage_percent, 2),
         "accounts_processed": metrics.get("accounts_processed", 0),
         "accounts_updated": metrics.get("accounts_updated", 0),
+        "updated_companies": metrics.get("updated_companies", []),
+        "updates_log": metrics.get("updates_log", [])
     }

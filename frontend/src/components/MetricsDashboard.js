@@ -9,7 +9,7 @@ import {
   useTheme,
 } from "@mui/material";
 
-import { API_BASE_URL, getAuthHeaders } from "../auth";
+import { API_BASE_URL, getAuthHeaders, handleUnauthorized } from "../auth";
 
 const API_URL = `${API_BASE_URL}/metrics`;
 
@@ -72,6 +72,10 @@ export default function MetricsDashboard() {
           setMetrics(response.data);
         }
       } catch (error) {
+        if (handleUnauthorized(error)) {
+          return;
+        }
+
         console.error("Failed to fetch metrics", error);
       }
     };

@@ -4,11 +4,15 @@ import httpx
 from dotenv import load_dotenv
 from pathlib import Path
 from .auth import get_access_token
-from .metrics import increment_processed, increment_updated
+from .metrics import increment_processed, log_update
 from .seamless import enrich_with_seamless
 from .usage import can_make_request, increment_usage, load_usage, WEEKLY_LIMIT
 
-load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+REPO_ROOT = Path(__file__).resolve().parents[3]
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+
+load_dotenv(REPO_ROOT / ".env")
+load_dotenv(BACKEND_ROOT / ".env")
 
 API_URL = os.getenv("DYNAMICS_API_URL")
 
@@ -339,7 +343,7 @@ async def enrich_account(account_id: str):
     if updates:
         print(f"🚀 Updating: {updates}")
         await update_account(account_id, updates)
-        increment_updated()
+        log_update(company_name, updates)
 
     return {
         "account_id": account_id,

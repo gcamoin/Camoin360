@@ -7,9 +7,38 @@ function getDefaultApiBaseUrl() {
 
 export const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || getDefaultApiBaseUrl();
 const AUTH_STORAGE_KEY = "sophie:authToken";
+const UNAUTHORIZED_EVENT = "sophie:auth-unauthorized";
+
+function decodeTokenPayload(token) {
+  try {
+    const [body] = token.split(".");
+    const normalizedBody = body.replace(/-/g, "+").replace(/_/g, "/");
+    const paddedBody = normalizedBody.padEnd(
+      normalizedBody.length + ((4 - (normalizedBody.length % 4)) % 4),
+      "="
+    );
+    return JSON.parse(window.atob(paddedBody));
+  } catch (error) {
+    return null;
+  }
+}
+
+export function isTokenExpired(token) {
+  const payload = decodeTokenPayload(token);
+  const expiresAt = Number(payload?.exp || 0);
+
+  return !expiresAt || expiresAt * 1000 <= Date.now();
+}
 
 export function getAuthToken() {
-  return window.localStorage.getItem(AUTH_STORAGE_KEY);
+  const token = window.localStorage.getItem(AUTH_STORAGE_KEY);
+
+  if (token && isTokenExpired(token)) {
+    clearAuthToken();
+    return null;
+  }
+
+  return token;
 }
 
 export function saveAuthToken(token) {
@@ -24,6 +53,25 @@ export function getAuthHeaders() {
   const token = getAuthToken();
 
   return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+export function isUnauthorizedError(error) {
+  return error.response?.status === 401;
+}
+
+export function handleUnauthorized(error) {
+  if (!isUnauthorizedError(error)) {
+    return false;
+  }
+
+  clearAuthToken();
+  window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+  return true;
+}
+
+export function onUnauthorized(callback) {
+  window.addEventListener(UNAUTHORIZED_EVENT, callback);
+  return () => window.removeEventListener(UNAUTHORIZED_EVENT, callback);
 }
 
 export function getApiErrorMessage(error, fallbackMessage) {

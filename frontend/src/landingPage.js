@@ -43,8 +43,7 @@ export default function LandingPage({ onLogout }) {
     <Box
       sx={{
         minHeight: "100vh",
-        background:
-          `radial-gradient(circle at top left, ${theme.palette.secondary.main}22, transparent 32%), linear-gradient(180deg, #f8fbf5 0%, #edf3e3 100%)`,
+        background: `radial-gradient(circle at top left, ${theme.palette.secondary.main}22, transparent 32%), linear-gradient(180deg, #f8fbf5 0%, #edf3e3 100%)`,
       }}
     >
       <Box
@@ -99,7 +98,7 @@ export default function LandingPage({ onLogout }) {
                         lineHeight: 1.1,
                       }}
                     >
-                      Sophie
+                      Camoin 360
                     </Typography>
                     <Typography sx={{ color: "rgba(255,255,255,0.72)", mt: 0.75 }} variant="body2">
                       Enrichment operations
@@ -144,7 +143,9 @@ export default function LandingPage({ onLogout }) {
                       justifyContent: sidebarCollapsed ? "center" : "flex-start",
                       borderRadius: 1,
                       color: isActive ? "primary.main" : "common.white",
-                      backgroundColor: isActive ? "common.white" : "transparent",
+                      backgroundColor: isActive
+                        ? "common.white"
+                        : "transparent",
                       fontWeight: 800,
                       minWidth: 0,
                       px: sidebarCollapsed ? 1 : 2,
@@ -189,7 +190,10 @@ export default function LandingPage({ onLogout }) {
         </Box>
 
         <Box component="main" sx={{ py: { xs: 3, md: 6 } }}>
-          <Container maxWidth="lg">
+          <Container
+            maxWidth={activeView === "dataQuality" ? false : "lg"}
+            sx={{ px: { xs: 2, md: activeView === "dataQuality" ? 3 : 4 } }}
+          >
             <Stack spacing={3}>
               <Box>
                 <Typography

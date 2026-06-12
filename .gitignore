@@ -4,3 +4,8 @@ __pycache__/
 backend/app/services/users.json
 *.pyc
 logs/
+frontend/build/
+frontend/node_modules/.cache/
+.eslintcache
+*.pack
+*.pack.old

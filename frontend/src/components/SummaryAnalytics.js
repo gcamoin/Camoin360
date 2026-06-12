@@ -27,7 +27,7 @@ import {
   YAxis,
 } from "recharts";
 
-import { API_BASE_URL, getApiErrorMessage, getAuthHeaders } from "../auth";
+import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
 
 const API_URL = `${API_BASE_URL}/accounts/summary-analytics`;
 
@@ -89,6 +89,10 @@ export default function SummaryAnalytics() {
           });
         }
       } catch (fetchError) {
+        if (handleUnauthorized(fetchError)) {
+          return;
+        }
+
         if (isMounted) {
           setError(getApiErrorMessage(fetchError, "Unable to load sector summary."));
         }
