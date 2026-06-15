@@ -4,7 +4,10 @@ import {
   Button,
   Container,
   Divider,
+  IconButton,
+  SvgIcon,
   Stack,
+  Tooltip,
   Typography,
   useTheme,
 } from "@mui/material";
@@ -16,22 +19,42 @@ import SummaryAnalytics from "./components/SummaryAnalytics";
 const views = {
   seamless: {
     label: "Seamless",
+    icon: "sync",
     title: "Sophie - Seamless AI Updates Dashboard",
     description:
       "Live view of weekly Seamless credit consumption and enrichment throughput across the Dynamics pipeline.",
   },
   dataQuality: {
     label: "Data Quality",
+    icon: "checklist",
     title: "Data Quality",
     description:
       "Review Dynamics account fields used for enrichment quality: name, state or province, sector, description, and website.",
   },
   summaryAnalytics: {
     label: "Summary Analytics",
+    icon: "chart",
     title: "Summary Analytics",
     description: "See how many Dynamics accounts belong to each sector with cards, a bar chart, and a count table.",
   }
 };
+
+const iconPaths = {
+  chart: "M5 19V9h3v10H5Zm5 0V5h3v14h-3Zm5 0v-7h3v7h-3Z",
+  checklist: "M5.5 7.5 7 9l3-3 .9.9L7 10.8 4.6 8.4l.9-.9ZM13 8h7v2h-7V8ZM5.5 14.5 7 16l3-3 .9.9L7 17.8l-2.4-2.4.9-.9ZM13 15h7v2h-7v-2Z",
+  collapse: "M15.5 5 8.5 12l7 7-1.4 1.4L5.7 12l8.4-8.4L15.5 5Zm4 0-7 7 7 7-1.4 1.4L9.7 12l8.4-8.4L19.5 5Z",
+  expand: "m8.5 5 7 7-7 7 1.4 1.4 8.4-8.4-8.4-8.4L8.5 5Zm-4 0 7 7-7 7 1.4 1.4 8.4-8.4-8.4-8.4L4.5 5Z",
+  signout: "M10 17v-2h4V9h-4V7h6v10h-6Zm-1-1-5-4 5-4v3h6v2H9v3Z",
+  sync: "M7 7h9.2l-2.6-2.6L15 3l5 5-5 5-1.4-1.4L16.2 9H7V7Zm10 10H7.8l2.6 2.6L9 21l-5-5 5-5 1.4 1.4L7.8 15H17v2Z",
+};
+
+function NavIcon({ name }) {
+  return (
+    <SvgIcon fontSize="small" viewBox="0 0 24 24">
+      <path d={iconPaths[name]} />
+    </SvgIcon>
+  );
+}
 
 export default function LandingPage({ onLogout }) {
   const [activeView, setActiveView] = useState("seamless");
@@ -106,25 +129,26 @@ export default function LandingPage({ onLogout }) {
                   </Box>
                 )}
 
-                <Button
+                <IconButton
                   aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
                   onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+                  size="small"
                   sx={{
                     borderColor: "rgba(255,255,255,0.32)",
+                    borderStyle: "solid",
+                    borderWidth: 1,
                     color: "common.white",
-                    minWidth: 0,
-                    px: sidebarCollapsed ? 1 : 1.25,
-                    py: 0.75,
+                    height: 36,
+                    width: 36,
                     "&:hover": {
                       borderColor: "common.white",
                       backgroundColor: "rgba(255,255,255,0.10)",
                     },
                   }}
                   title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-                  variant="outlined"
                 >
-                  {sidebarCollapsed ? ">" : "<"}
-                </Button>
+                  <NavIcon name={sidebarCollapsed ? "expand" : "collapse"} />
+                </IconButton>
               </Box>
             </Box>
 
@@ -135,10 +159,12 @@ export default function LandingPage({ onLogout }) {
                 const isActive = activeView === viewKey;
 
                 return (
-                  <Button
+                  <Tooltip arrow disableHoverListener={!sidebarCollapsed} key={viewKey} placement="right" title={view.label}>
+                    <Button
                     key={viewKey}
                     fullWidth
                     onClick={() => setActiveView(viewKey)}
+                    startIcon={<NavIcon name={view.icon} />}
                     sx={{
                       justifyContent: sidebarCollapsed ? "center" : "flex-start",
                       borderRadius: 1,
@@ -150,6 +176,9 @@ export default function LandingPage({ onLogout }) {
                       minWidth: 0,
                       px: sidebarCollapsed ? 1 : 2,
                       py: 1.25,
+                      "& .MuiButton-startIcon": {
+                        m: sidebarCollapsed ? 0 : undefined,
+                      },
                       "&:hover": {
                         backgroundColor: isActive
                           ? "common.white"
@@ -158,8 +187,9 @@ export default function LandingPage({ onLogout }) {
                     }}
                     title={view.label}
                   >
-                    {sidebarCollapsed ? view.label.charAt(0) : view.label}
-                  </Button>
+                    {!sidebarCollapsed && view.label}
+                    </Button>
+                  </Tooltip>
                 );
               })}
             </Stack>
@@ -169,13 +199,18 @@ export default function LandingPage({ onLogout }) {
             <Button
               fullWidth
               onClick={onLogout}
+              startIcon={<NavIcon name="signout" />}
               sx={{
                 borderColor: "rgba(255,255,255,0.42)",
                 color: "common.white",
                 borderRadius: 1,
                 fontWeight: 800,
                 minWidth: 0,
+                justifyContent: sidebarCollapsed ? "center" : "flex-start",
                 px: sidebarCollapsed ? 1 : 2,
+                "& .MuiButton-startIcon": {
+                  m: sidebarCollapsed ? 0 : undefined,
+                },
                 "&:hover": {
                   borderColor: "common.white",
                   backgroundColor: "rgba(255,255,255,0.10)",
@@ -184,7 +219,7 @@ export default function LandingPage({ onLogout }) {
               title="Sign out"
               variant="outlined"
             >
-              {sidebarCollapsed ? "Out" : "Sign out"}
+              {!sidebarCollapsed && "Sign out"}
             </Button>
           </Stack>
         </Box>

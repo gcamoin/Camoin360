@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
 
 from .auth import require_user
 from ..services.dynamics import (
@@ -13,6 +14,19 @@ from ..services.dynamics import (
 )
 
 router = APIRouter()
+
+
+class EnrichmentPreviewRequest(BaseModel):
+    account_ids: list[str] = Field(default_factory=list)
+    fields_to_update: list[str] = Field(default_factory=list)
+
+
+class EnrichmentPreviewResponse(BaseModel):
+    status: str
+    message: str
+    selected_account_count: int
+    fields_to_update: list[str]
+    preview: list[dict[str, str]]
 
 
 @router.get("/accounts/missing-data")
@@ -49,6 +63,27 @@ async def fetch_account_summary_analytics(_user=Depends(require_user)):
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Unable to load Dynamics sector summary: {exc}",
         ) from exc
+
+
+@router.post("/accounts/enrichment-preview", response_model=EnrichmentPreviewResponse)
+async def create_enrichment_preview(request: EnrichmentPreviewRequest, _user=Depends(require_user)):
+    preview_rows = [
+        {
+            "account_id": account_id,
+            "status": "ready",
+            "source": "mock",
+            "message": "Mock enrichment preview generated. No external enrichment service was called.",
+        }
+        for account_id in request.account_ids
+    ]
+
+    return EnrichmentPreviewResponse(
+        status="preview_ready",
+        message="Mock enrichment preview generated successfully.",
+        selected_account_count=len(request.account_ids),
+        fields_to_update=request.fields_to_update,
+        preview=preview_rows,
+    )
 
 
 @router.get("/accounts/missing-website")

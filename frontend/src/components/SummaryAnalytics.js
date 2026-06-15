@@ -32,8 +32,9 @@ import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } 
 const API_URL = `${API_BASE_URL}/accounts/summary-analytics`;
 
 const numberFormatter = new Intl.NumberFormat();
+let summaryAnalyticsCache = null;
 
-function SummaryCard({ title, value, subtitle }) {
+function SummaryCard({ title, value, subtitle, valueSx }) {
   return (
     <Card
       elevation={0}
@@ -44,13 +45,19 @@ function SummaryCard({ title, value, subtitle }) {
         height: "100%",
       }}
     >
-      <CardContent sx={{ p: 2.5, "&:last-child": { pb: 2.5 } }}>
+      <CardContent sx={{ minWidth: 0, p: 2.5, "&:last-child": { pb: 2.5 } }}>
         <Typography color="text.secondary" variant="overline">
           {title}
         </Typography>
         <Typography
           color="primary.main"
-          sx={{ fontSize: { xs: "2rem", md: "2.35rem" }, fontWeight: 800, lineHeight: 1.1, mt: 0.75 }}
+          sx={{
+            fontSize: { xs: "2rem", md: "2.35rem" },
+            fontWeight: 800,
+            lineHeight: 1.1,
+            mt: 0.75,
+            ...valueSx,
+          }}
         >
           {value}
         </Typography>
@@ -76,17 +83,25 @@ export default function SummaryAnalytics() {
     let isMounted = true;
 
     async function fetchSummary() {
+      if (summaryAnalyticsCache) {
+        setSummary(summaryAnalyticsCache);
+        setIsLoading(false);
+        return;
+      }
+
       setIsLoading(true);
       setError("");
 
       try {
         const response = await axios.get(API_URL, { headers: getAuthHeaders() });
         if (isMounted) {
-          setSummary({
+          const nextSummary = {
             total_accounts: response.data?.total_accounts || 0,
             sector_count: response.data?.sector_count || 0,
             sectors: response.data?.sectors || [],
-          });
+          };
+          summaryAnalyticsCache = nextSummary;
+          setSummary(nextSummary);
         }
       } catch (fetchError) {
         if (handleUnauthorized(fetchError)) {
@@ -164,6 +179,11 @@ export default function SummaryAnalytics() {
           subtitle={topSector ? `${numberFormatter.format(topSector.account_count)} accounts` : "No sector data found"}
           title="Largest Sector"
           value={topSector?.sector || "None"}
+          valueSx={{
+            fontSize: { xs: "1.35rem", md: "1.55rem" },
+            overflowWrap: "anywhere",
+            wordBreak: "break-word",
+          }}
         />
         <SummaryCard
           subtitle="Rounded across all sectors"

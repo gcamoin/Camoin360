@@ -1,5 +1,6 @@
 import os
 import asyncio
+import time
 import httpx
 from dotenv import load_dotenv
 from pathlib import Path
@@ -15,6 +16,10 @@ load_dotenv(REPO_ROOT / ".env")
 load_dotenv(BACKEND_ROOT / ".env")
 
 API_URL = os.getenv("DYNAMICS_API_URL")
+DATA_QUALITY_CACHE_TTL_SECONDS = 120
+SUMMARY_CACHE_TTL_SECONDS = 600
+_DATA_QUALITY_CACHE = {"expires_at": 0, "data": None}
+_SUMMARY_CACHE = {"expires_at": 0, "data": None}
 
 STATE_ABBREVIATIONS = {
     "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
@@ -79,11 +84,15 @@ async def get_accounts_missing_data():
 
 
 async def get_accounts_data_quality():
+    now = time.time()
+    if _DATA_QUALITY_CACHE["data"] is not None and _DATA_QUALITY_CACHE["expires_at"] > now:
+        return _DATA_QUALITY_CACHE["data"]
+
     token = await get_access_token()
 
     url = (
         f"{API_URL}/accounts?"
-        "$select=name,address1_stateorprovince,new_sector,description,websiteurl,telephone1,new_datasource,new_employees&"
+        "$select=accountid,name,address1_stateorprovince,address1_country,address1_city,new_sector,description,websiteurl,telephone1,new_datasource,new_employees&"
         "$orderby=name asc&"
         "$top=2000"
     )
@@ -100,10 +109,18 @@ async def get_accounts_data_quality():
     if response.status_code != 200:
         raise Exception(f"Dynamics GET error: {response.text}")
 
-    return response.json().get("value", [])
+    accounts = response.json().get("value", [])
+    _DATA_QUALITY_CACHE["data"] = accounts
+    _DATA_QUALITY_CACHE["expires_at"] = now + DATA_QUALITY_CACHE_TTL_SECONDS
+
+    return accounts
 
 
 async def get_account_sector_counts():
+    now = time.time()
+    if _SUMMARY_CACHE["data"] is not None and _SUMMARY_CACHE["expires_at"] > now:
+        return _SUMMARY_CACHE["data"]
+
     token = await get_access_token()
 
     url = (
@@ -145,11 +162,15 @@ async def get_account_sector_counts():
 
     total_accounts = sum(item["account_count"] for item in sectors)
 
-    return {
+    summary = {
         "total_accounts": total_accounts,
         "sector_count": len(sectors),
         "sectors": sectors
     }
+    _SUMMARY_CACHE["data"] = summary
+    _SUMMARY_CACHE["expires_at"] = now + SUMMARY_CACHE_TTL_SECONDS
+
+    return summary
 
 
 async def get_accounts_needing_enrichment():
