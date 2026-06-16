@@ -133,7 +133,7 @@ export default function SummaryAnalytics() {
       })),
     [summary.sectors]
   );
-  const visibleChartData = chartData.slice(0, 12);
+  const chartHeight = Math.max(420, chartData.length * 36 + 80);
 
   const topSector = summary.sectors[0];
   const averageAccountsPerSector = summary.sector_count
@@ -203,40 +203,43 @@ export default function SummaryAnalytics() {
         <Typography color="primary.main" sx={{ fontWeight: 800, mb: 2 }} variant="h6">
           Accounts by Sector
         </Typography>
-        <Box sx={{ height: { xs: 420, md: 520 }, width: "100%" }}>
-          {visibleChartData.length ? (
-            <ResponsiveContainer height="100%" width="100%">
-              <BarChart
-                data={visibleChartData}
-                layout="vertical"
-                margin={{ top: 10, right: 52, left: 24, bottom: 10 }}
-              >
-                <CartesianGrid horizontal={false} stroke="rgba(0, 51, 108, 0.12)" strokeDasharray="3 3" />
-                <XAxis
-                  allowDecimals={false}
-                  tick={{ fill: theme.palette.text.secondary, fontSize: 12 }}
-                  type="number"
-                />
-                <YAxis
-                  dataKey="short_sector"
-                  tick={{ fill: theme.palette.text.secondary, fontSize: 12 }}
-                  type="category"
-                  width={170}
-                />
-                <Tooltip
-                  formatter={(value) => [numberFormatter.format(value), "Accounts"]}
-                  labelFormatter={(_, payload) => payload?.[0]?.payload?.sector || ""}
-                />
-                <Bar dataKey="account_count" fill={theme.palette.secondary.main} name="Accounts" radius={[0, 4, 4, 0]}>
-                  <LabelList
-                    dataKey="account_count"
-                    formatter={(value) => numberFormatter.format(value)}
-                    position="right"
-                    style={{ fill: theme.palette.text.primary, fontSize: 12, fontWeight: 700 }}
+        <Box sx={{ maxHeight: { xs: 420, md: 560 }, overflowY: "auto", pr: 1, width: "100%" }}>
+          {chartData.length ? (
+            <Box sx={{ height: chartHeight, minWidth: 640, width: "100%" }}>
+              <ResponsiveContainer height="100%" width="100%">
+                <BarChart
+                  data={chartData}
+                  layout="vertical"
+                  margin={{ top: 10, right: 52, left: 24, bottom: 10 }}
+                >
+                  <CartesianGrid horizontal={false} stroke="rgba(0, 51, 108, 0.12)" strokeDasharray="3 3" />
+                  <XAxis
+                    allowDecimals={false}
+                    tick={{ fill: theme.palette.text.secondary, fontSize: 12 }}
+                    type="number"
                   />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+                  <YAxis
+                    dataKey="short_sector"
+                    interval={0}
+                    tick={{ fill: theme.palette.text.secondary, fontSize: 12 }}
+                    type="category"
+                    width={170}
+                  />
+                  <Tooltip
+                    formatter={(value) => [numberFormatter.format(value), "Accounts"]}
+                    labelFormatter={(_, payload) => payload?.[0]?.payload?.sector || ""}
+                  />
+                  <Bar dataKey="account_count" fill={theme.palette.secondary.main} name="Accounts" radius={[0, 4, 4, 0]}>
+                    <LabelList
+                      dataKey="account_count"
+                      formatter={(value) => numberFormatter.format(value)}
+                      position="right"
+                      style={{ fill: theme.palette.text.primary, fontSize: 12, fontWeight: 700 }}
+                    />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </Box>
           ) : (
             <Box sx={{ alignItems: "center", display: "flex", height: "100%", justifyContent: "center" }}>
               <Typography color="text.secondary">No sector data found.</Typography>

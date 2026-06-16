@@ -1,12 +1,25 @@
 import React from "react";
-import { Box, Checkbox, Chip, FormControlLabel, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Checkbox,
+  Chip,
+  FormControl,
+  InputLabel,
+  ListItemText,
+  MenuItem,
+  Select,
+  Stack,
+  Typography,
+} from "@mui/material";
 
 export default function FieldUpdateSelector({
   fieldOptions,
   fieldsToUpdate,
-  onToggleField,
+  onFieldsChange,
   selectedFieldLabels,
 }) {
+  const selectedFieldKeys = Array.from(fieldsToUpdate);
+
   return (
     <Stack spacing={2}>
       <Box>
@@ -28,35 +41,31 @@ export default function FieldUpdateSelector({
           )}
         </Stack>
       </Box>
-      <Box
-        sx={{
-          borderTop: "1px solid rgba(0, 51, 108, 0.10)",
-          display: "grid",
-          gap: 1,
-          gridTemplateColumns: {
-            xs: "1fr",
-            sm: "repeat(2, minmax(0, 1fr))",
-            md: "repeat(4, minmax(0, 1fr))",
-          },
-          mt: 2,
-          pt: 2,
-        }}
-      >
-        {fieldOptions.map((field) => (
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={fieldsToUpdate.has(field.key)}
-                onChange={() => onToggleField(field.key)}
-                size="small"
-              />
-            }
-            key={field.key}
-            label={field.label}
-            sx={{ m: 0, minHeight: 32 }}
-          />
-        ))}
-      </Box>
+      <FormControl fullWidth size="small" sx={{ maxWidth: 420 }}>
+        <InputLabel id="fields-to-update-label">Fields To Update</InputLabel>
+        <Select
+          label="Fields To Update"
+          labelId="fields-to-update-label"
+          multiple
+          onChange={(event) => onFieldsChange(event.target.value)}
+          renderValue={(selectedKeys) =>
+            selectedKeys.length
+              ? fieldOptions
+                  .filter((field) => selectedKeys.includes(field.key))
+                  .map((field) => field.label)
+                  .join(", ")
+              : "No fields selected"
+          }
+          value={selectedFieldKeys}
+        >
+          {fieldOptions.map((field) => (
+            <MenuItem key={field.key} value={field.key}>
+              <Checkbox checked={fieldsToUpdate.has(field.key)} size="small" />
+              <ListItemText primary={field.label} />
+            </MenuItem>
+          ))}
+        </Select>
+      </FormControl>
     </Stack>
   );
 }

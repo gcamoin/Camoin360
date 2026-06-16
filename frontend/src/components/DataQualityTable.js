@@ -329,31 +329,6 @@ export default function DataQualityTable() {
     });
   }, [accounts, debouncedSearchQuery, selectedMissingField, selectedSector, showNeedsAttentionOnly]);
 
-  const dataQualitySummary = useMemo(() => {
-    const totalAccounts = accounts.length;
-    const accountsNeedingAttention = accounts.filter(hasMissingQualityField).length;
-    const averageDataQualityScore = totalAccounts
-      ? Math.round(
-          accounts.reduce((total, account) => total + account.dataQualityScore, 0) / totalAccounts
-        )
-      : 0;
-
-    const missingByField = qualityFields
-      .map((field) => ({
-        ...field,
-        missing: accounts.filter((account) => account.missingFieldKeys.has(field.key)).length,
-      }))
-      .filter((field) => field.missing > 0)
-      .sort((firstField, secondField) => secondField.missing - firstField.missing);
-
-    return {
-      accountsNeedingAttention,
-      averageDataQualityScore,
-      mostCommonMissingField: missingByField[0]?.label || "None",
-      totalAccounts,
-    };
-  }, [accounts]);
-
   const missingCounts = useMemo(() => {
     const keyFieldMetrics = keyMissingMetricFields.map((field) => ({
       ...field,
@@ -438,18 +413,8 @@ export default function DataQualityTable() {
     });
   }
 
-  function toggleFieldToUpdate(fieldKey) {
-    setFieldsToUpdate((currentFields) => {
-      const nextFields = new Set(currentFields);
-
-      if (nextFields.has(fieldKey)) {
-        nextFields.delete(fieldKey);
-      } else {
-        nextFields.add(fieldKey);
-      }
-
-      return nextFields;
-    });
+  function updateFieldsToUpdate(fieldKeys) {
+    setFieldsToUpdate(new Set(fieldKeys));
   }
 
   function handleChangePage(_event, nextPage) {
@@ -543,7 +508,6 @@ export default function DataQualityTable() {
       <DataQualitySummary
         filteredAccountCount={filteredAccounts.length}
         missingCounts={missingCounts}
-        summary={dataQualitySummary}
       />
 
       <Paper
@@ -599,11 +563,16 @@ export default function DataQualityTable() {
             <TableHead>
               <TableRow>
                 <TableCell
-                  padding="checkbox"
+                  padding="none"
                   sx={{
                     backgroundColor: "primary.main",
                     color: "common.white",
-                    width: 52,
+                    minWidth: 56,
+                    px: 0,
+                    py: 1,
+                    textAlign: "center",
+                    verticalAlign: "middle",
+                    width: 56,
                   }}
                 >
                   <Checkbox
@@ -612,7 +581,8 @@ export default function DataQualityTable() {
                     indeterminate={areSomeVisibleRowsSelected}
                     inputProps={{ "aria-label": "Select all visible accounts" }}
                     onChange={toggleVisibleAccountSelection}
-                    sx={{ color: "common.white", "&.Mui-checked": { color: "common.white" } }}
+                    size="small"
+                    sx={{ color: "common.white", p: 0.5, "&.Mui-checked": { color: "common.white" } }}
                   />
                 </TableCell>
                 {columns.map((column) => (
@@ -640,11 +610,23 @@ export default function DataQualityTable() {
 
                   return (
                     <TableRow key={accountId} hover selected={isSelected}>
-                      <TableCell padding="checkbox">
+                      <TableCell
+                        padding="none"
+                        sx={{
+                          minWidth: 56,
+                          px: 0,
+                          py: 1,
+                          textAlign: "center",
+                          verticalAlign: "middle",
+                          width: 56,
+                        }}
+                      >
                         <Checkbox
                           checked={isSelected}
                           inputProps={{ "aria-label": `Select ${account.name || "account"}` }}
                           onChange={() => toggleAccountSelection(accountId)}
+                          size="small"
+                          sx={{ p: 0.5 }}
                         />
                       </TableCell>
                       {columns.map((column) => (
@@ -655,7 +637,7 @@ export default function DataQualityTable() {
                             px: 1.5,
                             py: 1.25,
                             textOverflow: "ellipsis",
-                            verticalAlign: "top",
+                            verticalAlign: "middle",
                             whiteSpace: column.key === "description" ? "normal" : "nowrap",
                             wordBreak: column.key === "description" ? "break-word" : "normal",
                           }}
@@ -741,7 +723,7 @@ export default function DataQualityTable() {
           <FieldUpdateSelector
             fieldOptions={fieldUpdateOptions}
             fieldsToUpdate={fieldsToUpdate}
-            onToggleField={toggleFieldToUpdate}
+            onFieldsChange={updateFieldsToUpdate}
             selectedFieldLabels={selectedFieldLabels}
           />
         </Box>
