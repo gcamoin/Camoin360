@@ -2,19 +2,20 @@ import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import {
   Alert,
+  Badge,
   Box,
   Button,
-  Card,
-  CardContent,
+  Chip,
   Checkbox,
   CircularProgress,
-  FormControl,
-  FormControlLabel,
-  InputLabel,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  LinearProgress,
   Link,
-  MenuItem,
   Paper,
-  Select,
+  Stack,
   Table,
   TableBody,
   TableCell,
@@ -22,16 +23,18 @@ import {
   TableHead,
   TablePagination,
   TableRow,
-  TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
 
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
+import DataQualityFilters from "./DataQualityFilters";
+import DataQualitySummary from "./DataQualitySummary";
+import FieldUpdateSelector from "./FieldUpdateSelector";
 
 const API_URL = `${API_BASE_URL}/accounts/data-quality`;
 const SEARCH_DEBOUNCE_MS = 200;
-const DEFAULT_ROWS_PER_PAGE = 100;
+const DEFAULT_ROWS_PER_PAGE = 25;
 
 let dataQualityCache = null;
 
@@ -43,7 +46,7 @@ const columns = [
   { key: "address1_country", label: "Country", width: "10%" },
   { key: "address1_city", label: "City", width: "10%" },
   { key: "missing_fields_summary", label: "Missing Fields Summary", width: "15%" },
-  { key: "data_quality_score", label: "Data Quality Score", width: "8%" },
+  { key: "data_quality_score", label: "Quality", width: "8%" },
 ];
 
 const qualityFields = [
@@ -78,6 +81,12 @@ const scoreFields = [
 ];
 
 const locationScoreFields = ["address1_city", "address1_stateorprovince", "address1_country"];
+const keyMissingMetricFields = [
+  { key: "websiteurl", label: "Missing Website" },
+  { key: "telephone1", label: "Missing Phone" },
+  { key: "description", label: "Missing Description" },
+  { key: "new_employees", label: "Missing Employee Count" },
+];
 
 function getAccountSelectionId(account) {
   return [
@@ -118,6 +127,18 @@ function getDataQualityScore(account) {
 
 function hasMissingQualityField(account) {
   return account.hasMissingQualityField;
+}
+
+function getQualityDisplay(score) {
+  if (score >= 80) {
+    return { color: "success", label: "Good" };
+  }
+
+  if (score >= 50) {
+    return { color: "warning", label: "Fair" };
+  }
+
+  return { color: "error", label: "Poor" };
 }
 
 function matchesSearch(account, query) {
@@ -173,15 +194,38 @@ function renderCell(account, columnKey) {
 
   if (columnKey === "data_quality_score") {
     const score = account.dataQualityScore;
+    const qualityDisplay = getQualityDisplay(score);
 
     return (
-      <Typography
-        color={score >= 80 ? "success.main" : score >= 50 ? "warning.main" : "error.main"}
-        sx={{ fontWeight: 800 }}
-        variant="body2"
+      <Box
+        sx={{
+          display: "grid",
+          gap: 0.75,
+          minWidth: 82,
+        }}
       >
-        {score}%
-      </Typography>
+        <Badge
+          badgeContent={`${score}%`}
+          color={qualityDisplay.color}
+          sx={{
+            justifySelf: "start",
+            "& .MuiBadge-badge": {
+              fontSize: "0.65rem",
+              fontWeight: 800,
+              minWidth: 30,
+              right: -12,
+            },
+          }}
+        >
+          <Chip color={qualityDisplay.color} label={qualityDisplay.label} size="small" />
+        </Badge>
+        <LinearProgress
+          color={qualityDisplay.color}
+          sx={{ borderRadius: 999, height: 6 }}
+          value={score}
+          variant="determinate"
+        />
+      </Box>
     );
   }
 
@@ -249,6 +293,7 @@ export default function DataQualityTable() {
   const [showNeedsAttentionOnly, setShowNeedsAttentionOnly] = useState(false);
   const [selectedAccountIds, setSelectedAccountIds] = useState(() => new Set());
   const [fieldsToUpdate, setFieldsToUpdate] = useState(() => new Set());
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
 
@@ -284,24 +329,49 @@ export default function DataQualityTable() {
     });
   }, [accounts, debouncedSearchQuery, selectedMissingField, selectedSector, showNeedsAttentionOnly]);
 
+  const dataQualitySummary = useMemo(() => {
+    const totalAccounts = accounts.length;
+    const accountsNeedingAttention = accounts.filter(hasMissingQualityField).length;
+    const averageDataQualityScore = totalAccounts
+      ? Math.round(
+          accounts.reduce((total, account) => total + account.dataQualityScore, 0) / totalAccounts
+        )
+      : 0;
+
+    const missingByField = qualityFields
+      .map((field) => ({
+        ...field,
+        missing: accounts.filter((account) => account.missingFieldKeys.has(field.key)).length,
+      }))
+      .filter((field) => field.missing > 0)
+      .sort((firstField, secondField) => secondField.missing - firstField.missing);
+
+    return {
+      accountsNeedingAttention,
+      averageDataQualityScore,
+      mostCommonMissingField: missingByField[0]?.label || "None",
+      totalAccounts,
+    };
+  }, [accounts]);
+
   const missingCounts = useMemo(() => {
-    const missingByField = qualityFields.reduce((counts, field) => {
-      counts[field.key] = 0;
-      return counts;
-    }, {});
-
-    filteredAccounts.forEach((account) => {
-      account.missingFieldKeys.forEach((fieldKey) => {
-        if (fieldKey in missingByField) {
-          missingByField[fieldKey] += 1;
-        }
-      });
-    });
-
-    return qualityFields.map((field) => ({
+    const keyFieldMetrics = keyMissingMetricFields.map((field) => ({
       ...field,
-      missing: missingByField[field.key],
+      missing: filteredAccounts.filter((account) => account.missingFieldKeys.has(field.key)).length,
     }));
+    const incompleteLocationCount = filteredAccounts.filter((account) =>
+      locationScoreFields.some((fieldKey) => account.missingFieldKeys.has(fieldKey))
+    ).length;
+
+    return [
+      ...keyFieldMetrics,
+      {
+        key: "incomplete_location",
+        label: "Incomplete Location",
+        missing: incompleteLocationCount,
+        helperText: "Missing city, state, or country",
+      },
+    ];
   }, [filteredAccounts]);
 
   const activeFilterCount = [
@@ -325,6 +395,7 @@ export default function DataQualityTable() {
   const selectedFieldLabels = fieldUpdateOptions
     .filter((field) => fieldsToUpdate.has(field.key))
     .map((field) => field.label);
+  const canPreviewEnrichment = selectedAccountIds.size > 0 && selectedFieldLabels.length > 0;
 
   function resetFilters() {
     setSelectedSector("all");
@@ -468,199 +539,12 @@ export default function DataQualityTable() {
   }
 
   return (
-    <Box sx={{ display: "grid", gap: 3 }}>
-      <Box
-        sx={{
-          alignItems: { xs: "stretch", lg: "center" },
-          display: "grid",
-          gap: 2,
-          gridTemplateColumns: {
-            xs: "1fr",
-            md: "minmax(220px, 1fr) minmax(180px, 240px) minmax(200px, 260px)",
-            lg: "minmax(260px, 1fr) minmax(180px, 240px) minmax(200px, 260px) auto auto",
-          },
-        }}
-      >
-        <TextField
-          label="Search accounts"
-          onChange={(event) => setSearchQuery(event.target.value)}
-          placeholder="Name, sector, website, state, country, city..."
-          size="small"
-          value={searchQuery}
-        />
-        <FormControl size="small">
-          <InputLabel id="sector-filter-label">Sector</InputLabel>
-          <Select
-            label="Sector"
-            labelId="sector-filter-label"
-            onChange={(event) => setSelectedSector(event.target.value)}
-            value={selectedSector}
-          >
-            <MenuItem value="all">All sectors</MenuItem>
-            {sectors.map((sector) => (
-              <MenuItem key={sector} value={sector}>
-                {sector}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-        <FormControl size="small">
-          <InputLabel id="missing-field-filter-label">Missing Field</InputLabel>
-          <Select
-            label="Missing Field"
-            labelId="missing-field-filter-label"
-            onChange={(event) => setSelectedMissingField(event.target.value)}
-            value={selectedMissingField}
-          >
-            <MenuItem value="all">Any missing field</MenuItem>
-            {qualityFields.map((field) => (
-              <MenuItem key={field.key} value={field.key}>
-                {field.label}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={showNeedsAttentionOnly}
-              onChange={(event) => setShowNeedsAttentionOnly(event.target.checked)}
-              size="small"
-            />
-          }
-          label="Needs attention"
-          sx={{ m: 0, whiteSpace: "nowrap" }}
-        />
-        <Button disabled={!activeFilterCount} onClick={resetFilters} size="small" variant="outlined">
-          Clear filters
-        </Button>
-      </Box>
-
-      <Box
-        sx={{
-          display: "grid",
-          gap: 2,
-          gridTemplateColumns: {
-            xs: "1fr",
-            sm: "repeat(2, minmax(0, 1fr))",
-            lg: "repeat(4, minmax(0, 1fr))",
-          },
-        }}
-      >
-        {missingCounts.map((column) => (
-          <Card
-            key={column.key}
-            elevation={0}
-            sx={{
-              border: "1px solid rgba(0, 51, 108, 0.10)",
-              borderRadius: 2,
-              boxShadow: "0 10px 30px rgba(0, 51, 108, 0.06)",
-            }}
-          >
-            <CardContent sx={{ p: 2.5, "&:last-child": { pb: 2.5 } }}>
-              <Typography color="text.secondary" variant="overline">
-                Missing {column.label}
-              </Typography>
-              <Typography color="primary.main" sx={{ fontSize: "2rem", fontWeight: 800, lineHeight: 1.1 }}>
-                {column.missing}
-              </Typography>
-              <Typography color="text.secondary" variant="body2">
-                of {filteredAccounts.length} accounts
-              </Typography>
-            </CardContent>
-          </Card>
-        ))}
-      </Box>
-
-      <Paper
-        elevation={0}
-        sx={{
-          border: "1px solid rgba(0, 51, 108, 0.10)",
-          borderRadius: 2,
-          p: 2,
-        }}
-      >
-        <Box
-          sx={{
-            alignItems: { xs: "flex-start", sm: "center" },
-            display: "flex",
-            flexDirection: { xs: "column", sm: "row" },
-            gap: 1,
-            justifyContent: "space-between",
-            mb: 1.5,
-          }}
-        >
-          <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="h6">
-            Fields To Update
-          </Typography>
-          <Typography color="text.secondary" variant="body2">
-            {fieldsToUpdate.size} selected
-          </Typography>
-        </Box>
-        <Box
-          sx={{
-            display: "grid",
-            gap: 1,
-            gridTemplateColumns: {
-              xs: "1fr",
-              sm: "repeat(2, minmax(0, 1fr))",
-              md: "repeat(4, minmax(0, 1fr))",
-            },
-          }}
-        >
-          {fieldUpdateOptions.map((field) => (
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={fieldsToUpdate.has(field.key)}
-                  onChange={() => toggleFieldToUpdate(field.key)}
-                  size="small"
-                />
-              }
-              key={field.key}
-              label={field.label}
-              sx={{ m: 0 }}
-            />
-          ))}
-        </Box>
-      </Paper>
-
-      <Paper
-        elevation={0}
-        sx={{
-          border: "1px solid rgba(0, 51, 108, 0.10)",
-          borderRadius: 2,
-          p: 2,
-        }}
-      >
-        <Typography color="primary.main" sx={{ fontWeight: 800, mb: 1.5 }} variant="h6">
-          Selection Review
-        </Typography>
-        <Box
-          sx={{
-            display: "grid",
-            gap: 2,
-            gridTemplateColumns: { xs: "1fr", md: "220px 1fr" },
-          }}
-        >
-          <Box>
-            <Typography color="text.secondary" variant="overline">
-              Selected Account Count
-            </Typography>
-            <Typography color="primary.main" sx={{ fontSize: "2rem", fontWeight: 800, lineHeight: 1.1 }}>
-              {selectedAccountIds.size}
-            </Typography>
-          </Box>
-          <Box>
-            <Typography color="text.secondary" variant="overline">
-              Fields To Update
-            </Typography>
-            <Typography color="text.primary" variant="body2">
-              {selectedFieldLabels.length ? selectedFieldLabels.join(", ") : "No fields selected"}
-            </Typography>
-          </Box>
-        </Box>
-      </Paper>
+    <Stack spacing={3}>
+      <DataQualitySummary
+        filteredAccountCount={filteredAccounts.length}
+        missingCounts={missingCounts}
+        summary={dataQualitySummary}
+      />
 
       <Paper
         elevation={0}
@@ -670,20 +554,36 @@ export default function DataQualityTable() {
           overflow: "hidden",
         }}
       >
+        <DataQualityFilters
+          activeFilterCount={activeFilterCount}
+          missingFieldOptions={qualityFields}
+          onMissingFieldChange={setSelectedMissingField}
+          onNeedsAttentionChange={setShowNeedsAttentionOnly}
+          onResetFilters={resetFilters}
+          onSearchChange={setSearchQuery}
+          onSectorChange={setSelectedSector}
+          searchQuery={searchQuery}
+          sectors={sectors}
+          selectedMissingField={selectedMissingField}
+          selectedSector={selectedSector}
+          showNeedsAttentionOnly={showNeedsAttentionOnly}
+        />
         <Box
           sx={{
             alignItems: "center",
             borderBottom: "1px solid rgba(0, 51, 108, 0.10)",
             display: "flex",
+            flexDirection: { xs: "column", sm: "row" },
+            gap: 1,
             justifyContent: "space-between",
-            px: 2,
+            px: { xs: 2, md: 3 },
             py: 1.5,
           }}
         >
           <Typography color="text.secondary" variant="body2">
-            Showing {filteredAccounts.length} of {accounts.length} loaded accounts
+            Showing {paginatedAccounts.length} of {filteredAccounts.length} Accounts
           </Typography>
-          <Box sx={{ display: "flex", gap: 2 }}>
+          <Stack direction="row" spacing={2}>
             <Typography color="text.secondary" variant="body2">
               {selectedVisibleCount} visible selected
             </Typography>
@@ -692,10 +592,10 @@ export default function DataQualityTable() {
                 {activeFilterCount} active filter{activeFilterCount === 1 ? "" : "s"}
               </Typography>
             ) : null}
-          </Box>
+          </Stack>
         </Box>
         <TableContainer sx={{ maxHeight: "calc(100vh - 360px)" }}>
-          <Table stickyHeader sx={{ tableLayout: "fixed", width: "100%" }}>
+          <Table size="small" stickyHeader sx={{ tableLayout: "fixed", width: "100%" }}>
             <TableHead>
               <TableRow>
                 <TableCell
@@ -722,6 +622,7 @@ export default function DataQualityTable() {
                       backgroundColor: "primary.main",
                       color: "common.white",
                       fontWeight: 800,
+                      py: 1.25,
                       whiteSpace: "nowrap",
                       width: column.width,
                     }}
@@ -752,6 +653,7 @@ export default function DataQualityTable() {
                           sx={{
                             overflow: "hidden",
                             px: 1.5,
+                            py: 1.25,
                             textOverflow: "ellipsis",
                             verticalAlign: "top",
                             whiteSpace: column.key === "description" ? "normal" : "nowrap",
@@ -783,9 +685,100 @@ export default function DataQualityTable() {
           onRowsPerPageChange={handleChangeRowsPerPage}
           page={page}
           rowsPerPage={rowsPerPage}
-          rowsPerPageOptions={[50, 100, 250]}
+          rowsPerPageOptions={[25, 50, 100]}
         />
       </Paper>
-    </Box>
+
+      <Paper
+        elevation={0}
+        sx={{
+          border: "1px solid rgba(0, 51, 108, 0.10)",
+          borderRadius: 2,
+          p: { xs: 2, md: 3 },
+        }}
+      >
+        <Stack
+          direction={{ xs: "column", md: "row" }}
+          spacing={2}
+          sx={{ alignItems: { xs: "flex-start", md: "center" }, justifyContent: "space-between", mb: 2 }}
+        >
+          <Box>
+            <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="h6">
+              Action Panel
+            </Typography>
+            <Typography color="text.secondary" variant="body2">
+              Review selected accounts and fields before enrichment.
+            </Typography>
+          </Box>
+          <Button
+            disabled={!canPreviewEnrichment}
+            onClick={() => setIsPreviewOpen(true)}
+            size="large"
+            sx={{ borderRadius: 1, fontWeight: 800, minWidth: 190 }}
+            variant="contained"
+          >
+            Preview Enrichment
+          </Button>
+        </Stack>
+        <Box
+          sx={{
+            display: "grid",
+            gap: 2,
+            gridTemplateColumns: {
+              xs: "1fr",
+              md: "220px minmax(0, 1fr)",
+            },
+          }}
+        >
+          <Box>
+            <Typography color="text.secondary" variant="overline">
+              Selected Accounts
+            </Typography>
+            <Typography color="primary.main" sx={{ fontSize: "1.75rem", fontWeight: 800, lineHeight: 1.15 }}>
+              {selectedAccountIds.size} Account{selectedAccountIds.size === 1 ? "" : "s"} Selected
+            </Typography>
+          </Box>
+          <FieldUpdateSelector
+            fieldOptions={fieldUpdateOptions}
+            fieldsToUpdate={fieldsToUpdate}
+            onToggleField={toggleFieldToUpdate}
+            selectedFieldLabels={selectedFieldLabels}
+          />
+        </Box>
+      </Paper>
+
+      <Dialog fullWidth maxWidth="sm" onClose={() => setIsPreviewOpen(false)} open={isPreviewOpen}>
+        <DialogTitle sx={{ color: "primary.main", fontWeight: 800 }}>
+          Preview Enrichment
+        </DialogTitle>
+        <DialogContent dividers>
+          <Box sx={{ display: "grid", gap: 2 }}>
+            <Box>
+              <Typography color="text.secondary" variant="overline">
+                Selected Accounts
+              </Typography>
+              <Typography color="primary.main" sx={{ fontSize: "1.75rem", fontWeight: 800, lineHeight: 1.15 }}>
+                {selectedAccountIds.size} Account{selectedAccountIds.size === 1 ? "" : "s"} Selected
+              </Typography>
+            </Box>
+            <Box>
+              <Typography color="text.secondary" variant="overline">
+                Selected Fields
+              </Typography>
+              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, mt: 0.5 }}>
+                {selectedFieldLabels.map((fieldLabel) => (
+                  <Chip color="primary" key={fieldLabel} label={fieldLabel} size="small" />
+                ))}
+              </Box>
+            </Box>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setIsPreviewOpen(false)} sx={{ borderRadius: 1, fontWeight: 800 }} variant="contained">
+            Close
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Stack>
   );
 }
