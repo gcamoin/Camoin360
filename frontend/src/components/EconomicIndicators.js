@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import axios from "axios";
 import {
   Area,
   AreaChart,
@@ -15,144 +16,17 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Box, Button, Paper, Stack, Typography } from "@mui/material";
+import { Alert, Box, Button, CircularProgress, Paper, Stack, Typography } from "@mui/material";
+import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
 
-// ── Raw data ──────────────────────────────────────────────────────────────────
-
-const RAW_SENTIMENT = [
-  { year: 2008, date: "Q1 '08", value: 70 },
-  { year: 2008, date: "Q3 '08", value: 61 },
-  { year: 2009, date: "Q1 '09", value: 56 },
-  { year: 2009, date: "Q3 '09", value: 70 },
-  { year: 2010, date: "Q1 '10", value: 74 },
-  { year: 2010, date: "Q3 '10", value: 68 },
-  { year: 2011, date: "Q1 '11", value: 74 },
-  { year: 2011, date: "Q3 '11", value: 58 },
-  { year: 2012, date: "Q1 '12", value: 75 },
-  { year: 2012, date: "Q3 '12", value: 79 },
-  { year: 2013, date: "Q1 '13", value: 77 },
-  { year: 2013, date: "Q3 '13", value: 85 },
-  { year: 2014, date: "Q1 '14", value: 81 },
-  { year: 2014, date: "Q3 '14", value: 83 },
-  { year: 2015, date: "Q1 '15", value: 95 },
-  { year: 2015, date: "Q3 '15", value: 91 },
-  { year: 2016, date: "Q1 '16", value: 92 },
-  { year: 2016, date: "Q3 '16", value: 89 },
-  { year: 2017, date: "Q1 '17", value: 97 },
-  { year: 2017, date: "Q3 '17", value: 95 },
-  { year: 2018, date: "Q1 '18", value: 99 },
-  { year: 2018, date: "Q3 '18", value: 96 },
-  { year: 2019, date: "Q1 '19", value: 93 },
-  { year: 2019, date: "Q3 '19", value: 93 },
-  { year: 2020, date: "Q1 '20", value: 90 },
-  { year: 2020, date: "Q3 '20", value: 74 },
-  { year: 2021, date: "Q1 '21", value: 84 },
-  { year: 2021, date: "Q3 '21", value: 72 },
-  { year: 2022, date: "Q1 '22", value: 62 },
-  { year: 2022, date: "Q3 '22", value: 59 },
-  { year: 2023, date: "Q1 '23", value: 67 },
-  { year: 2023, date: "Q3 '23", value: 69 },
-  { year: 2024, date: "Q1 '24", value: 77 },
-  { year: 2024, date: "Q3 '24", value: 72 },
-];
-
-const RAW_GDP = [
-  { year: 2018, date: "Q1'18", value: 2.5 },
-  { year: 2018, date: "Q2'18", value: 4.2 },
-  { year: 2018, date: "Q3'18", value: 3.0 },
-  { year: 2018, date: "Q4'18", value: 1.1 },
-  { year: 2019, date: "Q1'19", value: 3.1 },
-  { year: 2019, date: "Q2'19", value: 2.0 },
-  { year: 2019, date: "Q3'19", value: 2.1 },
-  { year: 2019, date: "Q4'19", value: 2.4 },
-  { year: 2020, date: "Q1'20", value: -5.0 },
-  { year: 2020, date: "Q2'20", value: -29.9 },
-  { year: 2020, date: "Q3'20", value: 35.3 },
-  { year: 2020, date: "Q4'20", value: 4.0 },
-  { year: 2021, date: "Q1'21", value: 6.3 },
-  { year: 2021, date: "Q2'21", value: 6.7 },
-  { year: 2021, date: "Q3'21", value: 2.3 },
-  { year: 2021, date: "Q4'21", value: 6.9 },
-  { year: 2022, date: "Q1'22", value: -1.6 },
-  { year: 2022, date: "Q2'22", value: -0.6 },
-  { year: 2022, date: "Q3'22", value: 3.2 },
-  { year: 2022, date: "Q4'22", value: 2.6 },
-  { year: 2023, date: "Q1'23", value: 2.0 },
-  { year: 2023, date: "Q2'23", value: 2.4 },
-  { year: 2023, date: "Q3'23", value: 4.9 },
-  { year: 2023, date: "Q4'23", value: 3.4 },
-  { year: 2024, date: "Q1'24", value: 1.4 },
-  { year: 2024, date: "Q2'24", value: 3.0 },
-  { year: 2024, date: "Q3'24", value: 2.8 },
-];
-
-const RAW_TREASURY = [
-  { year: 2018, date: "Q1'18", twoYear: 2.27, tenYear: 2.74 },
-  { year: 2018, date: "Q2'18", twoYear: 2.55, tenYear: 2.93 },
-  { year: 2018, date: "Q3'18", twoYear: 2.82, tenYear: 3.05 },
-  { year: 2018, date: "Q4'18", twoYear: 2.96, tenYear: 3.14 },
-  { year: 2019, date: "Q1'19", twoYear: 2.44, tenYear: 2.41 },
-  { year: 2019, date: "Q2'19", twoYear: 1.87, tenYear: 2.00 },
-  { year: 2019, date: "Q3'19", twoYear: 1.71, tenYear: 1.66 },
-  { year: 2019, date: "Q4'19", twoYear: 1.60, tenYear: 1.92 },
-  { year: 2020, date: "Q1'20", twoYear: 0.59, tenYear: 0.87 },
-  { year: 2020, date: "Q2'20", twoYear: 0.21, tenYear: 0.66 },
-  { year: 2020, date: "Q3'20", twoYear: 0.14, tenYear: 0.68 },
-  { year: 2020, date: "Q4'20", twoYear: 0.13, tenYear: 0.93 },
-  { year: 2021, date: "Q1'21", twoYear: 0.16, tenYear: 1.74 },
-  { year: 2021, date: "Q2'21", twoYear: 0.25, tenYear: 1.52 },
-  { year: 2021, date: "Q3'21", twoYear: 0.27, tenYear: 1.52 },
-  { year: 2021, date: "Q4'21", twoYear: 0.73, tenYear: 1.51 },
-  { year: 2022, date: "Q1'22", twoYear: 2.33, tenYear: 2.33 },
-  { year: 2022, date: "Q2'22", twoYear: 2.96, tenYear: 2.98 },
-  { year: 2022, date: "Q3'22", twoYear: 4.22, tenYear: 3.83 },
-  { year: 2022, date: "Q4'22", twoYear: 4.41, tenYear: 3.87 },
-  { year: 2023, date: "Q1'23", twoYear: 4.60, tenYear: 3.96 },
-  { year: 2023, date: "Q2'23", twoYear: 4.87, tenYear: 3.84 },
-  { year: 2023, date: "Q3'23", twoYear: 5.04, tenYear: 4.57 },
-  { year: 2023, date: "Q4'23", twoYear: 4.43, tenYear: 3.97 },
-  { year: 2024, date: "Q1'24", twoYear: 4.59, tenYear: 4.20 },
-  { year: 2024, date: "Q2'24", twoYear: 4.75, tenYear: 4.36 },
-  { year: 2024, date: "Q3'24", twoYear: 3.64, tenYear: 3.79 },
-  { year: 2024, date: "Q4'24", twoYear: 4.24, tenYear: 4.57 },
-];
-
-const RAW_SP500 = [
-  { year: 2008, date: "Q1 '08", value: 195 },
-  { year: 2008, date: "Q3 '08", value: 143 },
-  { year: 2009, date: "Q1 '09", value: 98 },
-  { year: 2009, date: "Q3 '09", value: 125 },
-  { year: 2010, date: "Q1 '10", value: 140 },
-  { year: 2010, date: "Q3 '10", value: 145 },
-  { year: 2011, date: "Q1 '11", value: 162 },
-  { year: 2011, date: "Q3 '11", value: 143 },
-  { year: 2012, date: "Q1 '12", value: 170 },
-  { year: 2012, date: "Q3 '12", value: 192 },
-  { year: 2013, date: "Q1 '13", value: 210 },
-  { year: 2013, date: "Q3 '13", value: 218 },
-  { year: 2014, date: "Q1 '14", value: 235 },
-  { year: 2014, date: "Q3 '14", value: 255 },
-  { year: 2015, date: "Q1 '15", value: 270 },
-  { year: 2015, date: "Q3 '15", value: 248 },
-  { year: 2016, date: "Q1 '16", value: 265 },
-  { year: 2016, date: "Q3 '16", value: 292 },
-  { year: 2017, date: "Q1 '17", value: 295 },
-  { year: 2017, date: "Q3 '17", value: 315 },
-  { year: 2018, date: "Q1 '18", value: 295 },
-  { year: 2018, date: "Q3 '18", value: 315 },
-  { year: 2019, date: "Q1 '19", value: 310 },
-  { year: 2019, date: "Q3 '19", value: 342 },
-  { year: 2020, date: "Q1 '20", value: 305 },
-  { year: 2020, date: "Q3 '20", value: 315 },
-  { year: 2021, date: "Q1 '21", value: 358 },
-  { year: 2021, date: "Q3 '21", value: 405 },
-  { year: 2022, date: "Q1 '22", value: 395 },
-  { year: 2022, date: "Q3 '22", value: 322 },
-  { year: 2023, date: "Q1 '23", value: 352 },
-  { year: 2023, date: "Q3 '23", value: 328 },
-  { year: 2024, date: "Q1 '24", value: 375 },
-  { year: 2024, date: "Q3 '24", value: 392 },
-];
+const API_URL = `${API_BASE_URL}/economic-indicators`;
+const REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+const EMPTY_SERIES = {
+  sentiment: [],
+  gdp: [],
+  treasury: [],
+  housing: [],
+};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -215,50 +89,146 @@ function ChartCard({ title, source, children }) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function EconomicIndicators() {
+  const isMountedRef = useRef(true);
   const [range, setRange] = useState("All Years");
+  const [series, setSeries] = useState(EMPTY_SERIES);
+  const [sources, setSources] = useState({});
+  const [updatedAt, setUpdatedAt] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState("");
   const years = RANGES.find((r) => r.label === range)?.years ?? null;
 
-  const sentiment = useMemo(() => filterByRange(RAW_SENTIMENT, years), [years]);
-  const gdp = useMemo(() => filterByRange(RAW_GDP, years), [years]);
-  const treasury = useMemo(() => filterByRange(RAW_TREASURY, years), [years]);
-  const sp500 = useMemo(() => filterByRange(RAW_SP500, years), [years]);
+  const fetchIndicators = useCallback(async ({ refresh = false, silent = false } = {}) => {
+    if (!isMountedRef.current) return;
+
+    if (silent) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
+    setError("");
+
+    try {
+      const response = await axios.get(API_URL, {
+        headers: getAuthHeaders(),
+        params: refresh ? { refresh: true } : undefined,
+      });
+
+      if (!isMountedRef.current) return;
+
+      setSeries({
+        sentiment: response.data?.series?.sentiment || [],
+        gdp: response.data?.series?.gdp || [],
+        treasury: response.data?.series?.treasury || [],
+        housing: response.data?.series?.housing || [],
+      });
+      setSources(response.data?.sources || {});
+      setUpdatedAt(response.data?.updated_at || "");
+    } catch (fetchError) {
+      if (handleUnauthorized(fetchError)) {
+        return;
+      }
+
+      if (!isMountedRef.current) return;
+
+      setError(getApiErrorMessage(fetchError, "Unable to load live economic indicators."));
+    } finally {
+      if (!isMountedRef.current) return;
+
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    fetchIndicators();
+    const intervalId = setInterval(() => {
+      fetchIndicators({ silent: true });
+    }, REFRESH_INTERVAL_MS);
+
+    return () => {
+      isMountedRef.current = false;
+      clearInterval(intervalId);
+    };
+  }, [fetchIndicators]);
+
+  const sentiment = useMemo(() => filterByRange(series.sentiment, years), [series.sentiment, years]);
+  const gdp = useMemo(() => filterByRange(series.gdp, years), [series.gdp, years]);
+  const treasury = useMemo(() => filterByRange(series.treasury, years), [series.treasury, years]);
+  const housing = useMemo(() => filterByRange(series.housing, years), [series.housing, years]);
 
   const xInterval = (len) => Math.max(0, Math.floor(len / 6) - 1);
+  const updatedLabel = updatedAt
+    ? `Updated ${new Intl.DateTimeFormat(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(new Date(updatedAt))}`
+    : "";
+
+  if (isLoading) {
+    return (
+      <Box sx={{ display: "flex", justifyContent: "center", py: 8 }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
 
   return (
     <Stack spacing={2.5}>
       {/* Filter bar */}
-      <Stack direction="row" justifyContent="flex-end" alignItems="center" spacing={0.75}>
-        {RANGES.map(({ label }) => {
-          const isActive = range === label;
-          return (
-            <Button
-              key={label}
-              size="small"
-              onClick={() => setRange(label)}
-              variant={isActive ? "contained" : "outlined"}
-              disableElevation
-              sx={{
-                fontSize: "0.75rem",
-                fontWeight: 700,
-                px: 1.5,
-                py: 0.4,
-                minWidth: 0,
-                borderRadius: 1,
-                ...(!isActive && { borderColor: "divider", color: "text.secondary" }),
-              }}
-            >
-              {label}
-            </Button>
-          );
-        })}
-        <Button
-          size="small"
-          onClick={() => setRange("All Years")}
-          sx={{ fontSize: "0.75rem", color: "text.secondary", fontWeight: 600, minWidth: 0 }}
-        >
-          Reset
-        </Button>
+      {error ? <Alert severity="error">{error}</Alert> : null}
+      <Stack
+        direction={{ xs: "column", sm: "row" }}
+        justifyContent="space-between"
+        alignItems={{ xs: "stretch", sm: "center" }}
+        spacing={1.5}
+      >
+        <Typography color="text.secondary" fontSize="0.75rem">
+          {updatedLabel || "Live economic data"}
+        </Typography>
+        <Stack direction="row" justifyContent="flex-end" alignItems="center" spacing={0.75} flexWrap="wrap">
+          {RANGES.map(({ label }) => {
+            const isActive = range === label;
+            return (
+              <Button
+                key={label}
+                size="small"
+                onClick={() => setRange(label)}
+                variant={isActive ? "contained" : "outlined"}
+                disableElevation
+                sx={{
+                  fontSize: "0.75rem",
+                  fontWeight: 700,
+                  px: 1.5,
+                  py: 0.4,
+                  minWidth: 0,
+                  borderRadius: 1,
+                  ...(!isActive && { borderColor: "divider", color: "text.secondary" }),
+                }}
+              >
+                {label}
+              </Button>
+            );
+          })}
+          <Button
+            size="small"
+            onClick={() => setRange("All Years")}
+            sx={{ fontSize: "0.75rem", color: "text.secondary", fontWeight: 600, minWidth: 0 }}
+          >
+            Reset
+          </Button>
+          <Button
+            disabled={isRefreshing}
+            onClick={() => fetchIndicators({ refresh: true, silent: true })}
+            size="small"
+            variant="outlined"
+            sx={{ fontSize: "0.75rem", fontWeight: 700, minWidth: 0, borderRadius: 1 }}
+          >
+            {isRefreshing ? "Refreshing" : "Refresh"}
+          </Button>
+        </Stack>
       </Stack>
 
       {/* 2×2 chart grid */}
@@ -270,7 +240,7 @@ export default function EconomicIndicators() {
         }}
       >
         {/* Consumer Sentiment Index */}
-        <ChartCard title="Consumer Sentiment Index" source="University of Michigan">
+        <ChartCard title="Consumer Sentiment Index" source={sources.sentiment || "University of Michigan via FRED"}>
           <ResponsiveContainer width="100%" height={210}>
             <AreaChart data={sentiment} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
               <defs>
@@ -301,7 +271,7 @@ export default function EconomicIndicators() {
         </ChartCard>
 
         {/* Quarterly GDP Growth */}
-        <ChartCard title="Quarterly GDP Growth" source="U.S. Bureau of Economic Analysis">
+        <ChartCard title="Quarterly GDP Growth" source={sources.gdp || "U.S. Bureau of Economic Analysis via FRED"}>
           <ResponsiveContainer width="100%" height={210}>
             <BarChart data={gdp} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
@@ -327,7 +297,7 @@ export default function EconomicIndicators() {
         </ChartCard>
 
         {/* Treasury Yield Trends */}
-        <ChartCard title="Treasury Yield Trends" source="2 Year vs 10 Year Yields">
+        <ChartCard title="Treasury Yield Trends" source={sources.treasury || "2 Year vs 10 Year Yields"}>
           <ResponsiveContainer width="100%" height={210}>
             <LineChart data={treasury} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -372,10 +342,10 @@ export default function EconomicIndicators() {
           </ResponsiveContainer>
         </ChartCard>
 
-        {/* S&P 500 Real Estate Index */}
-        <ChartCard title="S&P 500 Real Estate Index" source="Sector Performance">
+        {/* U.S. House Price Index */}
+        <ChartCard title="U.S. House Price Index" source={sources.housing || "Federal Housing Finance Agency via FRED"}>
           <ResponsiveContainer width="100%" height={210}>
-            <AreaChart data={sp500} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
+            <AreaChart data={housing} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
               <defs>
                 <linearGradient id="sp500Grad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.18} />
@@ -386,7 +356,7 @@ export default function EconomicIndicators() {
               <XAxis
                 dataKey="date"
                 tick={{ fontSize: 10 }}
-                interval={xInterval(sp500.length)}
+                interval={xInterval(housing.length)}
               />
               <YAxis tick={{ fontSize: 10 }} />
               <Tooltip {...tooltipStyle} formatter={(v) => [v, "Index"]} />

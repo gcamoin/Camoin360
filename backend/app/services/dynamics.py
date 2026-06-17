@@ -4,6 +4,7 @@ import time
 import httpx
 from dotenv import load_dotenv
 from pathlib import Path
+from datetime import datetime, timezone
 from .auth import get_access_token
 from .metrics import increment_processed, log_update
 from .seamless import enrich_with_seamless
@@ -18,8 +19,11 @@ load_dotenv(BACKEND_ROOT / ".env")
 API_URL = os.getenv("DYNAMICS_API_URL")
 DATA_QUALITY_CACHE_TTL_SECONDS = 120
 SUMMARY_CACHE_TTL_SECONDS = 600
+MARKETING_METRICS_CACHE_TTL_SECONDS = 600
+INTERNAL_COMPANY_ACCOUNT_ID = "08c283ff-6186-eb11-a812-0022481d279b"
 _DATA_QUALITY_CACHE = {"expires_at": 0, "data": None}
 _SUMMARY_CACHE = {"expires_at": 0, "data": None}
+_MARKETING_METRICS_CACHE = {"expires_at": 0, "data": None}
 
 STATE_ABBREVIATIONS = {
     "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
@@ -171,6 +175,102 @@ async def get_account_sector_counts():
     _SUMMARY_CACHE["expires_at"] = now + SUMMARY_CACHE_TTL_SECONDS
 
     return summary
+
+
+def _shift_month(year: int, month: int, offset: int) -> tuple[int, int]:
+    month_index = (year * 12) + (month - 1) + offset
+    return month_index // 12, (month_index % 12) + 1
+
+
+def _last_twelve_months(now: datetime) -> list[dict[str, int | str]]:
+    start_year, start_month = _shift_month(now.year, now.month, -11)
+
+    return [
+        {
+            "year": year,
+            "month": month,
+            "month_key": f"{year}-{month:02d}",
+            "month_label": datetime(year, month, 1).strftime("%b '%y"),
+        }
+        for year, month in (_shift_month(start_year, start_month, offset) for offset in range(12))
+    ]
+
+
+async def get_website_visit_metrics():
+    now = time.time()
+    if _MARKETING_METRICS_CACHE["data"] is not None and _MARKETING_METRICS_CACHE["expires_at"] > now:
+        return _MARKETING_METRICS_CACHE["data"]
+
+    token = await get_access_token()
+    current_time = datetime.now(timezone.utc)
+    months = _last_twelve_months(current_time)
+    first_month = months[0]
+    start_date = datetime(
+        int(first_month["year"]),
+        int(first_month["month"]),
+        1,
+        tzinfo=timezone.utc,
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    url = (
+        f"{API_URL}/lfapp_websitevisits?"
+        "$select=lfapp_websitevisitid,lfapp_time&"
+        f"$filter=_new_client_value eq {INTERNAL_COMPANY_ACCOUNT_ID} and lfapp_time ge {start_date}&"
+        "$orderby=lfapp_time asc"
+    )
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "OData-Version": "4.0",
+        "Prefer": "odata.maxpagesize=5000",
+    }
+
+    counts_by_month = {month["month_key"]: 0 for month in months}
+    total_visits = 0
+
+    async with httpx.AsyncClient() as client:
+        while url:
+            response = await client.get(url, headers=headers)
+
+            if response.status_code != 200:
+                raise Exception(f"Dynamics GET error: {response.text}")
+
+            payload = response.json()
+
+            for visit in payload.get("value", []):
+                visit_time = visit.get("lfapp_time")
+                if not visit_time:
+                    continue
+
+                parsed_time = datetime.fromisoformat(visit_time.replace("Z", "+00:00"))
+                month_key = parsed_time.strftime("%Y-%m")
+
+                if month_key in counts_by_month:
+                    counts_by_month[month_key] += 1
+                    total_visits += 1
+
+            url = payload.get("@odata.nextLink")
+
+    visit_months = [
+        {
+            "month": month["month_label"],
+            "month_key": month["month_key"],
+            "visitors": counts_by_month[month["month_key"]],
+        }
+        for month in months
+    ]
+
+    result = {
+        "company_id": INTERNAL_COMPANY_ACCOUNT_ID,
+        "updated_at": current_time.isoformat(),
+        "total_visitors": total_visits,
+        "months": visit_months,
+    }
+    _MARKETING_METRICS_CACHE["data"] = result
+    _MARKETING_METRICS_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
+
+    return result
 
 
 async def get_accounts_needing_enrichment():
