@@ -102,7 +102,6 @@ export default function MarketingMetrics() {
       ),
     [metrics.months]
   );
-
   const updatedLabel = metrics.updated_at
     ? `Updated ${new Intl.DateTimeFormat(undefined, {
         dateStyle: "medium",
@@ -209,6 +208,7 @@ export default function MarketingMetrics() {
           </ResponsiveContainer>
         </Box>
       </Paper>
+
     </Stack>
   );
 }

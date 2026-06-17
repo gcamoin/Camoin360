@@ -13,6 +13,7 @@ import {
 } from "@mui/material";
 import EconomicIndicators from "./components/EconomicIndicators";
 import MarketingMetrics from "./components/MarketingMetrics";
+import ProductivityProjects from "./components/ProductivityProjects";
 
 const views = {
   overview: {
@@ -255,6 +256,7 @@ export default function ManagementDashboard({ onLogout }) {
 
               {activeView === "economicIndicators" && <EconomicIndicators />}
               {activeView === "marketingMetrics" && <MarketingMetrics />}
+              {activeView === "productivityProjects" && <ProductivityProjects />}
             </Stack>
           </Container>
         </Box>

@@ -24,6 +24,7 @@ INTERNAL_COMPANY_ACCOUNT_ID = "08c283ff-6186-eb11-a812-0022481d279b"
 _DATA_QUALITY_CACHE = {"expires_at": 0, "data": None}
 _SUMMARY_CACHE = {"expires_at": 0, "data": None}
 _MARKETING_METRICS_CACHE = {"expires_at": 0, "data": None}
+_PROJECT_METRICS_CACHE = {"expires_at": 0, "data": None}
 
 STATE_ABBREVIATIONS = {
     "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
@@ -204,59 +205,30 @@ async def get_website_visit_metrics():
     token = await get_access_token()
     current_time = datetime.now(timezone.utc)
     months = _last_twelve_months(current_time)
-    first_month = months[0]
-    start_date = datetime(
-        int(first_month["year"]),
-        int(first_month["month"]),
-        1,
-        tzinfo=timezone.utc,
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    start_date = _month_window_start(months)
+    headers = _dynamics_read_headers(token)
 
-    url = (
+    website_visits_url = (
         f"{API_URL}/lfapp_websitevisits?"
         "$select=lfapp_websitevisitid,lfapp_time&"
         f"$filter=_new_client_value eq {INTERNAL_COMPANY_ACCOUNT_ID} and lfapp_time ge {start_date}&"
         "$orderby=lfapp_time asc"
     )
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-        "OData-Version": "4.0",
-        "Prefer": "odata.maxpagesize=5000",
-    }
-
-    counts_by_month = {month["month_key"]: 0 for month in months}
-    total_visits = 0
-
     async with httpx.AsyncClient() as client:
-        while url:
-            response = await client.get(url, headers=headers)
-
-            if response.status_code != 200:
-                raise Exception(f"Dynamics GET error: {response.text}")
-
-            payload = response.json()
-
-            for visit in payload.get("value", []):
-                visit_time = visit.get("lfapp_time")
-                if not visit_time:
-                    continue
-
-                parsed_time = datetime.fromisoformat(visit_time.replace("Z", "+00:00"))
-                month_key = parsed_time.strftime("%Y-%m")
-
-                if month_key in counts_by_month:
-                    counts_by_month[month_key] += 1
-                    total_visits += 1
-
-            url = payload.get("@odata.nextLink")
+        website_visit_counts = await _count_records_by_month(
+            client,
+            website_visits_url,
+            headers,
+            months,
+            "lfapp_time",
+        )
 
     visit_months = [
         {
             "month": month["month_label"],
             "month_key": month["month_key"],
-            "visitors": counts_by_month[month["month_key"]],
+            "visitors": website_visit_counts["counts_by_month"][month["month_key"]],
         }
         for month in months
     ]
@@ -264,13 +236,190 @@ async def get_website_visit_metrics():
     result = {
         "company_id": INTERNAL_COMPANY_ACCOUNT_ID,
         "updated_at": current_time.isoformat(),
-        "total_visitors": total_visits,
+        "total_visitors": website_visit_counts["total"],
         "months": visit_months,
     }
     _MARKETING_METRICS_CACHE["data"] = result
     _MARKETING_METRICS_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
 
     return result
+
+
+async def get_project_creation_metrics():
+    now = time.time()
+    if _PROJECT_METRICS_CACHE["data"] is not None and _PROJECT_METRICS_CACHE["expires_at"] > now:
+        return _PROJECT_METRICS_CACHE["data"]
+
+    token = await get_access_token()
+    current_time = datetime.now(timezone.utc)
+    months = _last_twelve_months(current_time)
+    start_date = _month_window_start(months)
+    headers = _dynamics_read_headers(token)
+
+    projects_url = (
+        f"{API_URL}/new_projects?"
+        "$select=new_projectid,createdon,new_serviceline&"
+        f"$filter=createdon ge {start_date}&"
+        "$orderby=createdon asc"
+    )
+
+    async with httpx.AsyncClient() as client:
+        project_counts = await _count_projects_by_month_and_service_line(
+            client,
+            projects_url,
+            headers,
+            months,
+        )
+
+    project_months = [
+        {
+            "month": month["month_label"],
+            "month_key": month["month_key"],
+            "projects": project_counts["counts_by_month"][month["month_key"]],
+            "service_lines": project_counts["service_lines_by_month"][month["month_key"]],
+        }
+        for month in months
+    ]
+
+    result = {
+        "updated_at": current_time.isoformat(),
+        "total_projects": project_counts["total"],
+        "months": project_months,
+        "service_lines": project_counts["service_line_totals"],
+    }
+    _PROJECT_METRICS_CACHE["data"] = result
+    _PROJECT_METRICS_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
+
+    return result
+
+
+async def _count_projects_by_month_and_service_line(
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    months: list[dict[str, int | str]],
+) -> dict[str, dict[str, int] | int]:
+    counts_by_month = {month["month_key"]: 0 for month in months}
+    service_counts_by_month = {month["month_key"]: {} for month in months}
+    service_line_totals = {}
+    total = 0
+
+    while url:
+        response = await client.get(url, headers=headers)
+
+        if response.status_code != 200:
+            raise Exception(f"Dynamics GET error: {response.text}")
+
+        payload = response.json()
+
+        for project in payload.get("value", []):
+            created_on = project.get("createdon")
+            if not created_on:
+                continue
+
+            parsed_time = datetime.fromisoformat(created_on.replace("Z", "+00:00"))
+            month_key = parsed_time.strftime("%Y-%m")
+
+            if month_key not in counts_by_month:
+                continue
+
+            counts_by_month[month_key] += 1
+            total += 1
+
+            formatted_service_lines = project.get(
+                "new_serviceline@OData.Community.Display.V1.FormattedValue",
+                "",
+            )
+            service_lines = [
+                service_line.strip()
+                for service_line in formatted_service_lines.split(";")
+                if service_line.strip()
+            ] or ["Unspecified"]
+
+            for service_line in service_lines:
+                service_counts = service_counts_by_month[month_key]
+                service_counts[service_line] = service_counts.get(service_line, 0) + 1
+                service_line_totals[service_line] = service_line_totals.get(service_line, 0) + 1
+
+        url = payload.get("@odata.nextLink")
+
+    service_lines_by_month = {
+        month_key: [
+            {"service_line": service_line, "projects": project_count}
+            for service_line, project_count in sorted(
+                service_counts.items(),
+                key=lambda item: (-item[1], item[0].casefold()),
+            )
+        ]
+        for month_key, service_counts in service_counts_by_month.items()
+    }
+
+    return {
+        "counts_by_month": counts_by_month,
+        "service_lines_by_month": service_lines_by_month,
+        "service_line_totals": [
+            {"service_line": service_line, "projects": project_count}
+            for service_line, project_count in sorted(
+                service_line_totals.items(),
+                key=lambda item: (-item[1], item[0].casefold()),
+            )
+        ],
+        "total": total,
+    }
+
+
+def _month_window_start(months: list[dict[str, int | str]]) -> str:
+    first_month = months[0]
+    return datetime(
+        int(first_month["year"]),
+        int(first_month["month"]),
+        1,
+        tzinfo=timezone.utc,
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _dynamics_read_headers(token: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "OData-Version": "4.0",
+        "Prefer": 'odata.include-annotations="OData.Community.Display.V1.FormattedValue",odata.maxpagesize=5000',
+    }
+
+
+async def _count_records_by_month(
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    months: list[dict[str, int | str]],
+    date_field: str,
+) -> dict[str, dict[str, int] | int]:
+    counts_by_month = {month["month_key"]: 0 for month in months}
+    total = 0
+
+    while url:
+        response = await client.get(url, headers=headers)
+
+        if response.status_code != 200:
+            raise Exception(f"Dynamics GET error: {response.text}")
+
+        payload = response.json()
+
+        for record in payload.get("value", []):
+            date_value = record.get(date_field)
+            if not date_value:
+                continue
+
+            parsed_time = datetime.fromisoformat(date_value.replace("Z", "+00:00"))
+            month_key = parsed_time.strftime("%Y-%m")
+
+            if month_key in counts_by_month:
+                counts_by_month[month_key] += 1
+                total += 1
+
+        url = payload.get("@odata.nextLink")
+
+    return {"counts_by_month": counts_by_month, "total": total}
 
 
 async def get_accounts_needing_enrichment():
