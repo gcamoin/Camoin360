@@ -4,7 +4,7 @@ import time
 import httpx
 from dotenv import load_dotenv
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from .auth import get_access_token
 from .metrics import increment_processed, log_update
 from .seamless import enrich_with_seamless
@@ -25,6 +25,12 @@ _DATA_QUALITY_CACHE = {"expires_at": 0, "data": None}
 _SUMMARY_CACHE = {"expires_at": 0, "data": None}
 _MARKETING_METRICS_CACHE = {"expires_at": 0, "data": None}
 _PROJECT_METRICS_CACHE = {"expires_at": 0, "data": None}
+MARKETING_RANGE_OPTIONS = {
+    "last_week": {"label": "Last Week", "days": 7},
+    "last_month": {"label": "Last Month", "days": 30},
+    "last_6_months": {"label": "Last 6 Months", "months": 6},
+    "last_year": {"label": "Last Year", "months": 12},
+}
 
 STATE_ABBREVIATIONS = {
     "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
@@ -183,8 +189,8 @@ def _shift_month(year: int, month: int, offset: int) -> tuple[int, int]:
     return month_index // 12, (month_index % 12) + 1
 
 
-def _last_twelve_months(now: datetime) -> list[dict[str, int | str]]:
-    start_year, start_month = _shift_month(now.year, now.month, -11)
+def _month_buckets(now: datetime, month_count: int) -> list[dict[str, int | str]]:
+    start_year, start_month = _shift_month(now.year, now.month, -(month_count - 1))
 
     return [
         {
@@ -193,53 +199,110 @@ def _last_twelve_months(now: datetime) -> list[dict[str, int | str]]:
             "month_key": f"{year}-{month:02d}",
             "month_label": datetime(year, month, 1).strftime("%b '%y"),
         }
-        for year, month in (_shift_month(start_year, start_month, offset) for offset in range(12))
+        for year, month in (_shift_month(start_year, start_month, offset) for offset in range(month_count))
     ]
 
 
-async def get_website_visit_metrics():
+def _last_twelve_months(now: datetime) -> list[dict[str, int | str]]:
+    return _month_buckets(now, 12)
+
+
+def _day_buckets(start_date: datetime, day_count: int) -> list[dict[str, str]]:
+    return [
+        {
+            "day_key": (start_date + timedelta(days=offset)).strftime("%Y-%m-%d"),
+            "day_label": (start_date + timedelta(days=offset)).strftime("%b %-d"),
+        }
+        for offset in range(day_count)
+    ]
+
+
+def _marketing_window(range_key: str, now: datetime) -> dict[str, object]:
+    option = MARKETING_RANGE_OPTIONS.get(range_key, MARKETING_RANGE_OPTIONS["last_year"])
+
+    if "days" in option:
+        day_count = int(option["days"])
+        start_date = (now - timedelta(days=day_count - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        return {
+            "range": range_key if range_key in MARKETING_RANGE_OPTIONS else "last_year",
+            "label": option["label"],
+            "start_date": start_date,
+            "buckets": _day_buckets(start_date, day_count),
+            "bucket_key": "day_key",
+            "bucket_label": "day_label",
+            "bucket_grain": "day",
+        }
+
+    month_count = int(option["months"])
+    buckets = _month_buckets(now, month_count)
+    return {
+        "range": range_key if range_key in MARKETING_RANGE_OPTIONS else "last_year",
+        "label": option["label"],
+        "start_date": datetime(
+            int(buckets[0]["year"]),
+            int(buckets[0]["month"]),
+            1,
+            tzinfo=timezone.utc,
+        ),
+        "buckets": buckets,
+        "bucket_key": "month_key",
+        "bucket_label": "month_label",
+        "bucket_grain": "month",
+    }
+
+
+async def get_website_visit_metrics(range_key: str = "last_year"):
     now = time.time()
-    if _MARKETING_METRICS_CACHE["data"] is not None and _MARKETING_METRICS_CACHE["expires_at"] > now:
-        return _MARKETING_METRICS_CACHE["data"]
+    cache_key = range_key if range_key in MARKETING_RANGE_OPTIONS else "last_year"
+    cached_data = _MARKETING_METRICS_CACHE["data"] or {}
+    if cache_key in cached_data and _MARKETING_METRICS_CACHE["expires_at"] > now:
+        return cached_data[cache_key]
 
     token = await get_access_token()
     current_time = datetime.now(timezone.utc)
-    months = _last_twelve_months(current_time)
-    start_date = _month_window_start(months)
+    window = _marketing_window(range_key, current_time)
+    buckets = window["buckets"]
+    start_date = window["start_date"].strftime("%Y-%m-%dT%H:%M:%SZ")
     headers = _dynamics_read_headers(token)
 
     website_visits_url = (
         f"{API_URL}/lfapp_websitevisits?"
-        "$select=lfapp_websitevisitid,lfapp_time&"
+        "$select=lfapp_websitevisitid,lfapp_time,lfapp_landingpage&"
         f"$filter=_new_client_value eq {INTERNAL_COMPANY_ACCOUNT_ID} and lfapp_time ge {start_date}&"
         "$orderby=lfapp_time asc"
     )
 
     async with httpx.AsyncClient() as client:
-        website_visit_counts = await _count_records_by_month(
+        website_visit_counts = await _count_website_visits(
             client,
             website_visits_url,
             headers,
-            months,
-            "lfapp_time",
+            buckets,
+            window["bucket_key"],
+            window["bucket_grain"],
         )
 
-    visit_months = [
+    visit_buckets = [
         {
-            "month": month["month_label"],
-            "month_key": month["month_key"],
-            "visitors": website_visit_counts["counts_by_month"][month["month_key"]],
+            "period": bucket[window["bucket_label"]],
+            "period_key": bucket[window["bucket_key"]],
+            "visitors": website_visit_counts["counts_by_bucket"][bucket[window["bucket_key"]]],
         }
-        for month in months
+        for bucket in buckets
     ]
 
     result = {
         "company_id": INTERNAL_COMPANY_ACCOUNT_ID,
+        "range": window["range"],
+        "range_label": window["label"],
+        "bucket_grain": window["bucket_grain"],
         "updated_at": current_time.isoformat(),
         "total_visitors": website_visit_counts["total"],
-        "months": visit_months,
+        "months": visit_buckets,
+        "landing_pages": website_visit_counts["landing_pages"],
     }
-    _MARKETING_METRICS_CACHE["data"] = result
+    cached_data[cache_key] = result
+    _MARKETING_METRICS_CACHE["data"] = cached_data
     _MARKETING_METRICS_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
 
     return result
@@ -384,6 +447,57 @@ def _dynamics_read_headers(token: str) -> dict[str, str]:
         "Accept": "application/json",
         "OData-Version": "4.0",
         "Prefer": 'odata.include-annotations="OData.Community.Display.V1.FormattedValue",odata.maxpagesize=5000',
+    }
+
+
+async def _count_website_visits(
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    buckets: list[dict[str, int | str]],
+    bucket_key: str,
+    bucket_grain: str,
+) -> dict[str, object]:
+    counts_by_bucket = {bucket[bucket_key]: 0 for bucket in buckets}
+    landing_page_counts = {}
+    total = 0
+
+    while url:
+        response = await client.get(url, headers=headers)
+
+        if response.status_code != 200:
+            raise Exception(f"Dynamics GET error: {response.text}")
+
+        payload = response.json()
+
+        for visit in payload.get("value", []):
+            visit_time = visit.get("lfapp_time")
+            if not visit_time:
+                continue
+
+            parsed_time = datetime.fromisoformat(visit_time.replace("Z", "+00:00"))
+            current_key = parsed_time.strftime("%Y-%m-%d" if bucket_grain == "day" else "%Y-%m")
+
+            if current_key not in counts_by_bucket:
+                continue
+
+            landing_page = (visit.get("lfapp_landingpage") or "").strip() or "Unspecified"
+            counts_by_bucket[current_key] += 1
+            landing_page_counts[landing_page] = landing_page_counts.get(landing_page, 0) + 1
+            total += 1
+
+        url = payload.get("@odata.nextLink")
+
+    return {
+        "counts_by_bucket": counts_by_bucket,
+        "landing_pages": [
+            {"landing_page": landing_page, "visitors": visitor_count}
+            for landing_page, visitor_count in sorted(
+                landing_page_counts.items(),
+                key=lambda item: (-item[1], item[0].casefold()),
+            )
+        ],
+        "total": total,
     }
 
 

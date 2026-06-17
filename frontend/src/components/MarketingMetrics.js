@@ -23,6 +23,12 @@ import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } 
 
 const API_URL = `${API_BASE_URL}/marketing/website-visits`;
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
+const RANGE_OPTIONS = [
+  { label: "Last Week", value: "last_week" },
+  { label: "Last Month", value: "last_month" },
+  { label: "Last 6 Months", value: "last_6_months" },
+  { label: "Last Year", value: "last_year" },
+];
 
 const tooltipStyle = {
   contentStyle: {
@@ -36,10 +42,14 @@ const tooltipStyle = {
 export default function MarketingMetrics() {
   const isMountedRef = useRef(true);
   const [metrics, setMetrics] = useState({
+    bucket_grain: "month",
+    landing_pages: [],
     months: [],
+    range_label: "Last Year",
     total_visitors: 0,
     updated_at: "",
   });
+  const [range, setRange] = useState("last_year");
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -55,12 +65,18 @@ export default function MarketingMetrics() {
     setError("");
 
     try {
-      const response = await axios.get(API_URL, { headers: getAuthHeaders() });
+      const response = await axios.get(API_URL, {
+        headers: getAuthHeaders(),
+        params: { range },
+      });
 
       if (!isMountedRef.current) return;
 
       setMetrics({
+        bucket_grain: response.data?.bucket_grain || "month",
+        landing_pages: response.data?.landing_pages || [],
         months: response.data?.months || [],
+        range_label: response.data?.range_label || "Last Year",
         total_visitors: response.data?.total_visitors || 0,
         updated_at: response.data?.updated_at || "",
       });
@@ -78,7 +94,7 @@ export default function MarketingMetrics() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, []);
+  }, [range]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -108,6 +124,9 @@ export default function MarketingMetrics() {
         timeStyle: "short",
       }).format(new Date(metrics.updated_at))}`
     : "";
+  const landingPageChartHeight = Math.max(280, metrics.landing_pages.length * 34 + 60);
+  const visitorsChartTitle =
+    metrics.bucket_grain === "day" ? "Website Visitors by Day" : "Website Visitors by Month";
 
   if (isLoading) {
     return (
@@ -127,18 +146,43 @@ export default function MarketingMetrics() {
         alignItems={{ xs: "stretch", sm: "center" }}
         spacing={1.5}
       >
-        <Typography color="text.secondary" fontSize="0.75rem">
-          {updatedLabel || "Website visit metrics"}
-        </Typography>
-        <Button
-          disabled={isRefreshing}
-          onClick={() => fetchMetrics({ silent: true })}
-          size="small"
-          variant="outlined"
-          sx={{ alignSelf: { xs: "flex-start", sm: "auto" }, borderRadius: 1, fontSize: "0.75rem", fontWeight: 700 }}
-        >
-          {isRefreshing ? "Refreshing" : "Refresh"}
-        </Button>
+        <Stack direction="row" flexWrap="wrap" gap={0.75}>
+          {RANGE_OPTIONS.map((option) => {
+            const isActive = range === option.value;
+            return (
+              <Button
+                key={option.value}
+                onClick={() => setRange(option.value)}
+                size="small"
+                variant={isActive ? "contained" : "outlined"}
+                disableElevation
+                sx={{
+                  borderRadius: 1,
+                  fontSize: "0.75rem",
+                  fontWeight: 700,
+                  minWidth: 0,
+                  ...(!isActive && { borderColor: "divider", color: "text.secondary" }),
+                }}
+              >
+                {option.label}
+              </Button>
+            );
+          })}
+        </Stack>
+        <Stack alignItems={{ xs: "flex-start", sm: "flex-end" }} spacing={0.75}>
+          <Typography color="text.secondary" fontSize="0.75rem">
+            {updatedLabel || "Website visit metrics"}
+          </Typography>
+          <Button
+            disabled={isRefreshing}
+            onClick={() => fetchMetrics({ silent: true })}
+            size="small"
+            variant="outlined"
+            sx={{ borderRadius: 1, fontSize: "0.75rem", fontWeight: 700 }}
+          >
+            {isRefreshing ? "Refreshing" : "Refresh"}
+          </Button>
+        </Stack>
       </Stack>
 
       <Box
@@ -153,7 +197,7 @@ export default function MarketingMetrics() {
           sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2.5 }}
         >
           <Typography color="text.secondary" variant="overline">
-            Last 12 Months
+            {metrics.range_label}
           </Typography>
           <Typography color="primary.main" sx={{ fontSize: "2.35rem", fontWeight: 800, lineHeight: 1.1, mt: 0.75 }}>
             {metrics.total_visitors.toLocaleString()}
@@ -190,23 +234,83 @@ export default function MarketingMetrics() {
       >
         <Stack spacing={0.5} sx={{ mb: 2 }}>
           <Typography fontWeight={800} color="text.primary">
-            Website Visitors by Month
+            {visitorsChartTitle}
           </Typography>
           <Typography color="text.secondary" variant="body2">
-            Visitors recorded for Camoin Associates.
+            Visitors recorded for Camoin Associates in the selected time frame.
           </Typography>
         </Stack>
         <Box sx={{ height: 320, minWidth: 0 }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={metrics.months} margin={{ top: 8, right: 18, bottom: 0, left: -12 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-              <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+              <XAxis dataKey="period" tick={{ fontSize: 11 }} />
               <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
               <Tooltip {...tooltipStyle} formatter={(value) => [value.toLocaleString(), "Visitors"]} />
               <Bar dataKey="visitors" fill="#0d9488" fillOpacity={0.86} radius={[3, 3, 0, 0]} maxBarSize={42} />
             </BarChart>
           </ResponsiveContainer>
         </Box>
+      </Paper>
+
+      <Paper
+        elevation={0}
+        sx={{
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: 2,
+          p: { xs: 2, md: 2.5 },
+          backgroundColor: "common.white",
+        }}
+      >
+        <Stack spacing={0.5} sx={{ mb: 2 }}>
+          <Typography fontWeight={800} color="text.primary">
+            Website Visitors by Landing Page
+          </Typography>
+          <Typography color="text.secondary" variant="body2">
+            Landing pages ranked by visitor records in the selected time frame.
+          </Typography>
+        </Stack>
+
+        {metrics.landing_pages.length ? (
+          <Box sx={{ maxHeight: 520, overflowY: "auto", pr: 1 }}>
+            <Box sx={{ height: landingPageChartHeight, minWidth: 520 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={metrics.landing_pages}
+                  layout="vertical"
+                  margin={{ top: 8, right: 34, bottom: 8, left: 16 }}
+                >
+                  <CartesianGrid horizontal={false} stroke="#f1f5f9" strokeDasharray="3 3" />
+                  <XAxis allowDecimals={false} tick={{ fontSize: 11 }} type="number" />
+                  <YAxis
+                    dataKey="landing_page"
+                    tick={{ fontSize: 11 }}
+                    tickFormatter={(value) => (value.length > 34 ? `${value.slice(0, 34)}...` : value)}
+                    type="category"
+                    width={220}
+                  />
+                  <Tooltip
+                    {...tooltipStyle}
+                    formatter={(value) => [value.toLocaleString(), "Visitors"]}
+                    labelFormatter={(label) => label}
+                  />
+                  <Bar
+                    dataKey="visitors"
+                    fill="#64748b"
+                    fillOpacity={0.86}
+                    radius={[0, 3, 3, 0]}
+                    maxBarSize={22}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </Box>
+          </Box>
+        ) : (
+          <Typography color="text.secondary" variant="body2">
+            No landing page data found for this time frame.
+          </Typography>
+        )}
       </Paper>
 
     </Stack>

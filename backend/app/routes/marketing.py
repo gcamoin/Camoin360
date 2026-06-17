@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .auth import require_user
 from ..services.dynamics import get_project_creation_metrics, get_website_visit_metrics
@@ -7,9 +7,12 @@ router = APIRouter()
 
 
 @router.get("/marketing/website-visits")
-async def fetch_website_visit_metrics(_user=Depends(require_user)):
+async def fetch_website_visit_metrics(
+    range: str = Query("last_year"),
+    _user=Depends(require_user),
+):
     try:
-        return await get_website_visit_metrics()
+        return await get_website_visit_metrics(range)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
