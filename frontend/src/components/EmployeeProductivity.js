@@ -5,7 +5,11 @@ import {
   Box,
   Button,
   CircularProgress,
+  FormControl,
+  InputLabel,
+  MenuItem,
   Paper,
+  Select,
   Stack,
   Typography,
 } from "@mui/material";
@@ -20,9 +24,27 @@ import {
 } from "recharts";
 
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
+import BillableBreakdownCard from "./BillableBreakdownCard";
 
 const API_URL = `${API_BASE_URL}/productivity/employee-hours`;
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
+const CURRENT_YEAR = new Date().getFullYear();
+const YEAR_OPTIONS = Array.from({ length: 6 }, (_, index) => CURRENT_YEAR - index);
+const MONTH_OPTIONS = [
+  { label: "All Months", value: "" },
+  { label: "January", value: 1 },
+  { label: "February", value: 2 },
+  { label: "March", value: 3 },
+  { label: "April", value: 4 },
+  { label: "May", value: 5 },
+  { label: "June", value: 6 },
+  { label: "July", value: 7 },
+  { label: "August", value: 8 },
+  { label: "September", value: 9 },
+  { label: "October", value: 10 },
+  { label: "November", value: 11 },
+  { label: "December", value: 12 },
+];
 
 const tooltipStyle = {
   contentStyle: {
@@ -47,6 +69,8 @@ export default function EmployeeProductivity() {
     weeks: 12,
     updated_at: "",
   });
+  const [selectedYear, setSelectedYear] = useState(CURRENT_YEAR);
+  const [selectedMonth, setSelectedMonth] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -62,7 +86,15 @@ export default function EmployeeProductivity() {
     setError("");
 
     try {
-      const response = await axios.get(API_URL, { headers: getAuthHeaders() });
+      const params = { year: selectedYear };
+      if (selectedMonth) {
+        params.month = selectedMonth;
+      }
+
+      const response = await axios.get(API_URL, {
+        headers: getAuthHeaders(),
+        params,
+      });
 
       if (!isMountedRef.current) return;
 
@@ -87,7 +119,7 @@ export default function EmployeeProductivity() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, []);
+  }, [selectedMonth, selectedYear]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -125,6 +157,8 @@ export default function EmployeeProductivity() {
 
   return (
     <Stack spacing={2.5}>
+      <BillableBreakdownCard />
+
       {error ? <Alert severity="error">{error}</Alert> : null}
 
       <Stack
@@ -157,16 +191,61 @@ export default function EmployeeProductivity() {
           backgroundColor: "common.white",
         }}
       >
-        <Stack spacing={0.5} sx={{ mb: 2 }}>
-          <Typography fontWeight={800} color="text.primary">
-            Average Weekly Hours by Employee
-          </Typography>
-          <Typography color="text.secondary" variant="body2">
-            Harvest hours averaged across {metrics.weeks} weeks, {dateRangeLabel}.
-          </Typography>
+        <Stack
+          direction={{ xs: "column", md: "row" }}
+          justifyContent="space-between"
+          alignItems={{ xs: "stretch", md: "flex-start" }}
+          spacing={2}
+          sx={{ mb: 2 }}
+        >
+          <Stack spacing={0.5}>
+            <Typography fontWeight={800} color="text.primary">
+              Average Weekly Hours by Employee
+            </Typography>
+            <Typography color="text.secondary" variant="body2">
+              Harvest hours averaged across {metrics.weeks} weeks, {dateRangeLabel}.
+            </Typography>
+          </Stack>
+
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}>
+            <FormControl size="small" sx={{ minWidth: 132 }}>
+              <InputLabel id="weekly-hours-year-label">Year</InputLabel>
+              <Select
+                label="Year"
+                labelId="weekly-hours-year-label"
+                onChange={(event) => setSelectedYear(Number(event.target.value))}
+                value={selectedYear}
+              >
+                {YEAR_OPTIONS.map((year) => (
+                  <MenuItem key={year} value={year}>
+                    {year}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 156 }}>
+              <InputLabel id="weekly-hours-month-label">Month</InputLabel>
+              <Select
+                label="Month"
+                labelId="weekly-hours-month-label"
+                onChange={(event) => setSelectedMonth(event.target.value)}
+                value={selectedMonth}
+              >
+                {MONTH_OPTIONS.map((month) => (
+                  <MenuItem key={month.label} value={month.value}>
+                    {month.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Stack>
         </Stack>
 
-        {metrics.employees.length ? (
+        {isRefreshing ? (
+          <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
+            <CircularProgress />
+          </Box>
+        ) : metrics.employees.length ? (
           <Box sx={{ maxHeight: 560, overflowY: "auto", pr: 1 }}>
             <Box sx={{ height: chartHeight, minWidth: 520 }}>
               <ResponsiveContainer width="100%" height="100%">

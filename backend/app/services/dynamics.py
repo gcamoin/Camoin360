@@ -2,6 +2,7 @@ import os
 import asyncio
 import time
 import httpx
+import re
 from dotenv import load_dotenv
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -21,6 +22,33 @@ DATA_QUALITY_CACHE_TTL_SECONDS = 120
 SUMMARY_CACHE_TTL_SECONDS = 600
 MARKETING_METRICS_CACHE_TTL_SECONDS = 600
 INTERNAL_COMPANY_ACCOUNT_ID = "08c283ff-6186-eb11-a812-0022481d279b"
+TARGET_INDUSTRIES_TABLE = "new_targetindustries"
+TARGET_INDUSTRY_CLIENT_LOOKUP_FIELD = "_new_clientid_value"
+TARGET_INDUSTRY_NAME_FIELD = "new_targetindustrydisplayname"
+TARGET_INDUSTRY_NAICS_FIELD = "new_naicsprefixcode"
+TARGET_INDUSTRY_CODE_FIELDS = (
+    "new_naicsprefixcode",
+    "naicscode",
+    "new_naicscode",
+)
+TARGET_INDUSTRY_ENTITY_SET_CANDIDATES = (
+    "new_targetindustries",
+    "new_targetindustrieses",
+    "new_targetindustry",
+)
+ACCOUNT_NAICS_FIELDS = (
+    "new_naicsprefixcode",
+    "naicscode",
+    "new_naicscode",
+)
+VISITOR_ACCOUNT_LOOKUP_FIELDS = (
+    "_new_account_value",
+    "_lfapp_account_value",
+    "_new_visitoraccount_value",
+    "_lfapp_visitoraccount_value",
+    "_new_visitor_value",
+    "_lfapp_visitor_value",
+)
 _DATA_QUALITY_CACHE = {"expires_at": 0, "data": None}
 _SUMMARY_CACHE = {"expires_at": 0, "data": None}
 _MARKETING_METRICS_CACHE = {"expires_at": 0, "data": None}
@@ -267,12 +295,12 @@ async def get_website_visit_metrics(range_key: str = "last_year"):
 
     website_visits_url = (
         f"{API_URL}/lfapp_websitevisits?"
-        "$select=lfapp_websitevisitid,lfapp_time,lfapp_landingpage&"
         f"$filter=_new_client_value eq {INTERNAL_COMPANY_ACCOUNT_ID} and lfapp_time ge {start_date}&"
         "$orderby=lfapp_time asc"
     )
 
     async with httpx.AsyncClient() as client:
+        target_naics_codes = await _fetch_target_industry_naics_codes(client, headers)
         website_visit_counts = await _count_website_visits(
             client,
             website_visits_url,
@@ -280,6 +308,7 @@ async def get_website_visit_metrics(range_key: str = "last_year"):
             buckets,
             window["bucket_key"],
             window["bucket_grain"],
+            target_naics_codes,
         )
 
     visit_buckets = [
@@ -287,6 +316,7 @@ async def get_website_visit_metrics(range_key: str = "last_year"):
             "period": bucket[window["bucket_label"]],
             "period_key": bucket[window["bucket_key"]],
             "visitors": website_visit_counts["counts_by_bucket"][bucket[window["bucket_key"]]],
+            "target_visitors": website_visit_counts["target_counts_by_bucket"][bucket[window["bucket_key"]]],
         }
         for bucket in buckets
     ]
@@ -298,6 +328,7 @@ async def get_website_visit_metrics(range_key: str = "last_year"):
         "bucket_grain": window["bucket_grain"],
         "updated_at": current_time.isoformat(),
         "total_visitors": website_visit_counts["total"],
+        "target_total_visitors": website_visit_counts["target_total"],
         "months": visit_buckets,
         "landing_pages": website_visit_counts["landing_pages"],
     }
@@ -457,10 +488,14 @@ async def _count_website_visits(
     buckets: list[dict[str, int | str]],
     bucket_key: str,
     bucket_grain: str,
+    target_naics_codes: set[str] | None = None,
 ) -> dict[str, object]:
     counts_by_bucket = {bucket[bucket_key]: 0 for bucket in buckets}
+    target_counts_by_bucket = {bucket[bucket_key]: 0 for bucket in buckets}
     landing_page_counts = {}
+    visits_for_targeting = []
     total = 0
+    target_total = 0
 
     while url:
         response = await client.get(url, headers=headers)
@@ -486,10 +521,33 @@ async def _count_website_visits(
             landing_page_counts[landing_page] = landing_page_counts.get(landing_page, 0) + 1
             total += 1
 
+            visitor_account_id = _get_visitor_account_id(visit)
+            if visitor_account_id:
+                visits_for_targeting.append(
+                    {
+                        "bucket_key": current_key,
+                        "visitor_account_id": visitor_account_id,
+                    }
+                )
+
         url = payload.get("@odata.nextLink")
+
+    if target_naics_codes and visits_for_targeting:
+        visitor_account_ids = {
+            visit["visitor_account_id"]
+            for visit in visits_for_targeting
+        }
+        account_naics_codes = await _fetch_account_naics_codes(client, headers, visitor_account_ids)
+
+        for visit in visits_for_targeting:
+            account_naics = account_naics_codes.get(visit["visitor_account_id"], set())
+            if _has_target_naics_match(account_naics, target_naics_codes):
+                target_counts_by_bucket[visit["bucket_key"]] += 1
+                target_total += 1
 
     return {
         "counts_by_bucket": counts_by_bucket,
+        "target_counts_by_bucket": target_counts_by_bucket,
         "landing_pages": [
             {"landing_page": landing_page, "visitors": visitor_count}
             for landing_page, visitor_count in sorted(
@@ -498,7 +556,236 @@ async def _count_website_visits(
             )
         ],
         "total": total,
+        "target_total": target_total,
     }
+
+
+async def _fetch_target_industry_naics_codes(
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+) -> set[str]:
+    entity_set_name = await _resolve_entity_set_name(
+        client,
+        headers,
+        TARGET_INDUSTRIES_TABLE,
+        TARGET_INDUSTRY_ENTITY_SET_CANDIDATES,
+    )
+    target_naics_codes = set()
+    code_field = await _resolve_existing_field(
+        client,
+        headers,
+        entity_set_name,
+        TARGET_INDUSTRY_CODE_FIELDS,
+        "target industries NAICS",
+    )
+    url = _target_industries_url(entity_set_name, code_field)
+
+    while url:
+        response = await client.get(url, headers=headers)
+
+        if response.status_code == 404:
+            entity_set_name = await _find_working_entity_set_name(
+                client,
+                headers,
+                TARGET_INDUSTRY_ENTITY_SET_CANDIDATES,
+            )
+            code_field = await _resolve_existing_field(
+                client,
+                headers,
+                entity_set_name,
+                TARGET_INDUSTRY_CODE_FIELDS,
+                "target industries NAICS",
+            )
+            url = _target_industries_url(entity_set_name, code_field)
+            response = await client.get(url, headers=headers)
+
+        if response.status_code != 200:
+            raise Exception(f"Dynamics GET error: {response.text}")
+
+        payload = response.json()
+
+        for target_industry in payload.get("value", []):
+            target_naics_codes.update(
+                _normalize_naics_codes(target_industry.get(code_field))
+            )
+
+        url = payload.get("@odata.nextLink")
+
+    return target_naics_codes
+
+
+async def _resolve_entity_set_name(
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+    logical_name: str,
+    fallback_candidates: tuple[str, ...],
+) -> str:
+    metadata_url = (
+        f"{API_URL}/EntityDefinitions(LogicalName='{logical_name}')?"
+        "$select=EntitySetName"
+    )
+    response = await client.get(metadata_url, headers=headers)
+
+    if response.status_code == 200:
+        entity_set_name = response.json().get("EntitySetName")
+        if entity_set_name:
+            return entity_set_name
+
+    return await _find_working_entity_set_name(client, headers, fallback_candidates)
+
+
+async def _find_working_entity_set_name(
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+    candidates: tuple[str, ...],
+) -> str:
+    last_error = ""
+
+    for candidate in candidates:
+        response = await client.get(
+            f"{API_URL}/{candidate}?$select={TARGET_INDUSTRY_NAICS_FIELD}&$top=1",
+            headers=headers,
+        )
+        if response.status_code == 200:
+            return candidate
+
+        last_error = response.text
+
+    raise Exception(f"Unable to find target industries entity set: {last_error}")
+
+
+async def _resolve_existing_field(
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+    entity_set_name: str,
+    field_candidates: tuple[str, ...],
+    field_label: str,
+) -> str:
+    last_error = ""
+
+    for field_name in field_candidates:
+        response = await client.get(
+            f"{API_URL}/{entity_set_name}?$select={field_name}&$top=1",
+            headers=headers,
+        )
+        if response.status_code == 200:
+            return field_name
+
+        last_error = response.text
+
+    raise Exception(f"Unable to find {field_label} field: {last_error}")
+
+
+def _target_industries_url(entity_set_name: str, code_field: str) -> str:
+    return (
+        f"{API_URL}/{entity_set_name}?"
+        f"$select={code_field}&"
+        f"$filter={TARGET_INDUSTRY_CLIENT_LOOKUP_FIELD} eq {INTERNAL_COMPANY_ACCOUNT_ID}"
+    )
+
+
+async def _fetch_account_naics_codes(
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+    account_ids: set[str],
+) -> dict[str, set[str]]:
+    account_naics_codes = {}
+    account_id_list = sorted(account_ids)
+    chunk_size = 20
+    try:
+        account_naics_field = await _resolve_existing_field(
+            client,
+            headers,
+            "accounts",
+            ACCOUNT_NAICS_FIELDS,
+            "account NAICS",
+        )
+    except Exception:
+        return account_naics_codes
+
+    for index in range(0, len(account_id_list), chunk_size):
+        chunk = account_id_list[index:index + chunk_size]
+        account_filter = " or ".join(
+            f"accountid eq {account_id}"
+            for account_id in chunk
+        )
+        url = (
+            f"{API_URL}/accounts?"
+            f"$select=accountid,{account_naics_field}&"
+            f"$filter={account_filter}"
+        )
+
+        while url:
+            response = await client.get(url, headers=headers)
+
+            if response.status_code != 200:
+                raise Exception(f"Dynamics GET error: {response.text}")
+
+            payload = response.json()
+
+            for account in payload.get("value", []):
+                account_id = _clean_guid(account.get("accountid"))
+                if not account_id:
+                    continue
+
+                account_naics_codes[account_id] = _normalize_naics_codes(
+                    account.get(account_naics_field)
+                )
+
+            url = payload.get("@odata.nextLink")
+
+    return account_naics_codes
+
+
+def _get_visitor_account_id(visit: dict) -> str | None:
+    for field_name in VISITOR_ACCOUNT_LOOKUP_FIELDS:
+        account_id = _clean_guid(visit.get(field_name))
+        if account_id:
+            return account_id
+
+    for field_name, field_value in visit.items():
+        normalized_name = field_name.casefold()
+        if (
+            field_name.startswith("_")
+            and field_name.endswith("_value")
+            and "account" in normalized_name
+            and "client" not in normalized_name
+            and "owner" not in normalized_name
+        ):
+            account_id = _clean_guid(field_value)
+            if account_id:
+                return account_id
+
+    return None
+
+
+def _clean_guid(value: object) -> str | None:
+    if not value:
+        return None
+
+    return str(value).strip("{}").casefold()
+
+
+def _normalize_naics_codes(value: object) -> set[str]:
+    if not value:
+        return set()
+
+    codes = set()
+    for part in re.split(r"[,;|/\\\s]+", str(value)):
+        digits = re.sub(r"\D", "", part)
+        if digits:
+            codes.add(digits)
+
+    return codes
+
+
+def _has_target_naics_match(account_naics_codes: set[str], target_naics_codes: set[str]) -> bool:
+    for account_code in account_naics_codes:
+        for target_code in target_naics_codes:
+            if account_code == target_code or account_code.startswith(target_code):
+                return True
+
+    return False
 
 
 async def _count_records_by_month(

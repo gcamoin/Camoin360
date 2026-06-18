@@ -46,6 +46,7 @@ export default function MarketingMetrics() {
     landing_pages: [],
     months: [],
     range_label: "Last Year",
+    target_total_visitors: 0,
     total_visitors: 0,
     updated_at: "",
   });
@@ -77,6 +78,7 @@ export default function MarketingMetrics() {
         landing_pages: response.data?.landing_pages || [],
         months: response.data?.months || [],
         range_label: response.data?.range_label || "Last Year",
+        target_total_visitors: response.data?.target_total_visitors || 0,
         total_visitors: response.data?.total_visitors || 0,
         updated_at: response.data?.updated_at || "",
       });
@@ -126,6 +128,10 @@ export default function MarketingMetrics() {
     : "";
   const visitorsChartTitle =
     metrics.bucket_grain === "day" ? "Website Visitors by Day" : "Website Visitors by Month";
+  const targetVisitorsChartTitle =
+    metrics.bucket_grain === "day"
+      ? "Target Industry Visitors by Day"
+      : "Target Industry Visitors by Month";
 
   if (isLoading) {
     return (
@@ -221,36 +227,87 @@ export default function MarketingMetrics() {
         </Paper>
       </Box>
 
-      <Paper
-        elevation={0}
+      <Box
         sx={{
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: 2,
-          p: { xs: 2, md: 2.5 },
-          backgroundColor: "common.white",
+          display: "grid",
+          gap: 2,
+          gridTemplateColumns: { xs: "1fr", lg: "repeat(2, minmax(0, 1fr))" },
         }}
       >
-        <Stack spacing={0.5} sx={{ mb: 2 }}>
-          <Typography fontWeight={800} color="text.primary">
-            {visitorsChartTitle}
+        <Paper
+          elevation={0}
+          sx={{
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: 2,
+            p: { xs: 2, md: 2.5 },
+            backgroundColor: "common.white",
+          }}
+        >
+          <Stack spacing={0.5} sx={{ mb: 2 }}>
+            <Typography fontWeight={800} color="text.primary">
+              {visitorsChartTitle}
+            </Typography>
+            <Typography color="text.secondary" variant="body2">
+              Visitors recorded for Camoin Associates in the selected time frame.
+            </Typography>
+          </Stack>
+          <Box sx={{ height: 320, minWidth: 0 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={metrics.months} margin={{ top: 8, right: 18, bottom: 0, left: -12 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                <Tooltip {...tooltipStyle} formatter={(value) => [value.toLocaleString(), "Visitors"]} />
+                <Bar dataKey="visitors" fill="#0d9488" fillOpacity={0.86} radius={[3, 3, 0, 0]} maxBarSize={42} />
+              </BarChart>
+            </ResponsiveContainer>
+          </Box>
+        </Paper>
+
+        <Paper
+          elevation={0}
+          sx={{
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: 2,
+            p: { xs: 2, md: 2.5 },
+            backgroundColor: "common.white",
+          }}
+        >
+          <Stack spacing={0.5} sx={{ mb: 2 }}>
+            <Typography fontWeight={800} color="text.primary">
+              {targetVisitorsChartTitle}
+            </Typography>
+            <Typography color="text.secondary" variant="body2">
+              Visitors whose account NAICS matches Camoin Associates target industries.
+            </Typography>
+          </Stack>
+          <Box sx={{ height: 320, minWidth: 0 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={metrics.months} margin={{ top: 8, right: 18, bottom: 0, left: -12 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                <Tooltip
+                  {...tooltipStyle}
+                  formatter={(value) => [value.toLocaleString(), "Target visitors"]}
+                />
+                <Bar
+                  dataKey="target_visitors"
+                  fill="#2563eb"
+                  fillOpacity={0.84}
+                  radius={[3, 3, 0, 0]}
+                  maxBarSize={42}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          </Box>
+          <Typography color="text.secondary" sx={{ mt: 1.5 }} variant="body2">
+            {metrics.target_total_visitors.toLocaleString()} target-industry visitor records
           </Typography>
-          <Typography color="text.secondary" variant="body2">
-            Visitors recorded for Camoin Associates in the selected time frame.
-          </Typography>
-        </Stack>
-        <Box sx={{ height: 320, minWidth: 0 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={metrics.months} margin={{ top: 8, right: 18, bottom: 0, left: -12 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-              <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-              <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-              <Tooltip {...tooltipStyle} formatter={(value) => [value.toLocaleString(), "Visitors"]} />
-              <Bar dataKey="visitors" fill="#0d9488" fillOpacity={0.86} radius={[3, 3, 0, 0]} maxBarSize={42} />
-            </BarChart>
-          </ResponsiveContainer>
-        </Box>
-      </Paper>
+        </Paper>
+      </Box>
 
     </Stack>
   );
