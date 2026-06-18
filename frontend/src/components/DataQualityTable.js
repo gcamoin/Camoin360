@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import {
   Alert,
-  Badge,
   Box,
   Button,
   Chip,
@@ -14,6 +13,8 @@ import {
   DialogTitle,
   LinearProgress,
   Link,
+  Menu,
+  MenuItem,
   Paper,
   Stack,
   Table,
@@ -23,6 +24,7 @@ import {
   TableHead,
   TablePagination,
   TableRow,
+  TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -33,42 +35,123 @@ import DataQualitySummary from "./DataQualitySummary";
 import FieldUpdateSelector from "./FieldUpdateSelector";
 
 const API_URL = `${API_BASE_URL}/accounts/data-quality`;
+const ENRICHMENT_RUN_URL = `${API_BASE_URL}/accounts/enrichment-run`;
 const SEARCH_DEBOUNCE_MS = 200;
 const DEFAULT_ROWS_PER_PAGE = 25;
+const usStateNamesByAbbreviation = {
+  AL: "Alabama",
+  AK: "Alaska",
+  AZ: "Arizona",
+  AR: "Arkansas",
+  CA: "California",
+  CO: "Colorado",
+  CT: "Connecticut",
+  DE: "Delaware",
+  FL: "Florida",
+  GA: "Georgia",
+  HI: "Hawaii",
+  ID: "Idaho",
+  IL: "Illinois",
+  IN: "Indiana",
+  IA: "Iowa",
+  KS: "Kansas",
+  KY: "Kentucky",
+  LA: "Louisiana",
+  ME: "Maine",
+  MD: "Maryland",
+  MA: "Massachusetts",
+  MI: "Michigan",
+  MN: "Minnesota",
+  MS: "Mississippi",
+  MO: "Missouri",
+  MT: "Montana",
+  NE: "Nebraska",
+  NV: "Nevada",
+  NH: "New Hampshire",
+  NJ: "New Jersey",
+  NM: "New Mexico",
+  NY: "New York",
+  NC: "North Carolina",
+  ND: "North Dakota",
+  OH: "Ohio",
+  OK: "Oklahoma",
+  OR: "Oregon",
+  PA: "Pennsylvania",
+  RI: "Rhode Island",
+  SC: "South Carolina",
+  SD: "South Dakota",
+  TN: "Tennessee",
+  TX: "Texas",
+  UT: "Utah",
+  VT: "Vermont",
+  VA: "Virginia",
+  WA: "Washington",
+  WV: "West Virginia",
+  WI: "Wisconsin",
+  WY: "Wyoming",
+  DC: "District of Columbia",
+};
+const canadaProvinceNamesByAbbreviation = {
+  AB: "Alberta",
+  BC: "British Columbia",
+  MB: "Manitoba",
+  NB: "New Brunswick",
+  NL: "Newfoundland and Labrador",
+  NT: "Northwest Territories",
+  NS: "Nova Scotia",
+  NU: "Nunavut",
+  ON: "Ontario",
+  PE: "Prince Edward Island",
+  QC: "Quebec",
+  SK: "Saskatchewan",
+  YT: "Yukon",
+};
 
 let dataQualityCache = null;
 
+export function __resetDataQualityCacheForTests() {
+  dataQualityCache = null;
+}
+
 const columns = [
-  { key: "name", label: "Company Name", width: "20%" },
-  { key: "new_sector", label: "Sector", width: "14%" },
-  { key: "websiteurl", label: "Website", width: "15%" },
-  { key: "address1_stateorprovince", label: "State", width: "8%" },
-  { key: "address1_country", label: "Country", width: "10%" },
-  { key: "address1_city", label: "City", width: "10%" },
-  { key: "missing_fields_summary", label: "Missing Fields Summary", width: "15%" },
-  { key: "data_quality_score", label: "Quality", width: "8%" },
+  { key: "name", label: "Company Name", width: 220 },
+  { key: "new_sector", label: "Sector", width: 180 },
+  { key: "new_subsector", label: "Subsector", width: 180 },
+  { key: "websiteurl", label: "Website", width: 190 },
+  { key: "telephone1", label: "Business Phone", width: 170 },
+  { key: "address1_country", label: "Country", width: 140 },
+  { key: "address1_stateorprovince", label: "State/Province", width: 170 },
+  { key: "address1_city", label: "City", width: 150 },
+  { key: "new_employees", label: "Employee Count", width: 150 },
+  { key: "new_NAICStext", label: "NAICS Text", width: 190 },
+  { key: "missing_fields_summary", label: "Missing Fields Summary", width: 220 },
+  { key: "data_quality_score", label: "Quality", width: 120 },
 ];
+const selectionColumnWidth = 56;
+const tableMinWidth = columns.reduce((totalWidth, column) => totalWidth + column.width, selectionColumnWidth);
 
 const qualityFields = [
   { key: "name", label: "Company Name" },
   { key: "new_sector", label: "Sector" },
+  { key: "new_subsector", label: "Subsector" },
   { key: "websiteurl", label: "Website" },
-  { key: "address1_stateorprovince", label: "State" },
   { key: "address1_country", label: "Country" },
+  { key: "address1_stateorprovince", label: "State/Province" },
   { key: "address1_city", label: "City" },
   { key: "description", label: "Description" },
-  { key: "telephone1", label: "Phone" },
+  { key: "telephone1", label: "Business Phone" },
   { key: "new_datasource", label: "Data Source" },
   { key: "new_employees", label: "Employee Count" },
+  { key: "new_NAICStext", label: "NAICS Text" },
 ];
 
 const fieldUpdateOptions = [
   { key: "websiteurl", label: "Website" },
-  { key: "telephone1", label: "Phone" },
+  { key: "telephone1", label: "Business Phone" },
   { key: "description", label: "Description" },
   { key: "new_employees", label: "Employee Count" },
-  { key: "address1_stateorprovince", label: "State" },
   { key: "address1_country", label: "Country" },
+  { key: "address1_stateorprovince", label: "State/Province" },
   { key: "address1_city", label: "City" },
   { key: "new_datasource", label: "Data Source" },
 ];
@@ -82,10 +165,14 @@ const scoreFields = [
 
 const locationScoreFields = ["address1_city", "address1_stateorprovince", "address1_country"];
 const keyMissingMetricFields = [
+  { key: "new_sector", label: "Missing Sector" },
+  { key: "new_subsector", label: "Missing Subsector" },
   { key: "websiteurl", label: "Missing Website" },
-  { key: "telephone1", label: "Missing Phone" },
+  { key: "telephone1", label: "Missing Business Phone" },
   { key: "description", label: "Missing Description" },
   { key: "new_employees", label: "Missing Employee Count" },
+  { key: "new_datasource", label: "Missing Data Source" },
+  { key: "new_NAICStext", label: "Missing NAICS Text" },
 ];
 
 function getAccountSelectionId(account) {
@@ -109,6 +196,137 @@ function isMissingValue(value) {
 
 function normalizeValue(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function toLookupKey(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+export function getCountryGroup(value) {
+  const normalizedCountry = normalizeValue(value).replace(/[.\s]/g, "");
+
+  if (["us", "usa", "unitedstates", "unitedstatesofamerica"].includes(normalizedCountry)) {
+    return "us";
+  }
+
+  if (["ca", "can", "canada"].includes(normalizedCountry)) {
+    return "canada";
+  }
+
+  return normalizedCountry;
+}
+
+export function countryMatches(accountCountry, selectedCountry) {
+  if (selectedCountry === "all") {
+    return true;
+  }
+
+  return getCountryGroup(accountCountry) === getCountryGroup(selectedCountry);
+}
+
+export function getStateProvinceDisplayValue(value, country) {
+  if (isMissingValue(value)) {
+    return value;
+  }
+
+  const lookupKey = toLookupKey(value);
+  const countryGroup = getCountryGroup(country);
+
+  if (countryGroup === "us") {
+    return usStateNamesByAbbreviation[lookupKey] || value;
+  }
+
+  if (countryGroup === "canada") {
+    return canadaProvinceNamesByAbbreviation[lookupKey] || value;
+  }
+
+  return usStateNamesByAbbreviation[lookupKey] || canadaProvinceNamesByAbbreviation[lookupKey] || value;
+}
+
+function getDisplayValue(account, columnKey) {
+  if (columnKey === "address1_stateorprovince") {
+    return getStateProvinceDisplayValue(account.address1_stateorprovince, account.address1_country);
+  }
+
+  return account[columnKey];
+}
+
+function getColumnFilterValue(account, columnKey) {
+  if (columnKey === "missing_fields_summary") {
+    return account.missingFieldsSummary;
+  }
+
+  if (columnKey === "data_quality_score") {
+    return account.dataQualityScore;
+  }
+
+  return getDisplayValue(account, columnKey);
+}
+
+function getUniqueColumnOptions(accounts, columnKey) {
+  return Array.from(
+    new Set(
+      accounts
+        .map((account) => getDisplayValue(account, columnKey))
+        .filter((value) => !isMissingValue(value))
+        .map((value) => String(value).trim())
+    )
+  ).sort((a, b) => a.localeCompare(b));
+}
+
+export function getStateProvinceOptions(accounts, selectedCountry) {
+  const optionSource =
+    selectedCountry === "all"
+      ? accounts
+      : accounts.filter((account) => countryMatches(account.address1_country, selectedCountry));
+
+  return getUniqueColumnOptions(optionSource, "address1_stateorprovince");
+}
+
+export function getCityOptions(accounts, selectedCountry, selectedStates) {
+  if (!selectedStates.length) {
+    return [];
+  }
+
+  const optionSource = accounts.filter((account) => {
+    const matchesCountry = countryMatches(account.address1_country, selectedCountry);
+    const accountState = String(getDisplayValue(account, "address1_stateorprovince") || "").trim();
+
+    return matchesCountry && selectedStates.includes(accountState);
+  });
+
+  return getUniqueColumnOptions(optionSource, "address1_city");
+}
+
+function matchesSelectedValues(value, selectedValues) {
+  return !selectedValues.length || selectedValues.includes(String(value || "").trim());
+}
+
+function sortAccounts(accounts, sortConfig) {
+  if (!sortConfig.key) {
+    return accounts;
+  }
+
+  const directionMultiplier = sortConfig.direction === "asc" ? 1 : -1;
+
+  return [...accounts].sort((firstAccount, secondAccount) => {
+    const firstValue = normalizeValue(getDisplayValue(firstAccount, sortConfig.key));
+    const secondValue = normalizeValue(getDisplayValue(secondAccount, sortConfig.key));
+
+    if (firstValue === secondValue) {
+      return normalizeValue(firstAccount.name).localeCompare(normalizeValue(secondAccount.name));
+    }
+
+    if (isMissingValue(firstValue)) {
+      return 1;
+    }
+
+    if (isMissingValue(secondValue)) {
+      return -1;
+    }
+
+    return firstValue.localeCompare(secondValue) * directionMultiplier;
+  });
 }
 
 function getMissingQualityFields(account) {
@@ -156,7 +374,7 @@ function prepareAccountRows(accounts) {
     const missingFieldLabels = missingFields.map((field) => field.label);
     const missingFieldsSummary = missingFieldLabels.length ? missingFieldLabels.join(", ") : "Complete";
     const selectionId = getRowSelectionId(account, index);
-    const searchText = qualityFields.map((field) => normalizeValue(account[field.key])).join(" ");
+    const searchText = qualityFields.map((field) => normalizeValue(getDisplayValue(account, field.key))).join(" ");
 
     return {
       ...account,
@@ -171,7 +389,7 @@ function prepareAccountRows(accounts) {
   });
 }
 
-function renderCell(account, columnKey) {
+function renderCell(account, columnKey, onCompanyPreview) {
   if (columnKey === "missing_fields_summary") {
     return (
       <Tooltip arrow title={account.missingFieldsSummary}>
@@ -204,21 +422,17 @@ function renderCell(account, columnKey) {
           minWidth: 82,
         }}
       >
-        <Badge
-          badgeContent={`${score}%`}
-          color={qualityDisplay.color}
+        <Typography
+          color={`${qualityDisplay.color}.main`}
           sx={{
-            justifySelf: "start",
-            "& .MuiBadge-badge": {
-              fontSize: "0.65rem",
-              fontWeight: 800,
-              minWidth: 30,
-              right: -12,
-            },
+            fontSize: "0.85rem",
+            fontWeight: 800,
+            lineHeight: 1,
           }}
+          variant="body2"
         >
-          <Chip color={qualityDisplay.color} label={qualityDisplay.label} size="small" />
-        </Badge>
+          {score}%
+        </Typography>
         <LinearProgress
           color={qualityDisplay.color}
           sx={{ borderRadius: 999, height: 6 }}
@@ -229,13 +443,38 @@ function renderCell(account, columnKey) {
     );
   }
 
-  const value = account[columnKey];
+  const value = getDisplayValue(account, columnKey);
 
   if (isMissingValue(value)) {
     return (
       <Typography color="text.secondary" variant="body2">
         Missing
       </Typography>
+    );
+  }
+
+  if (columnKey === "name") {
+    return (
+      <Button
+        onClick={(event) => {
+          event.stopPropagation();
+          onCompanyPreview(account);
+        }}
+        sx={{
+          fontWeight: 700,
+          justifyContent: "flex-start",
+          minWidth: 0,
+          overflow: "hidden",
+          p: 0,
+          textAlign: "left",
+          textOverflow: "ellipsis",
+          textTransform: "none",
+          whiteSpace: "nowrap",
+        }}
+        variant="text"
+      >
+        {value}
+      </Button>
     );
   }
 
@@ -288,12 +527,22 @@ export default function DataQualityTable() {
   const [error, setError] = useState("");
   const [selectedSector, setSelectedSector] = useState("all");
   const [selectedMissingField, setSelectedMissingField] = useState("all");
+  const [selectedStates, setSelectedStates] = useState([]);
+  const [selectedCountry, setSelectedCountry] = useState("all");
+  const [selectedCities, setSelectedCities] = useState([]);
+  const [columnFilters, setColumnFilters] = useState(() => ({}));
+  const [sortConfig, setSortConfig] = useState({ key: "", direction: "asc" });
+  const [columnMenu, setColumnMenu] = useState({ anchorEl: null, columnKey: "" });
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [showNeedsAttentionOnly, setShowNeedsAttentionOnly] = useState(false);
   const [selectedAccountIds, setSelectedAccountIds] = useState(() => new Set());
   const [fieldsToUpdate, setFieldsToUpdate] = useState(() => new Set());
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [previewAccount, setPreviewAccount] = useState(null);
+  const [isEnriching, setIsEnriching] = useState(false);
+  const [enrichmentError, setEnrichmentError] = useState("");
+  const [enrichmentResult, setEnrichmentResult] = useState(null);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
 
@@ -309,25 +558,65 @@ export default function DataQualityTable() {
       ).sort((a, b) => a.localeCompare(b)),
     [accounts]
   );
+  const countries = useMemo(() => getUniqueColumnOptions(accounts, "address1_country"), [accounts]);
+  const states = useMemo(
+    () => getStateProvinceOptions(accounts, selectedCountry),
+    [accounts, selectedCountry]
+  );
+  const cities = useMemo(
+    () => getCityOptions(accounts, selectedCountry, selectedStates),
+    [accounts, selectedCountry, selectedStates]
+  );
 
   const filteredAccounts = useMemo(() => {
     const normalizedQuery = normalizeValue(debouncedSearchQuery);
+    const normalizedColumnFilters = Object.entries(columnFilters)
+      .map(([columnKey, filterValue]) => [columnKey, normalizeValue(filterValue)])
+      .filter(([_columnKey, filterValue]) => filterValue);
 
     return accounts.filter((account) => {
       const matchesSector =
         selectedSector === "all" || String(account.new_sector || "").trim() === selectedSector;
       const matchesMissingField =
         selectedMissingField === "all" || account.missingFieldKeys.has(selectedMissingField);
+      const matchesState = matchesSelectedValues(
+        getDisplayValue(account, "address1_stateorprovince"),
+        selectedStates
+      );
+      const matchesCountry = countryMatches(account.address1_country, selectedCountry);
+      const matchesCity = matchesSelectedValues(account.address1_city, selectedCities);
       const matchesAttentionFilter = !showNeedsAttentionOnly || hasMissingQualityField(account);
+      const matchesColumnFilters = normalizedColumnFilters.every(([columnKey, filterValue]) =>
+        normalizeValue(getColumnFilterValue(account, columnKey)).includes(filterValue)
+      );
 
       return (
         matchesSector &&
         matchesMissingField &&
+        matchesState &&
+        matchesCountry &&
+        matchesCity &&
         matchesAttentionFilter &&
-        matchesSearch(account, normalizedQuery)
+        matchesSearch(account, normalizedQuery) &&
+        matchesColumnFilters
       );
     });
-  }, [accounts, debouncedSearchQuery, selectedMissingField, selectedSector, showNeedsAttentionOnly]);
+  }, [
+    accounts,
+    columnFilters,
+    debouncedSearchQuery,
+    selectedCities,
+    selectedCountry,
+    selectedMissingField,
+    selectedSector,
+    selectedStates,
+    showNeedsAttentionOnly,
+  ]);
+
+  const sortedAccounts = useMemo(
+    () => sortAccounts(filteredAccounts, sortConfig),
+    [filteredAccounts, sortConfig]
+  );
 
   const missingCounts = useMemo(() => {
     const keyFieldMetrics = keyMissingMetricFields.map((field) => ({
@@ -352,13 +641,17 @@ export default function DataQualityTable() {
   const activeFilterCount = [
     selectedSector !== "all",
     selectedMissingField !== "all",
+    selectedStates.length > 0,
+    selectedCountry !== "all",
+    selectedCities.length > 0,
     showNeedsAttentionOnly,
     Boolean(searchQuery.trim()),
+    ...Object.values(columnFilters).map((filterValue) => Boolean(String(filterValue || "").trim())),
   ].filter(Boolean).length;
 
   const paginatedAccounts = useMemo(
-    () => filteredAccounts.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
-    [filteredAccounts, page, rowsPerPage]
+    () => sortedAccounts.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
+    [page, rowsPerPage, sortedAccounts]
   );
   const visibleAccountIds = useMemo(
     () => paginatedAccounts.map((account) => account.selectionId),
@@ -370,15 +663,85 @@ export default function DataQualityTable() {
   const selectedFieldLabels = fieldUpdateOptions
     .filter((field) => fieldsToUpdate.has(field.key))
     .map((field) => field.label);
+  const selectedAccounts = useMemo(
+    () => accounts.filter((account) => selectedAccountIds.has(account.selectionId)),
+    [accounts, selectedAccountIds]
+  );
+  const selectedDynamicsAccountIds = useMemo(
+    () => selectedAccounts.map((account) => account.accountid).filter(Boolean),
+    [selectedAccounts]
+  );
   const canPreviewEnrichment = selectedAccountIds.size > 0 && selectedFieldLabels.length > 0;
+  const canRunEnrichment = selectedDynamicsAccountIds.length > 0 && selectedFieldLabels.length > 0 && !isEnriching;
+  const activeColumnMenu = columns.find((column) => column.key === columnMenu.columnKey);
 
   function resetFilters() {
     setSelectedSector("all");
     setSelectedMissingField("all");
+    setSelectedStates([]);
+    setSelectedCountry("all");
+    setSelectedCities([]);
+    setColumnFilters({});
     setSearchQuery("");
     setDebouncedSearchQuery("");
     setShowNeedsAttentionOnly(false);
     setPage(0);
+  }
+
+  function updateColumnFilter(columnKey, value) {
+    setColumnFilters((currentFilters) => {
+      const nextFilters = { ...currentFilters };
+
+      if (value.trim()) {
+        nextFilters[columnKey] = value;
+      } else {
+        delete nextFilters[columnKey];
+      }
+
+      return nextFilters;
+    });
+  }
+
+  function updateLocationFilter(setFilterValue) {
+    return (nextValue) => {
+      setFilterValue(nextValue || "all");
+      setPage(0);
+    };
+  }
+
+  function updateMultiLocationFilter(setFilterValue) {
+    return (nextValues) => {
+      setFilterValue(nextValues);
+      setPage(0);
+    };
+  }
+
+  function openColumnMenu(event, columnKey) {
+    setColumnMenu({ anchorEl: event.currentTarget, columnKey });
+  }
+
+  function closeColumnMenu() {
+    setColumnMenu({ anchorEl: null, columnKey: "" });
+  }
+
+  function handleSort(columnKey, direction) {
+    setSortConfig((currentSort) => {
+      if (currentSort.key === columnKey && currentSort.direction === direction) {
+        return currentSort;
+      }
+
+      return { key: columnKey, direction };
+    });
+  }
+
+  function clearSort(columnKey) {
+    setSortConfig((currentSort) => {
+      if (currentSort.key !== columnKey) {
+        return currentSort;
+      }
+
+      return { key: "", direction: "asc" };
+    });
   }
 
   function toggleAccountSelection(accountId) {
@@ -417,6 +780,42 @@ export default function DataQualityTable() {
     setFieldsToUpdate(new Set(fieldKeys));
   }
 
+  async function refreshAccounts() {
+    const response = await axios.get(API_URL, { headers: getAuthHeaders() });
+    const preparedRows = prepareAccountRows(response.data?.data || []);
+
+    dataQualityCache = preparedRows;
+    setAccounts(preparedRows);
+  }
+
+  async function runSelectedEnrichment() {
+    setIsEnriching(true);
+    setEnrichmentError("");
+    setEnrichmentResult(null);
+
+    try {
+      const response = await axios.post(
+        ENRICHMENT_RUN_URL,
+        {
+          account_ids: selectedDynamicsAccountIds,
+          fields_to_update: Array.from(fieldsToUpdate),
+        },
+        { headers: getAuthHeaders() }
+      );
+
+      setEnrichmentResult(response.data);
+      await refreshAccounts();
+    } catch (runError) {
+      if (handleUnauthorized(runError)) {
+        return;
+      }
+
+      setEnrichmentError(getApiErrorMessage(runError, "Unable to enrich selected accounts."));
+    } finally {
+      setIsEnriching(false);
+    }
+  }
+
   function handleChangePage(_event, nextPage) {
     setPage(nextPage);
   }
@@ -439,7 +838,23 @@ export default function DataQualityTable() {
 
   useEffect(() => {
     setPage(0);
-  }, [selectedMissingField, selectedSector, showNeedsAttentionOnly]);
+  }, [columnFilters, selectedCities, selectedCountry, selectedMissingField, selectedSector, selectedStates, showNeedsAttentionOnly]);
+
+  useEffect(() => {
+    const validSelectedStates = selectedStates.filter((selectedState) => states.includes(selectedState));
+
+    if (validSelectedStates.length !== selectedStates.length) {
+      setSelectedStates(validSelectedStates);
+    }
+  }, [selectedStates, states]);
+
+  useEffect(() => {
+    const validSelectedCities = selectedCities.filter((selectedCity) => cities.includes(selectedCity));
+
+    if (validSelectedCities.length !== selectedCities.length) {
+      setSelectedCities(validSelectedCities);
+    }
+  }, [cities, selectedCities]);
 
   useEffect(() => {
     const lastPage = Math.max(0, Math.ceil(filteredAccounts.length / rowsPerPage) - 1);
@@ -520,17 +935,26 @@ export default function DataQualityTable() {
       >
         <DataQualityFilters
           activeFilterCount={activeFilterCount}
+          cities={cities}
+          countries={countries}
           missingFieldOptions={qualityFields}
+          onCityChange={updateMultiLocationFilter(setSelectedCities)}
+          onCountryChange={updateLocationFilter(setSelectedCountry)}
           onMissingFieldChange={setSelectedMissingField}
           onNeedsAttentionChange={setShowNeedsAttentionOnly}
           onResetFilters={resetFilters}
           onSearchChange={setSearchQuery}
           onSectorChange={setSelectedSector}
+          onStateChange={updateMultiLocationFilter(setSelectedStates)}
           searchQuery={searchQuery}
           sectors={sectors}
+          selectedCities={selectedCities}
+          selectedCountry={selectedCountry}
           selectedMissingField={selectedMissingField}
           selectedSector={selectedSector}
+          selectedStates={selectedStates}
           showNeedsAttentionOnly={showNeedsAttentionOnly}
+          states={states}
         />
         <Box
           sx={{
@@ -558,8 +982,8 @@ export default function DataQualityTable() {
             ) : null}
           </Stack>
         </Box>
-        <TableContainer sx={{ maxHeight: "calc(100vh - 360px)" }}>
-          <Table size="small" stickyHeader sx={{ tableLayout: "fixed", width: "100%" }}>
+        <TableContainer sx={{ maxHeight: "calc(100vh - 360px)", overflowX: "auto" }}>
+          <Table size="small" stickyHeader sx={{ minWidth: tableMinWidth, tableLayout: "fixed" }}>
             <TableHead>
               <TableRow>
                 <TableCell
@@ -567,12 +991,12 @@ export default function DataQualityTable() {
                   sx={{
                     backgroundColor: "primary.main",
                     color: "common.white",
-                    minWidth: 56,
+                    minWidth: selectionColumnWidth,
                     px: 0,
                     py: 1,
                     textAlign: "center",
                     verticalAlign: "middle",
-                    width: 56,
+                    width: selectionColumnWidth,
                   }}
                 >
                   <Checkbox
@@ -593,11 +1017,67 @@ export default function DataQualityTable() {
                       color: "common.white",
                       fontWeight: 800,
                       py: 1.25,
-                      whiteSpace: "nowrap",
+                      top: 0,
                       width: column.width,
+                      zIndex: 3,
                     }}
                   >
-                    {column.label}
+                    <Box sx={{ alignItems: "center", display: "flex", gap: 1, justifyContent: "space-between" }}>
+                      <Typography
+                        component="span"
+                        sx={{
+                          color: "common.white",
+                          fontSize: "0.875rem",
+                          fontWeight: 800,
+                          lineHeight: 1.15,
+                          minWidth: 0,
+                          overflow: "visible",
+                          textOverflow: "clip",
+                          whiteSpace: "normal",
+                          wordBreak: "normal",
+                        }}
+                      >
+                        {column.label}
+                      </Typography>
+                      <Button
+                        aria-label={`${column.label} filter and sort options`}
+                        onClick={(event) => openColumnMenu(event, column.key)}
+                        size="small"
+                        sx={{
+                          borderColor: "rgba(255, 255, 255, 0.55)",
+                          color: "common.white",
+                          fontSize: "0.7rem",
+                          lineHeight: 1,
+                          flex: "0 0 auto",
+                          minWidth: 28,
+                          px: 0.5,
+                          py: 0.25,
+                        }}
+                        variant="outlined"
+                      >
+                        <Box
+                          aria-hidden="true"
+                          sx={{
+                            borderLeft: "6px solid transparent",
+                            borderRight: "6px solid transparent",
+                            borderTop: "8px solid currentColor",
+                            height: 0,
+                            position: "relative",
+                            width: 0,
+                            "&::after": {
+                              backgroundColor: "currentColor",
+                              borderRadius: 999,
+                              content: '""',
+                              height: 5,
+                              left: -1,
+                              position: "absolute",
+                              top: -1,
+                              width: 2,
+                            },
+                          }}
+                        />
+                      </Button>
+                    </Box>
                   </TableCell>
                 ))}
               </TableRow>
@@ -613,12 +1093,12 @@ export default function DataQualityTable() {
                       <TableCell
                         padding="none"
                         sx={{
-                          minWidth: 56,
+                          minWidth: selectionColumnWidth,
                           px: 0,
                           py: 1,
                           textAlign: "center",
                           verticalAlign: "middle",
-                          width: 56,
+                          width: selectionColumnWidth,
                         }}
                       >
                         <Checkbox
@@ -638,11 +1118,12 @@ export default function DataQualityTable() {
                             py: 1.25,
                             textOverflow: "ellipsis",
                             verticalAlign: "middle",
+                            width: column.width,
                             whiteSpace: column.key === "description" ? "normal" : "nowrap",
                             wordBreak: column.key === "description" ? "break-word" : "normal",
                           }}
                         >
-                          {renderCell(account, column.key)}
+                          {renderCell(account, column.key, setPreviewAccount)}
                         </TableCell>
                       ))}
                     </TableRow>
@@ -660,6 +1141,60 @@ export default function DataQualityTable() {
             </TableBody>
           </Table>
         </TableContainer>
+        <Menu
+          anchorEl={columnMenu.anchorEl}
+          onClose={closeColumnMenu}
+          open={Boolean(columnMenu.anchorEl)}
+        >
+          <Box sx={{ p: 1.5, width: 240 }}>
+            <Typography color="text.secondary" sx={{ mb: 1 }} variant="overline">
+              {activeColumnMenu?.label || "Column"} Options
+            </Typography>
+            <TextField
+              autoFocus
+              fullWidth
+              inputProps={{ "aria-label": `Filter ${activeColumnMenu?.label || "column"}` }}
+              label="Filter"
+              onChange={(event) => updateColumnFilter(columnMenu.columnKey, event.target.value)}
+              size="small"
+              value={columnFilters[columnMenu.columnKey] || ""}
+            />
+          </Box>
+          <MenuItem
+            onClick={() => {
+              handleSort(columnMenu.columnKey, "asc");
+              closeColumnMenu();
+            }}
+          >
+            Sort ascending
+          </MenuItem>
+          <MenuItem
+            onClick={() => {
+              handleSort(columnMenu.columnKey, "desc");
+              closeColumnMenu();
+            }}
+          >
+            Sort descending
+          </MenuItem>
+          <MenuItem
+            disabled={sortConfig.key !== columnMenu.columnKey}
+            onClick={() => {
+              clearSort(columnMenu.columnKey);
+              closeColumnMenu();
+            }}
+          >
+            Clear sort
+          </MenuItem>
+          <MenuItem
+            disabled={!columnFilters[columnMenu.columnKey]}
+            onClick={() => {
+              updateColumnFilter(columnMenu.columnKey, "");
+              closeColumnMenu();
+            }}
+          >
+            Clear filter
+          </MenuItem>
+        </Menu>
         <TablePagination
           component="div"
           count={filteredAccounts.length}
@@ -694,7 +1229,11 @@ export default function DataQualityTable() {
           </Box>
           <Button
             disabled={!canPreviewEnrichment}
-            onClick={() => setIsPreviewOpen(true)}
+            onClick={() => {
+              setEnrichmentError("");
+              setEnrichmentResult(null);
+              setIsPreviewOpen(true);
+            }}
             size="large"
             sx={{ borderRadius: 1, fontWeight: 800, minWidth: 190 }}
             variant="contained"
@@ -742,6 +1281,11 @@ export default function DataQualityTable() {
               <Typography color="primary.main" sx={{ fontSize: "1.75rem", fontWeight: 800, lineHeight: 1.15 }}>
                 {selectedAccountIds.size} Account{selectedAccountIds.size === 1 ? "" : "s"} Selected
               </Typography>
+              {selectedDynamicsAccountIds.length !== selectedAccountIds.size ? (
+                <Alert severity="warning" sx={{ mt: 1 }}>
+                  Some selected rows do not have a Dynamics account ID and cannot be enriched.
+                </Alert>
+              ) : null}
             </Box>
             <Box>
               <Typography color="text.secondary" variant="overline">
@@ -753,10 +1297,87 @@ export default function DataQualityTable() {
                 ))}
               </Box>
             </Box>
+            {enrichmentError ? <Alert severity="error">{enrichmentError}</Alert> : null}
+            {enrichmentResult ? (
+              <Alert severity="success">
+                Seamless enrichment complete: {enrichmentResult.updated} of {enrichmentResult.processed} account
+                {enrichmentResult.processed === 1 ? "" : "s"} updated.
+              </Alert>
+            ) : null}
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setIsPreviewOpen(false)} sx={{ borderRadius: 1, fontWeight: 800 }} variant="contained">
+          <Button onClick={() => setIsPreviewOpen(false)} sx={{ borderRadius: 1, fontWeight: 800 }}>
+            Close
+          </Button>
+          <Button
+            disabled={!canRunEnrichment}
+            onClick={runSelectedEnrichment}
+            sx={{ borderRadius: 1, fontWeight: 800, minWidth: 190 }}
+            variant="contained"
+          >
+            {isEnriching ? "Enriching..." : "Enrich with Seamless"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog fullWidth maxWidth="md" onClose={() => setPreviewAccount(null)} open={Boolean(previewAccount)}>
+        <DialogTitle sx={{ color: "primary.main", fontWeight: 800 }}>
+          Company Preview
+        </DialogTitle>
+        <DialogContent dividers>
+          {previewAccount ? (
+            <Stack spacing={2.5}>
+              <Box>
+                <Typography color="text.secondary" variant="overline">
+                  Company
+                </Typography>
+                <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="h5">
+                  {previewAccount.name || "Missing"}
+                </Typography>
+              </Box>
+              <Box
+                sx={{
+                  display: "grid",
+                  gap: 2,
+                  gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))" },
+                }}
+              >
+                {[
+                  ["Sector", previewAccount.new_sector],
+                  ["Subsector", previewAccount.new_subsector],
+                  ["Country", previewAccount.address1_country],
+                  ["State/Province", getDisplayValue(previewAccount, "address1_stateorprovince")],
+                  ["City", previewAccount.address1_city],
+                  ["Employee Count", previewAccount.new_employees],
+                  ["NAICS Text", previewAccount.new_NAICStext],
+                  ["Website", previewAccount.websiteurl],
+                  ["Business Phone", previewAccount.telephone1],
+                  ["Data Source", previewAccount.new_datasource],
+                  ["Quality", `${previewAccount.dataQualityScore}%`],
+                ].map(([label, fieldValue]) => (
+                  <Box key={label}>
+                    <Typography color="text.secondary" variant="overline">
+                      {label}
+                    </Typography>
+                    <Typography sx={{ overflowWrap: "anywhere" }} variant="body1">
+                      {isMissingValue(fieldValue) ? "Missing" : fieldValue}
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
+              <Box>
+                <Typography color="text.secondary" variant="overline">
+                  Description
+                </Typography>
+                <Typography sx={{ whiteSpace: "pre-wrap" }} variant="body1">
+                  {isMissingValue(previewAccount.description) ? "Missing" : previewAccount.description}
+                </Typography>
+              </Box>
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPreviewAccount(null)} sx={{ borderRadius: 1, fontWeight: 800 }} variant="contained">
             Close
           </Button>
         </DialogActions>

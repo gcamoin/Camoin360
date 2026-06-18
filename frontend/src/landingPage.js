@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Box,
   Button,
@@ -13,6 +13,8 @@ import {
 } from "@mui/material";
 
 import DataQualityTable from "./components/DataQualityTable";
+import DuplicateAccounts from "./components/DuplicateAccounts";
+import MarketingLists from "./components/MarketingLists";
 import MetricsDashboard from "./components/MetricsDashboard";
 import SummaryAnalytics from "./components/SummaryAnalytics";
 
@@ -20,6 +22,7 @@ const views = {
   seamless: {
     label: "Seamless",
     icon: "sync",
+    route: "/dashboard",
     title: "Sophie - Seamless AI Updates Dashboard",
     description:
       "Live view of weekly Seamless credit consumption and enrichment throughput across the Dynamics pipeline.",
@@ -27,13 +30,29 @@ const views = {
   dataQuality: {
     label: "Data Quality",
     icon: "checklist",
+    route: "/dashboard/data-quality",
     title: "Data Quality",
     description:
       "Review Dynamics account fields used for enrichment quality: name, state or province, sector, description, and website.",
   },
+  duplicateAccounts: {
+    label: "Duplicate Accounts",
+    icon: "duplicate",
+    route: "/dashboard/duplicate-accounts",
+    title: "Duplicate Accounts",
+    description: "Find and review possible duplicate Dynamics account records before enrichment updates.",
+  },
+  marketingLists: {
+    label: "Marketing Lists",
+    icon: "campaign",
+    route: "/dashboard/marketing-lists",
+    title: "Marketing Lists",
+    description: "Manage Dynamics marketing lists and filter by client, campaign, creator, member type, and list metadata.",
+  },
   summaryAnalytics: {
     label: "Summary Analytics",
     icon: "chart",
+    route: "/dashboard/summary-analytics",
     title: "Summary Analytics",
     description: "See how many Dynamics accounts belong to each sector with cards, a bar chart, and a count table.",
   }
@@ -41,8 +60,10 @@ const views = {
 
 const iconPaths = {
   chart: "M5 19V9h3v10H5Zm5 0V5h3v14h-3Zm5 0v-7h3v7h-3Z",
+  campaign: "M4 10v4h3l5 4V6l-5 4H4Zm10.5 4.8 1.4 1.4A6 6 0 0 0 18 12a6 6 0 0 0-2.1-4.2l-1.4 1.4A4 4 0 0 1 16 12a4 4 0 0 1-1.5 2.8Z",
   checklist: "M5.5 7.5 7 9l3-3 .9.9L7 10.8 4.6 8.4l.9-.9ZM13 8h7v2h-7V8ZM5.5 14.5 7 16l3-3 .9.9L7 17.8l-2.4-2.4.9-.9ZM13 15h7v2h-7v-2Z",
   collapse: "M15.5 5 8.5 12l7 7-1.4 1.4L5.7 12l8.4-8.4L15.5 5Zm4 0-7 7 7 7-1.4 1.4L9.7 12l8.4-8.4L19.5 5Z",
+  duplicate: "M7 7V5c0-1.1.9-2 2-2h8c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2h-2v2c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V9c0-1.1.9-2 2-2h2Zm2 0h4c1.1 0 2 .9 2 2v6h2V5H9v2Zm-4 2v10h8V9H5Z",
   expand: "m8.5 5 7 7-7 7 1.4 1.4 8.4-8.4-8.4-8.4L8.5 5Zm-4 0 7 7-7 7 1.4 1.4 8.4-8.4-8.4-8.4L4.5 5Z",
   signout: "M10 17v-2h4V9h-4V7h6v10h-6Zm-1-1-5-4 5-4v3h6v2H9v3Z",
   sync: "M7 7h9.2l-2.6-2.6L15 3l5 5-5 5-1.4-1.4L16.2 9H7V7Zm10 10H7.8l2.6 2.6L9 21l-5-5 5-5 1.4 1.4L7.8 15H17v2Z",
@@ -56,11 +77,38 @@ function NavIcon({ name }) {
   );
 }
 
+function getViewForPath(pathname) {
+  const matchingView = Object.entries(views).find(([_viewKey, view]) => view.route === pathname);
+
+  return matchingView?.[0] || "seamless";
+}
+
 export default function LandingPage({ onLogout }) {
-  const [activeView, setActiveView] = useState("seamless");
+  const [activeView, setActiveView] = useState(() => getViewForPath(window.location.pathname));
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const theme = useTheme();
   const currentView = views[activeView];
+
+  function navigateToView(viewKey) {
+    setActiveView(viewKey);
+
+    const nextRoute = views[viewKey].route;
+    if (window.location.pathname !== nextRoute) {
+      window.history.pushState({}, "", nextRoute);
+    }
+  }
+
+  useEffect(() => {
+    function handlePopState() {
+      setActiveView(getViewForPath(window.location.pathname));
+    }
+
+    window.addEventListener("popstate", handlePopState);
+
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, []);
 
   return (
     <Box
@@ -161,33 +209,32 @@ export default function LandingPage({ onLogout }) {
                 return (
                   <Tooltip arrow disableHoverListener={!sidebarCollapsed} key={viewKey} placement="right" title={view.label}>
                     <Button
-                    key={viewKey}
-                    fullWidth
-                    onClick={() => setActiveView(viewKey)}
-                    startIcon={<NavIcon name={view.icon} />}
-                    sx={{
-                      justifyContent: sidebarCollapsed ? "center" : "flex-start",
-                      borderRadius: 1,
-                      color: isActive ? "primary.main" : "common.white",
-                      backgroundColor: isActive
-                        ? "common.white"
-                        : "transparent",
-                      fontWeight: 800,
-                      minWidth: 0,
-                      px: sidebarCollapsed ? 1 : 2,
-                      py: 1.25,
-                      "& .MuiButton-startIcon": {
-                        m: sidebarCollapsed ? 0 : undefined,
-                      },
-                      "&:hover": {
+                      fullWidth
+                      onClick={() => navigateToView(viewKey)}
+                      startIcon={<NavIcon name={view.icon} />}
+                      sx={{
+                        justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                        borderRadius: 1,
+                        color: isActive ? "primary.main" : "common.white",
                         backgroundColor: isActive
                           ? "common.white"
-                          : "rgba(255,255,255,0.12)",
-                      },
-                    }}
-                    title={view.label}
-                  >
-                    {!sidebarCollapsed && view.label}
+                          : "transparent",
+                        fontWeight: 800,
+                        minWidth: 0,
+                        px: sidebarCollapsed ? 1 : 2,
+                        py: 1.25,
+                        "& .MuiButton-startIcon": {
+                          m: sidebarCollapsed ? 0 : undefined,
+                        },
+                        "&:hover": {
+                          backgroundColor: isActive
+                            ? "common.white"
+                            : "rgba(255,255,255,0.12)",
+                        },
+                      }}
+                      title={view.label}
+                    >
+                      {!sidebarCollapsed && view.label}
                     </Button>
                   </Tooltip>
                 );
@@ -226,8 +273,8 @@ export default function LandingPage({ onLogout }) {
 
         <Box component="main" sx={{ py: { xs: 3, md: 6 } }}>
           <Container
-            maxWidth={activeView === "dataQuality" ? false : "lg"}
-            sx={{ px: { xs: 2, md: activeView === "dataQuality" ? 3 : 4 } }}
+            maxWidth={["dataQuality", "duplicateAccounts", "marketingLists"].includes(activeView) ? false : "lg"}
+            sx={{ px: { xs: 2, md: ["dataQuality", "duplicateAccounts", "marketingLists"].includes(activeView) ? 3 : 4 } }}
           >
             <Stack spacing={3}>
               <Box>
@@ -256,6 +303,8 @@ export default function LandingPage({ onLogout }) {
 
               {activeView === "seamless" && <MetricsDashboard />}
               {activeView === "dataQuality" && <DataQualityTable />}
+              {activeView === "duplicateAccounts" && <DuplicateAccounts />}
+              {activeView === "marketingLists" && <MarketingLists />}
               {activeView === "summaryAnalytics" && <SummaryAnalytics />}
             </Stack>
           </Container>

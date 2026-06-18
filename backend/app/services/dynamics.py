@@ -17,7 +17,13 @@ load_dotenv(BACKEND_ROOT / ".env")
 
 API_URL = os.getenv("DYNAMICS_API_URL")
 DATA_QUALITY_CACHE_TTL_SECONDS = 120
+DATA_QUALITY_ACCOUNT_LIMIT = 20000
 SUMMARY_CACHE_TTL_SECONDS = 600
+DATA_QUALITY_REQUEST_TIMEOUT_SECONDS = 60
+DUPLICATE_ACCOUNT_DEFAULT_LIMIT = 1000
+DUPLICATE_ACCOUNT_MAX_LIMIT = 1000
+MARKETING_LIST_DEFAULT_LIMIT = 5000
+MARKETING_LIST_REQUEST_TIMEOUT_SECONDS = 60
 _DATA_QUALITY_CACHE = {"expires_at": 0, "data": None}
 _SUMMARY_CACHE = {"expires_at": 0, "data": None}
 
@@ -92,28 +98,151 @@ async def get_accounts_data_quality():
 
     url = (
         f"{API_URL}/accounts?"
+        # TODO: Add NAICS text and subsector once the exact Dynamics field names are confirmed.
         "$select=accountid,name,address1_stateorprovince,address1_country,address1_city,new_sector,description,websiteurl,telephone1,new_datasource,new_employees&"
         "$orderby=name asc&"
-        "$top=2000"
+        f"$top={DATA_QUALITY_ACCOUNT_LIMIT}"
     )
 
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
-        "OData-Version": "4.0"
+        "OData-Version": "4.0",
+        "Prefer": "odata.maxpagesize=5000",
     }
 
-    async with httpx.AsyncClient() as client:
-        response = await client.get(url, headers=headers)
+    accounts = []
+    next_url = url
 
-    if response.status_code != 200:
-        raise Exception(f"Dynamics GET error: {response.text}")
+    timeout = httpx.Timeout(DATA_QUALITY_REQUEST_TIMEOUT_SECONDS)
 
-    accounts = response.json().get("value", [])
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            while next_url and len(accounts) < DATA_QUALITY_ACCOUNT_LIMIT:
+                response = await client.get(next_url, headers=headers)
+
+                if response.status_code != 200:
+                    raise Exception(f"Dynamics GET error: {response.text}")
+
+                response_data = response.json()
+                accounts.extend(response_data.get("value", []))
+                next_url = response_data.get("@odata.nextLink")
+    except httpx.TimeoutException as exc:
+        raise Exception(
+            f"Dynamics request timed out after {DATA_QUALITY_REQUEST_TIMEOUT_SECONDS} seconds while loading data quality accounts"
+        ) from exc
+
+    accounts = accounts[:DATA_QUALITY_ACCOUNT_LIMIT]
     _DATA_QUALITY_CACHE["data"] = accounts
     _DATA_QUALITY_CACHE["expires_at"] = now + DATA_QUALITY_CACHE_TTL_SECONDS
 
     return accounts
+
+
+async def get_duplicate_account_records(limit: int = DUPLICATE_ACCOUNT_DEFAULT_LIMIT):
+    account_limit = max(1, min(limit, DUPLICATE_ACCOUNT_MAX_LIMIT))
+    token = await get_access_token()
+
+    url = (
+        f"{API_URL}/accounts?"
+        "$select=accountid,name,websiteurl,address1_country,address1_stateorprovince,address1_city,telephone1,new_sector,createdon&"
+        "$orderby=name asc&"
+        f"$top={account_limit}"
+    )
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "OData-Version": "4.0",
+        "Prefer": f"odata.maxpagesize={account_limit}",
+    }
+
+    accounts = []
+    next_url = url
+    timeout = httpx.Timeout(DATA_QUALITY_REQUEST_TIMEOUT_SECONDS)
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            while next_url and len(accounts) < account_limit:
+                response = await client.get(next_url, headers=headers)
+
+                if response.status_code != 200:
+                    raise Exception(f"Dynamics GET error: {response.text}")
+
+                payload = response.json()
+                accounts.extend(payload.get("value", []))
+                next_url = payload.get("@odata.nextLink")
+    except httpx.TimeoutException as exc:
+        raise Exception(
+            f"Dynamics request timed out after {DATA_QUALITY_REQUEST_TIMEOUT_SECONDS} seconds while loading duplicate account records"
+        ) from exc
+
+    return accounts[:account_limit]
+
+
+def get_formatted_value(record: dict, field_name: str):
+    return record.get(f"{field_name}@OData.Community.Display.V1.FormattedValue", record.get(field_name))
+
+
+def normalize_marketing_list_record(record: dict):
+    created_by = record.get("createdby", {}) if isinstance(record.get("createdby"), dict) else {}
+
+    return {
+        "listid": record.get("listid"),
+        "name": record.get("listname"),
+        "marketing_list_name": record.get("listname"),
+        "createdon": record.get("createdon"),
+        "created_by": created_by.get("fullname") or get_formatted_value(record, "_createdby_value") or "",
+        "member_count": record.get("membercount"),
+        "list_member_type": get_formatted_value(record, "createdfromcode") or "",
+        "list_type": get_formatted_value(record, "type") or "",
+        "client_name": record.get("client_name", ""),
+        "campaign": record.get("campaign", ""),
+    }
+
+
+async def get_marketing_lists(limit: int = MARKETING_LIST_DEFAULT_LIMIT):
+    token = await get_access_token()
+
+    url = (
+        f"{API_URL}/lists?"
+        "$select=listid,listname,createdon,membercount,createdfromcode,type,_createdby_value&"
+        "$expand=createdby($select=fullname)&"
+        "$orderby=createdon desc&"
+        f"$top={limit}"
+    )
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "OData-Version": "4.0",
+        "Prefer": 'odata.include-annotations="OData.Community.Display.V1.FormattedValue",odata.maxpagesize=5000',
+    }
+
+    marketing_lists = []
+    next_url = url
+    timeout = httpx.Timeout(MARKETING_LIST_REQUEST_TIMEOUT_SECONDS)
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            while next_url and len(marketing_lists) < limit:
+                response = await client.get(next_url, headers=headers)
+
+                if response.status_code != 200:
+                    raise Exception(f"Dynamics GET error: {response.text}")
+
+                payload = response.json()
+                marketing_lists.extend(
+                    normalize_marketing_list_record(record)
+                    for record in payload.get("value", [])
+                )
+                next_url = payload.get("@odata.nextLink")
+    except httpx.TimeoutException as exc:
+        raise Exception(
+            f"Dynamics request timed out after {MARKETING_LIST_REQUEST_TIMEOUT_SECONDS} seconds while loading marketing lists"
+        ) from exc
+
+    return marketing_lists[:limit]
 
 
 async def get_account_sector_counts():
@@ -272,8 +401,13 @@ async def revert_account_fields(account_id: str, fields: dict = None):
     }
 
 
-async def enrich_account(account_id: str):
+def should_update_field(field_key: str, fields_to_update: set[str] | None):
+    return fields_to_update is None or field_key in fields_to_update
+
+
+async def enrich_account(account_id: str, fields_to_update: list[str] | None = None):
     increment_processed()
+    requested_fields = set(fields_to_update) if fields_to_update else None
 
     account = await get_account(
         account_id,
@@ -320,20 +454,20 @@ async def enrich_account(account_id: str):
 
     # WEBSITE
     website = seamless_data.get("website")
-    if not account.get("websiteurl") and website:
+    if should_update_field("websiteurl", requested_fields) and not account.get("websiteurl") and website:
         if not website.startswith("http"):
             website = f"https://{website}"
         updates["websiteurl"] = website
 
     # PHONE
     phone = seamless_data.get("phone")
-    if not account.get("telephone1") and phone:
+    if should_update_field("telephone1", requested_fields) and not account.get("telephone1") and phone:
         updates["telephone1"] = phone
 
     # STATE
     state = seamless_data.get("state")
     print(f"📍 Raw state: {state}")
-    if state:
+    if should_update_field("address1_stateorprovince", requested_fields) and state:
         state_clean = state.strip()
         state_abbr = STATE_ABBREVIATIONS.get(state_clean.title(), state_clean)
         print(f"📍 Converted state: {state_abbr}")
@@ -342,12 +476,12 @@ async def enrich_account(account_id: str):
 
     # COUNTRY
     country = seamless_data.get("country")
-    if not account.get("address1_country") and country:
+    if should_update_field("address1_country", requested_fields) and not account.get("address1_country") and country:
         updates["address1_country"] = country
 
     # EMPLOYEES
     employees = seamless_data.get("employees")
-    if not account.get("numberofemployees") and employees:
+    if should_update_field("new_employees", requested_fields) and not account.get("numberofemployees") and employees:
         try:
             updates["numberofemployees"] = int(employees)
         except Exception:
@@ -355,7 +489,7 @@ async def enrich_account(account_id: str):
 
     # DESCRIPTION
     description = seamless_data.get("description")
-    if description:
+    if should_update_field("description", requested_fields) and description:
         print(f"📝 Description found: {description[:100]}")
         if not account.get("description") or account.get("description").strip() == "":
             updates["description"] = description
@@ -370,6 +504,34 @@ async def enrich_account(account_id: str):
         "account_id": account_id,
         "updated": bool(updates),
         "updates": updates or None
+    }
+
+
+async def enrich_selected_accounts(account_ids: list[str], fields_to_update: list[str]):
+    results = []
+
+    for account_id in account_ids:
+        if not account_id:
+            continue
+
+        try:
+            result = await enrich_account(account_id, fields_to_update)
+        except Exception as exc:
+            result = {
+                "account_id": account_id,
+                "updated": False,
+                "error": str(exc),
+            }
+
+        results.append(result)
+        await asyncio.sleep(1)
+
+    updated_count = sum(1 for result in results if result.get("updated"))
+
+    return {
+        "processed": len(results),
+        "updated": updated_count,
+        "results": results
     }
 
 

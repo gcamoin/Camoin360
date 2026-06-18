@@ -1,6 +1,6 @@
 import React from "react";
 import {
-  Box,
+  Autocomplete,
   Button,
   Checkbox,
   FormControl,
@@ -18,14 +18,52 @@ export default function DataQualityFilters({
   onMissingFieldChange,
   onNeedsAttentionChange,
   onResetFilters,
+  onCityChange,
+  onCountryChange,
   onSearchChange,
   onSectorChange,
+  onStateChange,
+  cities,
+  countries,
   searchQuery,
   sectors,
+  selectedCities,
+  selectedCountry,
   selectedMissingField,
   selectedSector,
+  selectedStates,
   showNeedsAttentionOnly,
+  states,
 }) {
+  const compactControlSx = {
+    flex: { lg: "0 1 190px" },
+    maxWidth: { lg: 190 },
+    minWidth: { lg: 0 },
+  };
+  const locationFilters = [
+    {
+      label: "Country",
+      options: countries,
+      value: selectedCountry,
+      onChange: onCountryChange,
+    },
+    {
+      label: "State/Province",
+      options: states,
+      value: selectedStates,
+      onChange: onStateChange,
+      multiple: true,
+    },
+    {
+      label: "City",
+      options: cities,
+      value: selectedCities,
+      onChange: onCityChange,
+      disabled: !selectedStates.length,
+      multiple: true,
+    },
+  ];
+
   return (
     <Stack
       direction={{ xs: "column", lg: "row" }}
@@ -33,19 +71,44 @@ export default function DataQualityFilters({
       sx={{
         alignItems: { xs: "stretch", lg: "center" },
         borderBottom: "1px solid rgba(0, 51, 108, 0.10)",
+        flexWrap: { lg: "wrap" },
         px: { xs: 2, md: 3 },
         py: 2,
+        rowGap: 2,
       }}
+      useFlexGap
     >
       <TextField
         label="Search accounts"
         onChange={(event) => onSearchChange(event.target.value)}
         placeholder="Name, sector, website, state, country, city..."
         size="small"
-        sx={{ flex: 1, minWidth: { lg: 260 } }}
+        sx={{ flex: { lg: "0 1 260px" }, maxWidth: { lg: 260 }, minWidth: { lg: 0 } }}
         value={searchQuery}
       />
-      <FormControl size="small" sx={{ minWidth: { lg: 190 } }}>
+      {locationFilters.map((filter) => (
+        <Autocomplete
+          key={filter.label}
+          disabled={filter.disabled}
+          multiple={filter.multiple}
+          onChange={(_event, nextValue) => filter.onChange(filter.multiple ? nextValue : nextValue || "all")}
+          options={filter.options}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              label={filter.label}
+              placeholder={filter.disabled ? "Select state first" : ""}
+              size="small"
+            />
+          )}
+          size="small"
+          sx={{
+            ...compactControlSx,
+          }}
+          value={filter.multiple ? filter.value : filter.value === "all" ? null : filter.value}
+        />
+      ))}
+      <FormControl size="small" sx={compactControlSx}>
         <InputLabel id="sector-filter-label">Sector</InputLabel>
         <Select
           label="Sector"
@@ -61,7 +124,7 @@ export default function DataQualityFilters({
           ))}
         </Select>
       </FormControl>
-      <FormControl size="small" sx={{ minWidth: { lg: 220 } }}>
+      <FormControl size="small" sx={compactControlSx}>
         <InputLabel id="missing-field-filter-label">Missing Field</InputLabel>
         <Select
           label="Missing Field"
@@ -86,13 +149,19 @@ export default function DataQualityFilters({
           />
         }
         label="Needs attention"
-        sx={{ m: 0, minHeight: 40, whiteSpace: "nowrap" }}
+        sx={{ flex: { lg: "0 0 auto" }, m: 0, minHeight: 40, whiteSpace: "nowrap" }}
       />
       <Button
         disabled={!activeFilterCount}
         onClick={onResetFilters}
         size="small"
-        sx={{ borderRadius: 1, fontWeight: 800, minHeight: 40, whiteSpace: "nowrap" }}
+        sx={{
+          borderRadius: 1,
+          flex: { lg: "0 0 auto" },
+          fontWeight: 800,
+          minHeight: 40,
+          whiteSpace: "nowrap",
+        }}
         variant="outlined"
       >
         Clear filters

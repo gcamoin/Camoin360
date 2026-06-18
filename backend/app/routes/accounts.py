@@ -1,15 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from .auth import require_user
+from ..services.duplicate_accounts import find_duplicate_account_groups
 from ..services.dynamics import (
     get_account_sector_counts,
     get_accounts_missing_data,
     get_accounts_data_quality,
     get_accounts_needing_enrichment,
+    get_duplicate_account_records,
+    get_marketing_lists,
     enrich_single_account_test,
     enrich_account,
     enrich_accounts,
+    enrich_selected_accounts,
     revert_account_fields,
 )
 
@@ -27,6 +31,12 @@ class EnrichmentPreviewResponse(BaseModel):
     selected_account_count: int
     fields_to_update: list[str]
     preview: list[dict[str, str]]
+
+
+class EnrichmentRunResponse(BaseModel):
+    processed: int
+    updated: int
+    results: list[dict]
 
 
 @router.get("/accounts/missing-data")
@@ -54,6 +64,46 @@ async def fetch_accounts_data_quality(_user=Depends(require_user)):
     }
 
 
+async def get_duplicate_account_response(limit: int):
+    accounts = await get_duplicate_account_records(limit)
+    duplicate_groups = find_duplicate_account_groups(accounts)
+
+    return {
+        "account_count": len(accounts),
+        "duplicate_group_count": len(duplicate_groups),
+        "limit": limit,
+        "groups": duplicate_groups
+    }
+
+
+@router.get("/accounts/duplicates")
+async def fetch_duplicate_accounts(
+    limit: int = Query(default=1000, ge=500, le=1000),
+    _user=Depends(require_user),
+):
+    try:
+        return await get_duplicate_account_response(limit)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to load Dynamics duplicate account records: {exc}",
+        ) from exc
+
+
+@router.get("/accounts/duplicate-accounts")
+async def fetch_duplicate_account_records_alias(
+    limit: int = Query(default=1000, ge=500, le=1000),
+    _user=Depends(require_user),
+):
+    try:
+        return await get_duplicate_account_response(limit)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to load Dynamics duplicate account records: {exc}",
+        ) from exc
+
+
 @router.get("/accounts/summary-analytics")
 async def fetch_account_summary_analytics(_user=Depends(require_user)):
     try:
@@ -63,6 +113,26 @@ async def fetch_account_summary_analytics(_user=Depends(require_user)):
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Unable to load Dynamics sector summary: {exc}",
         ) from exc
+
+
+@router.get("/marketing-lists")
+async def fetch_marketing_lists(
+    limit: int = Query(default=5000, ge=1, le=10000),
+    _user=Depends(require_user),
+):
+    try:
+        marketing_lists = await get_marketing_lists(limit)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to load Dynamics marketing lists: {exc}",
+        ) from exc
+
+    return {
+        "count": len(marketing_lists),
+        "limit": limit,
+        "data": marketing_lists
+    }
 
 
 @router.post("/accounts/enrichment-preview", response_model=EnrichmentPreviewResponse)
@@ -84,6 +154,17 @@ async def create_enrichment_preview(request: EnrichmentPreviewRequest, _user=Dep
         fields_to_update=request.fields_to_update,
         preview=preview_rows,
     )
+
+
+@router.post("/accounts/enrichment-run", response_model=EnrichmentRunResponse)
+async def run_enrichment(request: EnrichmentPreviewRequest, _user=Depends(require_user)):
+    try:
+        return await enrich_selected_accounts(request.account_ids, request.fields_to_update)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to enrich selected accounts: {exc}",
+        ) from exc
 
 
 @router.get("/accounts/missing-website")
