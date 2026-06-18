@@ -124,7 +124,6 @@ export default function MarketingMetrics() {
         timeStyle: "short",
       }).format(new Date(metrics.updated_at))}`
     : "";
-  const landingPageChartHeight = Math.max(280, metrics.landing_pages.length * 34 + 60);
   const visitorsChartTitle =
     metrics.bucket_grain === "day" ? "Website Visitors by Day" : "Website Visitors by Month";
 
@@ -251,66 +250,6 @@ export default function MarketingMetrics() {
             </BarChart>
           </ResponsiveContainer>
         </Box>
-      </Paper>
-
-      <Paper
-        elevation={0}
-        sx={{
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: 2,
-          p: { xs: 2, md: 2.5 },
-          backgroundColor: "common.white",
-        }}
-      >
-        <Stack spacing={0.5} sx={{ mb: 2 }}>
-          <Typography fontWeight={800} color="text.primary">
-            Website Visitors by Landing Page
-          </Typography>
-          <Typography color="text.secondary" variant="body2">
-            Landing pages ranked by visitor records in the selected time frame.
-          </Typography>
-        </Stack>
-
-        {metrics.landing_pages.length ? (
-          <Box sx={{ maxHeight: 520, overflowY: "auto", pr: 1 }}>
-            <Box sx={{ height: landingPageChartHeight, minWidth: 520 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={metrics.landing_pages}
-                  layout="vertical"
-                  margin={{ top: 8, right: 34, bottom: 8, left: 16 }}
-                >
-                  <CartesianGrid horizontal={false} stroke="#f1f5f9" strokeDasharray="3 3" />
-                  <XAxis allowDecimals={false} tick={{ fontSize: 11 }} type="number" />
-                  <YAxis
-                    dataKey="landing_page"
-                    tick={{ fontSize: 11 }}
-                    tickFormatter={(value) => (value.length > 34 ? `${value.slice(0, 34)}...` : value)}
-                    type="category"
-                    width={220}
-                  />
-                  <Tooltip
-                    {...tooltipStyle}
-                    formatter={(value) => [value.toLocaleString(), "Visitors"]}
-                    labelFormatter={(label) => label}
-                  />
-                  <Bar
-                    dataKey="visitors"
-                    fill="#64748b"
-                    fillOpacity={0.86}
-                    radius={[0, 3, 3, 0]}
-                    maxBarSize={22}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </Box>
-          </Box>
-        ) : (
-          <Typography color="text.secondary" variant="body2">
-            No landing page data found for this time frame.
-          </Typography>
-        )}
       </Paper>
 
     </Stack>

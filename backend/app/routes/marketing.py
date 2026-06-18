@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from .auth import require_user
 from ..services.dynamics import get_project_creation_metrics, get_website_visit_metrics
+from ..services.harvest import get_employee_weekly_hours
 
 router = APIRouter()
 
@@ -28,4 +29,15 @@ async def fetch_project_creation_metrics(_user=Depends(require_user)):
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Unable to load project metrics from Dynamics: {exc}",
+        ) from exc
+
+
+@router.get("/productivity/employee-hours")
+async def fetch_employee_weekly_hours(_user=Depends(require_user)):
+    try:
+        return await get_employee_weekly_hours()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to load employee hours from Harvest: {exc}",
         ) from exc
