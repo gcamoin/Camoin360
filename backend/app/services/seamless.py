@@ -1,4 +1,7 @@
+import logging
 import os
+from typing import Any
+
 import httpx
 from dotenv import load_dotenv
 
@@ -6,9 +9,16 @@ load_dotenv()
 
 SEAMLESS_API_URL = "https://api.seamless.ai/api/client/v1/search/companies"
 SEAMLESS_API_KEY = os.getenv("SEAMLESS_API_KEY")
+logger = logging.getLogger(__name__)
 
 
-async def enrich_with_seamless(company):
+async def enrich_with_seamless(company: dict[str, Any] | None) -> dict[str, Any]:
+    """Search Seamless for a company and return Dynamics logical field names.
+
+    An empty dictionary means that no sufficiently confident match was found.
+    Transport/API failures intentionally raise so callers can distinguish a failed
+    lookup from a genuine no-match result.
+    """
     company = company or {}
 
     company_name = company.get("name")
@@ -33,12 +43,11 @@ async def enrich_with_seamless(company):
         "FL": "Florida",
     }
     state = state_map.get(state, state)
-    company["address1_stateorprovince"] = state
 
-    def normalize(value):
+    def normalize(value: Any) -> str:
         return (value or "").lower().replace(".", "").replace(",", "").strip()
 
-    def extract_phone(item):
+    def extract_phone(item: dict[str, Any]) -> str | None:
         phones = item.get("phones") or item.get("phone")
         if isinstance(phones, str):
             return phones.split(",")[0].strip() or None
@@ -48,10 +57,10 @@ async def enrich_with_seamless(company):
                 return first_phone.strip() or None
         return None
 
-    def has_usable_data(item):
+    def has_usable_data(item: dict[str, Any]) -> bool:
         return bool(item.get("domain") or extract_phone(item))
 
-    def score_match(company, item):
+    def score_match(company: dict[str, Any], item: dict[str, Any]) -> int:
         score = 0
 
         name = normalize(company.get("name"))
@@ -90,24 +99,21 @@ async def enrich_with_seamless(company):
 
         return score
 
-    async def search(payload):
-        print(f"📡 Payload: {payload}")
-
+    async def search(payload: dict[str, Any]) -> list[dict[str, Any]]:
         async with httpx.AsyncClient() as client:
             response = await client.post(SEAMLESS_API_URL, headers=headers, json=payload)
 
         if response.status_code != 200:
-            raise Exception(f"Seamless API error: {response.text}")
+            raise RuntimeError(f"Seamless API error ({response.status_code}): {response.text}")
 
-        results = response.json().get("data", [])
-        print(f"📊 Raw results: {results}")
-        return results
+        data = response.json().get("data", [])
+        return data if isinstance(data, list) else []
 
     payload = {
         "companyName": [company_name],
         "companyCity": [city] if city else [],
         "companyState": [state] if state else [],
-        "companyCountry": ["United States"],
+        "companyCountry": [company["address1_country"]] if company.get("address1_country") else [],
         "limit": 5,
     }
 
@@ -115,7 +121,7 @@ async def enrich_with_seamless(company):
     usable_results = [item for item in results if has_usable_data(item)]
 
     if not usable_results:
-        print("🔁 Retrying without location...")
+        logger.info("No usable Seamless result for %s with location; retrying without location", company_name)
         fallback_payload = {
             "companyName": [company_name],
             "limit": 5,
@@ -132,9 +138,6 @@ async def enrich_with_seamless(company):
     for item in usable_results:
         score = score_match(company, item)
 
-        print(f"🔍 Candidate: {item.get('name')}")
-        print(f"📊 Score: {score}")
-
         if score > best_score:
             best_score = score
             best_match = item
@@ -142,12 +145,8 @@ async def enrich_with_seamless(company):
     if not best_match:
         return {}
 
-    print(f"🏆 Best match: {best_match.get('name')}")
-    print(f"🏆 Score: {best_score}")
-
     if best_score < 70:
-        print("❌ Low confidence match — skipping update")
-        print("❌ Skipped due to low confidence")
+        logger.info("Seamless result for %s rejected due to low confidence (%s)", company_name, best_score)
         return {}
 
     domain = best_match.get("domain")
@@ -156,8 +155,6 @@ async def enrich_with_seamless(company):
 
     phone = extract_phone(best_match)
     description = best_match.get("description")
-
-    print(f"✅ Final match: {{'name': {best_match.get('name')!r}, 'website': {domain!r}, 'phone': {phone!r}}}")
 
     if (
         not domain
@@ -170,10 +167,11 @@ async def enrich_with_seamless(company):
         return {}
 
     return {
-        "website": domain or None,
-        "phone": phone or None,
-        "state": best_match.get("state"),
-        "country": best_match.get("country"),
-        "employees": best_match.get("employeeCount"),
-        "description": description,
+        "websiteurl": domain or None,
+        "telephone1": phone or None,
+        "description": description or None,
+        "numberofemployees": best_match.get("employeeCount"),
+        "address1_city": best_match.get("city") or None,
+        "address1_stateorprovince": best_match.get("state") or None,
+        "address1_country": best_match.get("country") or None,
     }

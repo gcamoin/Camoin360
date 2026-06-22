@@ -3,6 +3,7 @@ import asyncio
 import time
 import httpx
 import re
+import logging
 from dotenv import load_dotenv
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -10,6 +11,14 @@ from .auth import get_access_token
 from .metrics import increment_processed, log_update
 from .seamless import enrich_with_seamless
 from .usage import can_make_request, increment_usage, load_usage, WEEKLY_LIMIT
+
+logger = logging.getLogger(__name__)
+
+
+class DynamicsApiError(RuntimeError):
+    def __init__(self, message: str, status_code: int):
+        super().__init__(message)
+        self.status_code = status_code
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -863,9 +872,185 @@ async def update_account(account_id: str, updates: dict):
         response = await client.patch(url, headers=headers, json=updates)
 
     if response.status_code not in [200, 204]:
-        raise Exception(f"Dynamics UPDATE error: {response.text}")
+        raise DynamicsApiError(f"Dynamics UPDATE error: {response.text}", response.status_code)
 
     return True
+
+
+ENRICHMENT_ACCOUNT_FIELDS = (
+    "accountid,name,websiteurl,telephone1,description,numberofemployees,"
+    "address1_city,address1_stateorprovince,address1_country,"
+    "cr73c_enrichmentattempted"
+)
+ENRICHMENT_FIELD_NAMES = (
+    "websiteurl",
+    "telephone1",
+    "description",
+    "numberofemployees",
+    "address1_city",
+    "address1_stateorprovince",
+    "address1_country",
+)
+
+
+def _is_blank(value: object) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _normalise_enrichment_value(field_name: str, value: object) -> object | None:
+    if _is_blank(value):
+        return None
+    if field_name == "numberofemployees":
+        try:
+            return int(str(value).replace(",", ""))
+        except (TypeError, ValueError):
+            logger.warning("Ignoring invalid Seamless employee count: %r", value)
+            return None
+    return str(value).strip() if isinstance(value, str) else value
+
+
+async def _mark_enrichment_attempted(account_id: str, updates: dict[str, object]) -> None:
+    """Set the required attempt flag and include the optional timestamp when available."""
+    attempt_updates = {
+        **updates,
+        "cr73c_enrichmentattempted": True,
+        "cr73c_enrichmentlastattemptedon": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    try:
+        await update_account(account_id, attempt_updates)
+    except DynamicsApiError as exc:
+        if exc.status_code != 400:
+            raise
+        # Some Dataverse environments do not have the optional timestamp field.
+        # Retry without it so the required attempt flag is never lost for that reason.
+        logger.warning("Could not update optional enrichment timestamp for %s: %s", account_id, exc)
+        attempt_updates.pop("cr73c_enrichmentlastattemptedon")
+        await update_account(account_id, attempt_updates)
+
+
+async def enrich_one_account(account_id: str) -> dict[str, object]:
+    """Enrich one Account for the Power Automate trigger without overwriting data."""
+    try:
+        account = await get_account(account_id, ENRICHMENT_ACCOUNT_FIELDS)
+    except Exception as exc:
+        logger.exception("Enrichment failed while fetching Dynamics account %s", account_id)
+        return {
+            "account_id": account_id,
+            "account_name": None,
+            "status": "failed",
+            "fields_updated": [],
+            "skipped_reason": f"Unable to fetch Dynamics account: {exc}",
+        }
+
+    account_name = account.get("name")
+    if account.get("cr73c_enrichmentattempted") is True:
+        logger.info("Enrichment skipped for account_id=%s name=%r: already attempted", account_id, account_name)
+        return {
+            "account_id": account_id,
+            "account_name": account_name,
+            "status": "skipped_already_attempted",
+            "fields_updated": [],
+            "skipped_reason": "Enrichment has already been attempted for this account.",
+        }
+
+    if not account_name:
+        try:
+            await _mark_enrichment_attempted(account_id, {})
+        except Exception:
+            logger.exception("Could not mark nameless account attempted for account_id=%s", account_id)
+            return {
+                "account_id": account_id,
+                "account_name": account_name,
+                "status": "failed",
+                "fields_updated": [],
+                "skipped_reason": "Unable to update Dynamics account.",
+            }
+        logger.info("Enrichment no_match for account_id=%s: account has no name", account_id)
+        return {
+            "account_id": account_id,
+            "account_name": account_name,
+            "status": "no_match",
+            "fields_updated": [],
+            "skipped_reason": "Account has no name to search.",
+        }
+
+    if not os.getenv("SEAMLESS_API_KEY"):
+        logger.error("Seamless enrichment cannot run for account_id=%s: SEAMLESS_API_KEY is not configured", account_id)
+        try:
+            await _mark_enrichment_attempted(account_id, {})
+        except Exception:
+            logger.exception("Could not mark unconfigured enrichment attempted for account_id=%s", account_id)
+        return {
+            "account_id": account_id,
+            "account_name": account_name,
+            "status": "failed",
+            "fields_updated": [],
+            "skipped_reason": "Seamless enrichment is not configured.",
+        }
+
+    if not can_make_request():
+        logger.warning("Enrichment skipped for account_id=%s name=%r: weekly credit limit reached", account_id, account_name)
+        return {
+            "account_id": account_id,
+            "account_name": account_name,
+            "status": "skipped_credit_limit",
+            "fields_updated": [],
+            "skipped_reason": f"Weekly Seamless credit limit ({WEEKLY_LIMIT}) has been reached.",
+        }
+
+    try:
+        # A credit is consumed once a Seamless request is attempted, even if it has no match or errors.
+        try:
+            seamless_data = await enrich_with_seamless(account)
+        finally:
+            usage = increment_usage()
+            logger.info("Seamless credit used for account_id=%s; usage=%s/%s", account_id, usage.get("credits_used"), WEEKLY_LIMIT)
+    except Exception as exc:
+        logger.exception("Seamless enrichment failed for account_id=%s name=%r", account_id, account_name)
+        try:
+            await _mark_enrichment_attempted(account_id, {})
+        except Exception:
+            logger.exception("Could not mark failed enrichment attempted for account_id=%s", account_id)
+        return {
+            "account_id": account_id,
+            "account_name": account_name,
+            "status": "failed",
+            "fields_updated": [],
+            "skipped_reason": "Seamless enrichment request failed.",
+        }
+
+    updates: dict[str, object] = {}
+    for field_name in ENRICHMENT_FIELD_NAMES:
+        value = _normalise_enrichment_value(field_name, seamless_data.get(field_name))
+        if _is_blank(account.get(field_name)) and value is not None:
+            updates[field_name] = value
+
+    try:
+        await _mark_enrichment_attempted(account_id, updates)
+    except Exception as exc:
+        logger.exception("Dynamics update failed for account_id=%s name=%r", account_id, account_name)
+        return {
+            "account_id": account_id,
+            "account_name": account_name,
+            "status": "failed",
+            "fields_updated": [],
+            "skipped_reason": "Unable to update Dynamics account.",
+        }
+
+    if not seamless_data:
+        result_status = "no_match"
+    elif updates:
+        result_status = "updated"
+    else:
+        result_status = "no_updates_needed"
+    logger.info("Enrichment %s for account_id=%s name=%r fields=%s", result_status, account_id, account_name, list(updates))
+    return {
+        "account_id": account_id,
+        "account_name": account_name,
+        "status": result_status,
+        "fields_updated": list(updates),
+        "skipped_reason": None,
+    }
 
 
 async def enrich_single_account_test(account_id: str):
@@ -969,19 +1154,19 @@ async def enrich_account(account_id: str):
     updates = {}
 
     # WEBSITE
-    website = seamless_data.get("website")
+    website = seamless_data.get("websiteurl")
     if not account.get("websiteurl") and website:
         if not website.startswith("http"):
             website = f"https://{website}"
         updates["websiteurl"] = website
 
     # PHONE
-    phone = seamless_data.get("phone")
+    phone = seamless_data.get("telephone1")
     if not account.get("telephone1") and phone:
         updates["telephone1"] = phone
 
     # STATE
-    state = seamless_data.get("state")
+    state = seamless_data.get("address1_stateorprovince")
     print(f"📍 Raw state: {state}")
     if state:
         state_clean = state.strip()
@@ -991,12 +1176,12 @@ async def enrich_account(account_id: str):
             updates["address1_stateorprovince"] = state_abbr
 
     # COUNTRY
-    country = seamless_data.get("country")
+    country = seamless_data.get("address1_country")
     if not account.get("address1_country") and country:
         updates["address1_country"] = country
 
     # EMPLOYEES
-    employees = seamless_data.get("employees")
+    employees = seamless_data.get("numberofemployees")
     if not account.get("numberofemployees") and employees:
         try:
             updates["numberofemployees"] = int(employees)
@@ -1010,6 +1195,10 @@ async def enrich_account(account_id: str):
         if not account.get("description") or account.get("description").strip() == "":
             updates["description"] = description
             print("📝 Description updated")
+
+    city = seamless_data.get("address1_city")
+    if not account.get("address1_city") and city:
+        updates["address1_city"] = city
 
     if updates:
         print(f"🚀 Updating: {updates}")

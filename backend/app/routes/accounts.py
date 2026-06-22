@@ -1,4 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import hmac
+import os
+
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
 from .auth import require_user
@@ -7,7 +10,7 @@ from ..services.dynamics import (
     get_accounts_missing_data,
     get_accounts_data_quality,
     get_accounts_needing_enrichment,
-    enrich_single_account_test,
+    enrich_one_account,
     enrich_account,
     enrich_accounts,
     revert_account_fields,
@@ -95,9 +98,20 @@ async def fetch_accounts_missing_website():
     }
 
 
+def _require_power_automate_api_key(x_api_key: str | None = Header(default=None)) -> None:
+    """Require the shared secret only when POWER_AUTOMATE_API_KEY is configured."""
+    configured_key = os.getenv("POWER_AUTOMATE_API_KEY")
+    if configured_key and not (x_api_key and hmac.compare_digest(x_api_key, configured_key)):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing x-api-key")
+
+
 @router.post("/accounts/enrich-one/{account_id}")
-async def enrich_one(account_id: str):
-    return await enrich_single_account_test(account_id)
+async def enrich_one(
+    account_id: str,
+    _api_key: None = Depends(_require_power_automate_api_key),
+):
+    """Power Automate entry point for safe, one-account Seamless enrichment."""
+    return await enrich_one_account(account_id)
 
 
 @router.post("/accounts/revert/{account_id}")
