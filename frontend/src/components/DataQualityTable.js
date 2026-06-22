@@ -123,7 +123,7 @@ const columns = [
   { key: "address1_stateorprovince", label: "State/Province", width: 170 },
   { key: "address1_city", label: "City", width: 150 },
   { key: "new_employees", label: "Employee Count", width: 150 },
-  { key: "new_NAICStext", label: "NAICS Text", width: 190 },
+  { key: "new_naicstext", label: "NAICS Text", width: 190 },
   { key: "missing_fields_summary", label: "Missing Fields Summary", width: 220 },
   { key: "data_quality_score", label: "Quality", width: 120 },
 ];
@@ -142,7 +142,7 @@ const qualityFields = [
   { key: "telephone1", label: "Business Phone" },
   { key: "new_datasource", label: "Data Source" },
   { key: "new_employees", label: "Employee Count" },
-  { key: "new_NAICStext", label: "NAICS Text" },
+  { key: "new_naicstext", label: "NAICS Text" },
 ];
 
 const fieldUpdateOptions = [
@@ -172,7 +172,7 @@ const keyMissingMetricFields = [
   { key: "description", label: "Missing Description" },
   { key: "new_employees", label: "Missing Employee Count" },
   { key: "new_datasource", label: "Missing Data Source" },
-  { key: "new_NAICStext", label: "Missing NAICS Text" },
+  { key: "new_naicstext", label: "Missing NAICS Text" },
 ];
 
 function getAccountSelectionId(account) {
@@ -1297,11 +1297,14 @@ export default function DataQualityTable() {
                 ))}
               </Box>
             </Box>
+            <Alert severity="info">
+              Updates require at least 3 of 5 matches: website, phone, country, state, and account name. Matches below 60% are skipped.
+            </Alert>
             {enrichmentError ? <Alert severity="error">{enrichmentError}</Alert> : null}
             {enrichmentResult ? (
               <Alert severity="success">
                 Seamless enrichment complete: {enrichmentResult.updated} of {enrichmentResult.processed} account
-                {enrichmentResult.processed === 1 ? "" : "s"} updated.
+                {enrichmentResult.processed === 1 ? "" : "s"} updated. {enrichmentResult.skipped || 0} skipped below 60% confidence.
               </Alert>
             ) : null}
           </Box>
@@ -1349,7 +1352,7 @@ export default function DataQualityTable() {
                   ["State/Province", getDisplayValue(previewAccount, "address1_stateorprovince")],
                   ["City", previewAccount.address1_city],
                   ["Employee Count", previewAccount.new_employees],
-                  ["NAICS Text", previewAccount.new_NAICStext],
+                  ["NAICS Text", previewAccount.new_naicstext],
                   ["Website", previewAccount.websiteurl],
                   ["Business Phone", previewAccount.telephone1],
                   ["Data Source", previewAccount.new_datasource],

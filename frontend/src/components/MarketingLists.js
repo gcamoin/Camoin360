@@ -6,6 +6,10 @@ import {
   Button,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControl,
   InputLabel,
   MenuItem,
@@ -123,6 +127,10 @@ export default function MarketingLists() {
   const [memberTypeFilter, setMemberTypeFilter] = useState("all");
   const [createdDateQuery, setCreatedDateQuery] = useState("");
   const [nameQuery, setNameQuery] = useState("");
+  const [activeMarketingList, setActiveMarketingList] = useState(null);
+  const [listMembers, setListMembers] = useState({ accounts: [], contacts: [] });
+  const [isLoadingMembers, setIsLoadingMembers] = useState(false);
+  const [memberError, setMemberError] = useState("");
 
   const clients = useMemo(() => uniqueValues(marketingLists.map((list) => list.client_name)), [marketingLists]);
   const campaigns = useMemo(() => uniqueValues(marketingLists.map((list) => list.campaign)), [marketingLists]);
@@ -172,6 +180,35 @@ export default function MarketingLists() {
     setMemberTypeFilter("all");
     setCreatedDateQuery("");
     setNameQuery("");
+  }
+
+  async function openMemberModal(marketingList) {
+    setActiveMarketingList(marketingList);
+    setListMembers({ accounts: [], contacts: [] });
+    setMemberError("");
+    setIsLoadingMembers(true);
+
+    try {
+      const response = await axios.get(
+        `${API_URL}/${marketingList.listid}/members`,
+        { headers: getAuthHeaders() }
+      );
+      setListMembers({
+        accounts: response.data?.accounts || [],
+        contacts: response.data?.contacts || [],
+      });
+    } catch (fetchError) {
+      if (handleUnauthorized(fetchError)) return;
+      setMemberError(getApiErrorMessage(fetchError, "Unable to load marketing list members."));
+    } finally {
+      setIsLoadingMembers(false);
+    }
+  }
+
+  function closeMemberModal() {
+    setActiveMarketingList(null);
+    setListMembers({ accounts: [], contacts: [] });
+    setMemberError("");
   }
 
   useEffect(() => {
@@ -368,7 +405,20 @@ export default function MarketingLists() {
                   <TableCell>{marketingList.client_name || "Missing"}</TableCell>
                   <TableCell>{marketingList.campaign || "Missing"}</TableCell>
                   <TableCell>{formatDate(marketingList.createdon)}</TableCell>
-                  <TableCell sx={{ overflowWrap: "anywhere" }}>{marketingList.marketing_list_name || "Missing"}</TableCell>
+                  <TableCell sx={{ overflowWrap: "anywhere" }}>
+                    {marketingList.listid && marketingList.marketing_list_name ? (
+                      <Button
+                        onClick={() => openMemberModal(marketingList)}
+                        size="small"
+                        sx={{ fontWeight: 800, justifyContent: "flex-start", p: 0, textAlign: "left", textTransform: "none" }}
+                        variant="text"
+                      >
+                        {marketingList.marketing_list_name}
+                      </Button>
+                    ) : (
+                      marketingList.marketing_list_name || "Missing"
+                    )}
+                  </TableCell>
                   <TableCell>{marketingList.created_by || "Missing"}</TableCell>
                   <TableCell>
                     <Typography sx={{ fontWeight: 800 }} variant="body2">
@@ -390,6 +440,93 @@ export default function MarketingLists() {
           </TableBody>
         </Table>
       </TableContainer>
+
+      <Dialog fullWidth maxWidth="lg" onClose={closeMemberModal} open={Boolean(activeMarketingList)}>
+        <DialogTitle sx={{ fontWeight: 800 }}>
+          {activeMarketingList?.marketing_list_name || "Marketing List Members"}
+        </DialogTitle>
+        <DialogContent dividers>
+          {isLoadingMembers ? (
+            <Box sx={{ alignItems: "center", display: "flex", flexDirection: "column", gap: 2, py: 6 }}>
+              <CircularProgress />
+              <Typography color="text.secondary">Loading accounts and contacts...</Typography>
+            </Box>
+          ) : memberError ? (
+            <Alert severity="error">{memberError}</Alert>
+          ) : (
+            <Stack spacing={4}>
+              <Box>
+                <Stack alignItems="center" direction="row" justifyContent="space-between" sx={{ mb: 1.5 }}>
+                  <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="h6">Accounts</Typography>
+                  <Chip label={`${listMembers.accounts.length} account${listMembers.accounts.length === 1 ? "" : "s"}`} size="small" />
+                </Stack>
+                {listMembers.accounts.length ? (
+                  <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell sx={{ fontWeight: 800 }}>Account Name</TableCell>
+                          <TableCell sx={{ fontWeight: 800 }}>Website</TableCell>
+                          <TableCell sx={{ fontWeight: 800 }}>Email</TableCell>
+                          <TableCell sx={{ fontWeight: 800 }}>Phone</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {listMembers.accounts.map((account) => (
+                          <TableRow key={account.accountid || account.name}>
+                            <TableCell>{account.name || "Missing"}</TableCell>
+                            <TableCell sx={{ overflowWrap: "anywhere" }}>{account.websiteurl || "Missing"}</TableCell>
+                            <TableCell sx={{ overflowWrap: "anywhere" }}>{account.emailaddress1 || "Missing"}</TableCell>
+                            <TableCell>{account.telephone1 || "Missing"}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                ) : (
+                  <Typography color="text.secondary">No accounts belong to this marketing list.</Typography>
+                )}
+              </Box>
+
+              <Box>
+                <Stack alignItems="center" direction="row" justifyContent="space-between" sx={{ mb: 1.5 }}>
+                  <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="h6">Contacts</Typography>
+                  <Chip label={`${listMembers.contacts.length} contact${listMembers.contacts.length === 1 ? "" : "s"}`} size="small" />
+                </Stack>
+                {listMembers.contacts.length ? (
+                  <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell sx={{ fontWeight: 800 }}>Contact Name</TableCell>
+                          <TableCell sx={{ fontWeight: 800 }}>Job Title</TableCell>
+                          <TableCell sx={{ fontWeight: 800 }}>Email</TableCell>
+                          <TableCell sx={{ fontWeight: 800 }}>Phone</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {listMembers.contacts.map((contact) => (
+                          <TableRow key={contact.contactid || contact.fullname}>
+                            <TableCell>{contact.fullname || "Missing"}</TableCell>
+                            <TableCell>{contact.jobtitle || "Missing"}</TableCell>
+                            <TableCell sx={{ overflowWrap: "anywhere" }}>{contact.emailaddress1 || "Missing"}</TableCell>
+                            <TableCell>{contact.telephone1 || "Missing"}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                ) : (
+                  <Typography color="text.secondary">No contacts belong to this marketing list.</Typography>
+                )}
+              </Box>
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2 }}>
+          <Button onClick={closeMemberModal}>Close</Button>
+        </DialogActions>
+      </Dialog>
     </Paper>
   );
 }

@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
@@ -9,7 +11,9 @@ from ..services.dynamics import (
     get_accounts_data_quality,
     get_accounts_needing_enrichment,
     get_duplicate_account_records,
+    delete_account,
     get_marketing_lists,
+    get_marketing_list_members,
     enrich_single_account_test,
     enrich_account,
     enrich_accounts,
@@ -36,6 +40,7 @@ class EnrichmentPreviewResponse(BaseModel):
 class EnrichmentRunResponse(BaseModel):
     processed: int
     updated: int
+    skipped: int = 0
     results: list[dict]
 
 
@@ -104,6 +109,17 @@ async def fetch_duplicate_account_records_alias(
         ) from exc
 
 
+@router.delete("/accounts/{account_id}")
+async def delete_duplicate_account(account_id: UUID, _user=Depends(require_user)):
+    try:
+        return await delete_account(str(account_id))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to delete Dynamics account: {exc}",
+        ) from exc
+
+
 @router.get("/accounts/summary-analytics")
 async def fetch_account_summary_analytics(_user=Depends(require_user)):
     try:
@@ -133,6 +149,17 @@ async def fetch_marketing_lists(
         "limit": limit,
         "data": marketing_lists
     }
+
+
+@router.get("/marketing-lists/{list_id}/members")
+async def fetch_marketing_list_members(list_id: UUID, _user=Depends(require_user)):
+    try:
+        return await get_marketing_list_members(str(list_id))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to load Dynamics marketing list members: {exc}",
+        ) from exc
 
 
 @router.post("/accounts/enrichment-preview", response_model=EnrichmentPreviewResponse)

@@ -17,7 +17,7 @@ load_dotenv(BACKEND_ROOT / ".env")
 
 API_URL = os.getenv("DYNAMICS_API_URL")
 DATA_QUALITY_CACHE_TTL_SECONDS = 120
-DATA_QUALITY_ACCOUNT_LIMIT = 20000
+DATA_QUALITY_ACCOUNT_LIMIT = 30000
 SUMMARY_CACHE_TTL_SECONDS = 600
 DATA_QUALITY_REQUEST_TIMEOUT_SECONDS = 60
 DUPLICATE_ACCOUNT_DEFAULT_LIMIT = 1000
@@ -98,8 +98,7 @@ async def get_accounts_data_quality():
 
     url = (
         f"{API_URL}/accounts?"
-        # TODO: Add NAICS text and subsector once the exact Dynamics field names are confirmed.
-        "$select=accountid,name,address1_stateorprovince,address1_country,address1_city,new_sector,description,websiteurl,telephone1,new_datasource,new_employees&"
+        "$select=accountid,name,address1_stateorprovince,address1_country,address1_city,new_sector,new_subsector,new_naicstext,description,websiteurl,telephone1,new_datasource,new_employees&"
         "$orderby=name asc&"
         f"$top={DATA_QUALITY_ACCOUNT_LIMIT}"
     )
@@ -145,7 +144,7 @@ async def get_duplicate_account_records(limit: int = DUPLICATE_ACCOUNT_DEFAULT_L
 
     url = (
         f"{API_URL}/accounts?"
-        "$select=accountid,name,websiteurl,address1_country,address1_stateorprovince,address1_city,telephone1,new_sector,createdon&"
+        "$select=accountid,name,websiteurl,emailaddress1,telephone1,address1_line1,address1_city,address1_stateorprovince,address1_postalcode,address1_country,new_sector,new_datasource,new_employees,description,createdon&"
         "$orderby=name asc&"
         f"$top={account_limit}"
     )
@@ -178,6 +177,29 @@ async def get_duplicate_account_records(limit: int = DUPLICATE_ACCOUNT_DEFAULT_L
         ) from exc
 
     return accounts[:account_limit]
+
+
+async def delete_account(account_id: str):
+    token = await get_access_token()
+    url = f"{API_URL}/accounts({account_id})"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "OData-Version": "4.0",
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.delete(url, headers=headers)
+
+    if response.status_code not in [200, 204]:
+        raise Exception(f"Dynamics DELETE error: {response.text}")
+
+    _DATA_QUALITY_CACHE["data"] = None
+    _DATA_QUALITY_CACHE["expires_at"] = 0
+    _SUMMARY_CACHE["data"] = None
+    _SUMMARY_CACHE["expires_at"] = 0
+
+    return {"status": "deleted", "account_id": account_id}
 
 
 def get_formatted_value(record: dict, field_name: str):
@@ -245,6 +267,63 @@ async def get_marketing_lists(limit: int = MARKETING_LIST_DEFAULT_LIMIT):
     return marketing_lists[:limit]
 
 
+async def _get_marketing_list_relationship_members(list_id: str, relationship: str, select_fields: str):
+    token = await get_access_token()
+    url = (
+        f"{API_URL}/lists({list_id})/{relationship}?"
+        f"$select={select_fields}"
+    )
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "OData-Version": "4.0",
+        "Prefer": 'odata.include-annotations="OData.Community.Display.V1.FormattedValue",odata.maxpagesize=5000',
+    }
+    members = []
+    timeout = httpx.Timeout(MARKETING_LIST_REQUEST_TIMEOUT_SECONDS)
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            while url:
+                response = await client.get(url, headers=headers)
+
+                if response.status_code != 200:
+                    raise Exception(f"Dynamics GET error for {relationship}: {response.text}")
+
+                payload = response.json()
+                members.extend(payload.get("value", []))
+                url = payload.get("@odata.nextLink")
+    except httpx.TimeoutException as exc:
+        raise Exception(
+            f"Dynamics request timed out after {MARKETING_LIST_REQUEST_TIMEOUT_SECONDS} seconds while loading {relationship}"
+        ) from exc
+
+    return members
+
+
+async def get_marketing_list_members(list_id: str):
+    accounts, contacts = await asyncio.gather(
+        _get_marketing_list_relationship_members(
+            list_id,
+            "listaccount_association",
+            "accountid,name,websiteurl,emailaddress1,telephone1",
+        ),
+        _get_marketing_list_relationship_members(
+            list_id,
+            "listcontact_association",
+            "contactid,fullname,emailaddress1,telephone1,jobtitle",
+        ),
+    )
+
+    return {
+        "list_id": list_id,
+        "account_count": len(accounts),
+        "contact_count": len(contacts),
+        "accounts": accounts,
+        "contacts": contacts,
+    }
+
+
 async def get_account_sector_counts():
     now = time.time()
     if _SUMMARY_CACHE["data"] is not None and _SUMMARY_CACHE["expires_at"] > now:
@@ -308,7 +387,7 @@ async def get_accounts_needing_enrichment():
     url = (
         f"{API_URL}/accounts?"
         "$select=accountid,name,websiteurl,telephone1&"
-        "$filter=(websiteurl eq null or telephone1 eq null) and address1_country eq 'United States' and new_sector ne null and contains(new_sector,'Manufacturing')&"
+        "$filter=(websiteurl eq null or telephone1 eq null) and address1_country eq 'United States'&"
         "$top=10"
     )
 
@@ -419,16 +498,7 @@ async def enrich_account(account_id: str, fields_to_update: list[str] | None = N
 
     print(f"🔍 Enriching: {company_name}")
     print(f"🏭 Sector: {sector}")
-
-    if "manufacturing" not in sector.lower():
-        print("❌ Skipping non-manufacturing company")
-        return {
-            "account_id": account_id,
-            "updated": False,
-            "reason": "Not manufacturing sector"
-        }
-
-    print("✅ Manufacturing company — proceeding")
+    print("✅ Proceeding with enrichment")
 
     usage = load_usage()
     credits_used = usage.get("credits_used", 0)
@@ -449,6 +519,18 @@ async def enrich_account(account_id: str, fields_to_update: list[str] | None = N
     print(f"📊 Credits used: {usage.get('credits_used', 0)}/{WEEKLY_LIMIT}")
 
     print(f"🌐 Seamless result: {seamless_data}")
+
+    confidence_score = int(seamless_data.get("confidence_score", 0))
+    matched_fields = seamless_data.get("matched_fields", [])
+    if confidence_score < 60 or not seamless_data.get("meets_confidence_threshold", False):
+        return {
+            "account_id": account_id,
+            "updated": False,
+            "skipped": True,
+            "reason": "Match confidence below 60%",
+            "confidence_score": confidence_score,
+            "matched_fields": matched_fields,
+        }
 
     updates = {}
 
@@ -503,7 +585,9 @@ async def enrich_account(account_id: str, fields_to_update: list[str] | None = N
     return {
         "account_id": account_id,
         "updated": bool(updates),
-        "updates": updates or None
+        "updates": updates or None,
+        "confidence_score": confidence_score,
+        "matched_fields": matched_fields,
     }
 
 
@@ -527,10 +611,12 @@ async def enrich_selected_accounts(account_ids: list[str], fields_to_update: lis
         await asyncio.sleep(1)
 
     updated_count = sum(1 for result in results if result.get("updated"))
+    skipped_count = sum(1 for result in results if result.get("skipped"))
 
     return {
         "processed": len(results),
         "updated": updated_count,
+        "skipped": skipped_count,
         "results": results
     }
 

@@ -1,6 +1,6 @@
 {
-  "accounts_processed": 95,
-  "accounts_updated": 32,
+  "accounts_processed": 100,
+  "accounts_updated": 34,
   "updates_log": [
     {
       "company": "Adler Pelzer Group",
@@ -658,6 +658,20 @@
           "new": "SunOpta Inc. is a leading global company focused on helping make the planet and its people healthier through plant-based foods and beverages, fruit-based foods and beverages, and organic ingredient sourcing and production. \nSunOpta specializes in the sourcing, processing and packaging of organic, conventional, non-GMO food products. Integrated from seed through packaged products, SunOpta has a primary focus on strategic vertically integrated business models.\nThroughout its history SunOpta has evolved to become a strong, vibrant organization with a robust commitment to organic, non-GMO and specialty foods and environmental responsibility. \nSunOpta's Mission:\nTo deliver organic, healthy, and sustainable food solutions that improve lives. To maintain purity of our products and be the market leader in organic integrity. To be the leader in our fast-moving industry, with better execution than our competitors. To develop and retain great employees \u2013 great companies are made of great people."
         }
       ]
+    },
+    {
+      "company": " BlueLinx Corporation ",
+      "timestamp": "2026-06-18T16:25:04.635626",
+      "changes": {
+        "description": "At BlueLinx, delivering success is what our business is all about. As the leading building products distribution company in the industry, we provide the building blocks for residential and commercial construction, remodeling and repair, manufacturing, manufactured and modular housing, and homeowner projects.\r\n\r\nLook to BlueLinx for quality products, reliable distribution, knowledgeable people and innovative ideas. BlueLinx has the organization and systems to help our customers accomplish their goals, and we invite you to discover how much we can deliver."
+      }
+    },
+    {
+      "company": " BMM Logistics, Inc. ",
+      "timestamp": "2026-06-18T16:25:07.276806",
+      "changes": {
+        "description": "BMM Logistics, Inc. is a fast growing Chicago based business. We are a third-party logistics provider servicing the United States, Mexico and Canada. BMM is the bridge between businesses that need products shipped and transportation companies that need to keep their drivers moving.\nDriven by our dedicated sales team, BMM ensures to provide the best customer service to our customers, a pleasurable experience for our carriers and a relaxed, fun, energetic environment for our employees. We've grown year after year since 2008 and we are looking to keep growing and moving forward. BMM Logistics, Inc. is a family-owned business where young professionals can jump start their careers and love what they do. It all starts here!"
+      }
     }
   ]
 }

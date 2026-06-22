@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import {
   Alert,
@@ -6,12 +6,16 @@ import {
   Button,
   Chip,
   CircularProgress,
-  Collapse,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControl,
   InputLabel,
   Link,
   MenuItem,
   Paper,
+  Radio,
   Select,
   Stack,
   Table,
@@ -29,6 +33,26 @@ import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } 
 
 const API_URL = `${API_BASE_URL}/accounts/duplicates`;
 const REVIEWED_GROUP_STORAGE_KEY = "sophie:reviewedDuplicateGroups";
+
+const comparisonFields = [
+  { key: "accountid", label: "Account ID", scored: false },
+  { key: "name", label: "Account Name" },
+  { key: "websiteurl", label: "Website", type: "website" },
+  { key: "emailaddress1", label: "Email" },
+  { key: "telephone1", label: "Phone" },
+  { key: "address1_line1", label: "Street Address" },
+  { key: "address1_city", label: "City" },
+  { key: "address1_stateorprovince", label: "State / Province" },
+  { key: "address1_postalcode", label: "Postal Code" },
+  { key: "address1_country", label: "Country" },
+  { key: "new_sector", label: "Sector" },
+  { key: "new_datasource", label: "Data Source" },
+  { key: "new_employees", label: "Employees" },
+  { key: "description", label: "Description" },
+  { key: "createdon", label: "Created Date", scored: false },
+];
+
+const scoredComparisonFields = comparisonFields.filter((field) => field.scored !== false);
 
 const columns = [
   { key: "confidence_score", label: "Confidence", sortable: true, width: 150 },
@@ -69,12 +93,39 @@ function getWebsiteHref(value) {
   return String(value).startsWith("http") ? value : `https://${value}`;
 }
 
+export function getAccountCompleteness(account) {
+  const filledFieldCount = scoredComparisonFields.filter((field) => !isMissingValue(account?.[field.key])).length;
+
+  return {
+    filledFieldCount,
+    totalFieldCount: scoredComparisonFields.length,
+    score: Math.round((filledFieldCount / scoredComparisonFields.length) * 100),
+  };
+}
+
+function ComparisonValue({ field, value }) {
+  if (isMissingValue(value)) {
+    return <Typography color="text.secondary" variant="body2">Missing</Typography>;
+  }
+
+  if (field.type === "website") {
+    return (
+      <Link href={getWebsiteHref(value)} rel="noreferrer" sx={{ overflowWrap: "anywhere" }} target="_blank">
+        {String(value)}
+      </Link>
+    );
+  }
+
+  return <Typography sx={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }} variant="body2">{String(value)}</Typography>;
+}
+
 function prepareDuplicateGroup(group) {
   const accounts = group.accounts || [];
   const names = uniqueValues(accounts.map((account) => account.name));
   const websites = uniqueValues(accounts.map((account) => account.websiteurl));
   const states = uniqueValues(accounts.map((account) => account.address1_stateorprovince));
   const countries = uniqueValues(accounts.map((account) => account.address1_country));
+  const sectors = uniqueValues(accounts.map((account) => account.new_sector));
 
   return {
     ...group,
@@ -82,6 +133,7 @@ function prepareDuplicateGroup(group) {
     websites,
     states,
     countries,
+    sectors,
     record_count: accounts.length,
     sortValues: {
       confidence_score: Number(group.confidence_score || 0),
@@ -197,10 +249,15 @@ export default function DuplicateAccounts() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [sortConfig, setSortConfig] = useState({ key: "confidence_score", direction: "desc" });
-  const [expandedGroupIds, setExpandedGroupIds] = useState(() => new Set());
+  const [activeGroup, setActiveGroup] = useState(null);
+  const [selectedAccountId, setSelectedAccountId] = useState("");
+  const [isDeleteConfirmationOpen, setIsDeleteConfirmationOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [confidenceFilter, setConfidenceFilter] = useState("all");
   const [countryFilter, setCountryFilter] = useState("all");
   const [stateFilter, setStateFilter] = useState("all");
+  const [sectorFilter, setSectorFilter] = useState("all");
   const [accountNameQuery, setAccountNameQuery] = useState("");
   const [websiteQuery, setWebsiteQuery] = useState("");
   const [reviewedGroupIds, setReviewedGroupIds] = useState(loadReviewedGroupIds);
@@ -213,6 +270,10 @@ export default function DuplicateAccounts() {
     () => uniqueValues(duplicateGroups.flatMap((group) => group.states)).sort((a, b) => a.localeCompare(b)),
     [duplicateGroups]
   );
+  const sectors = useMemo(
+    () => uniqueValues(duplicateGroups.flatMap((group) => group.sectors)).sort((a, b) => a.localeCompare(b)),
+    [duplicateGroups]
+  );
 
   const filteredGroups = useMemo(
     () =>
@@ -220,12 +281,13 @@ export default function DuplicateAccounts() {
         const matchesConfidence = confidenceFilter === "all" || group.confidence === confidenceFilter;
         const matchesCountry = countryFilter === "all" || group.countries.includes(countryFilter);
         const matchesState = stateFilter === "all" || group.states.includes(stateFilter);
+        const matchesSector = sectorFilter === "all" || group.sectors.includes(sectorFilter);
         const matchesName = groupMatchesText(group.names, accountNameQuery);
         const matchesWebsite = groupMatchesText(group.websites, websiteQuery);
 
-        return matchesConfidence && matchesCountry && matchesState && matchesName && matchesWebsite;
+        return matchesConfidence && matchesCountry && matchesState && matchesSector && matchesName && matchesWebsite;
       }),
-    [accountNameQuery, confidenceFilter, countryFilter, duplicateGroups, stateFilter, websiteQuery]
+    [accountNameQuery, confidenceFilter, countryFilter, duplicateGroups, sectorFilter, stateFilter, websiteQuery]
   );
 
   const sortedGroups = useMemo(
@@ -237,6 +299,7 @@ export default function DuplicateAccounts() {
     confidenceFilter !== "all",
     countryFilter !== "all",
     stateFilter !== "all",
+    sectorFilter !== "all",
     Boolean(accountNameQuery.trim()),
     Boolean(websiteQuery.trim()),
   ].filter(Boolean).length;
@@ -248,18 +311,57 @@ export default function DuplicateAccounts() {
     }));
   }
 
-  function toggleExpandedGroup(groupId) {
-    setExpandedGroupIds((currentGroupIds) => {
-      const nextGroupIds = new Set(currentGroupIds);
+  function openComparison(group) {
+    const scoredAccounts = group.accounts.map((account) => ({
+      account,
+      completeness: getAccountCompleteness(account),
+    }));
+    const suggestedAccount = [...scoredAccounts].sort(
+      (first, second) => first.completeness.score - second.completeness.score
+    )[0]?.account;
 
-      if (nextGroupIds.has(groupId)) {
-        nextGroupIds.delete(groupId);
-      } else {
-        nextGroupIds.add(groupId);
-      }
+    setActiveGroup(group);
+    setSelectedAccountId(suggestedAccount?.accountid || "");
+    setDeleteError("");
+  }
 
-      return nextGroupIds;
-    });
+  function closeComparison() {
+    if (isDeleting) return;
+    setActiveGroup(null);
+    setSelectedAccountId("");
+    setDeleteError("");
+  }
+
+  async function deleteSelectedAccount() {
+    if (!selectedAccountId) return;
+
+    setIsDeleting(true);
+    setDeleteError("");
+
+    try {
+      await axios.delete(`${API_BASE_URL}/accounts/${selectedAccountId}`, { headers: getAuthHeaders() });
+      setDuplicateGroups((currentGroups) =>
+        currentGroups
+          .map((group) => {
+            if (group.group_id !== activeGroup.group_id) return group;
+            return prepareDuplicateGroup({
+              ...group,
+              accounts: group.accounts.filter((account) => account.accountid !== selectedAccountId),
+            });
+          })
+          .filter((group) => group.accounts.length > 1)
+      );
+      setAccountCount((currentCount) => Math.max(0, currentCount - 1));
+      setIsDeleteConfirmationOpen(false);
+      setActiveGroup(null);
+      setSelectedAccountId("");
+    } catch (deleteRequestError) {
+      if (handleUnauthorized(deleteRequestError)) return;
+      setDeleteError(getApiErrorMessage(deleteRequestError, "Unable to delete the selected account."));
+      setIsDeleteConfirmationOpen(false);
+    } finally {
+      setIsDeleting(false);
+    }
   }
 
   function markGroupReviewed(groupId) {
@@ -276,6 +378,7 @@ export default function DuplicateAccounts() {
     setConfidenceFilter("all");
     setCountryFilter("all");
     setStateFilter("all");
+    setSectorFilter("all");
     setAccountNameQuery("");
     setWebsiteQuery("");
   }
@@ -439,6 +542,22 @@ export default function DuplicateAccounts() {
             ))}
           </Select>
         </FormControl>
+        <FormControl size="small" sx={{ flex: { lg: "0 1 190px" }, maxWidth: { lg: 190 }, minWidth: { lg: 0 } }}>
+          <InputLabel id="duplicate-sector-filter-label">Sector</InputLabel>
+          <Select
+            label="Sector"
+            labelId="duplicate-sector-filter-label"
+            onChange={(event) => setSectorFilter(event.target.value)}
+            value={sectorFilter}
+          >
+            <MenuItem value="all">All sectors</MenuItem>
+            {sectors.map((sector) => (
+              <MenuItem key={sector} value={sector}>
+                {sector}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
         <TextField
           label="Search by Account Name"
           onChange={(event) => setAccountNameQuery(event.target.value)}
@@ -502,11 +621,9 @@ export default function DuplicateAccounts() {
           <TableBody>
             {sortedGroups.length ? (
               sortedGroups.map((group) => {
-                const isExpanded = expandedGroupIds.has(group.group_id);
                 const isReviewed = reviewedGroupIds.has(group.group_id);
 
                 return (
-                  <Fragment key={group.group_id}>
                     <TableRow
                       hover
                       key={group.group_id}
@@ -560,12 +677,12 @@ export default function DuplicateAccounts() {
                       <TableCell>
                         <Stack direction="row" spacing={1}>
                           <Button
-                            onClick={() => toggleExpandedGroup(group.group_id)}
+                            onClick={() => openComparison(group)}
                             size="small"
                             sx={{ borderRadius: 1, fontWeight: 800 }}
                             variant="outlined"
                           >
-                            {isExpanded ? "Collapse" : "Expand"}
+                            Compare
                           </Button>
                           <Button
                             disabled={isReviewed}
@@ -579,55 +696,6 @@ export default function DuplicateAccounts() {
                         </Stack>
                       </TableCell>
                     </TableRow>
-                    <TableRow key={`${group.group_id}-details`}>
-                      <TableCell colSpan={columns.length} sx={{ backgroundColor: "rgba(0, 51, 108, 0.03)", p: 0 }}>
-                        <Collapse in={isExpanded} timeout="auto" unmountOnExit>
-                          <Box sx={{ px: { xs: 2, md: 3 }, py: 2 }}>
-                            <TableContainer>
-                              <Table size="small" sx={{ minWidth: 1120 }}>
-                                <TableHead>
-                                  <TableRow>
-                                    <TableCell>Account ID</TableCell>
-                                    <TableCell>Account Name</TableCell>
-                                    <TableCell>Website</TableCell>
-                                    <TableCell>Country</TableCell>
-                                    <TableCell>State</TableCell>
-                                    <TableCell>City</TableCell>
-                                    <TableCell>Phone</TableCell>
-                                    <TableCell>Sector</TableCell>
-                                    <TableCell>Created Date</TableCell>
-                                  </TableRow>
-                                </TableHead>
-                                <TableBody>
-                                  {group.accounts.map((account) => (
-                                    <TableRow key={account.accountid || account.name}>
-                                      <TableCell sx={{ overflowWrap: "anywhere" }}>{account.accountid || "Missing"}</TableCell>
-                                      <TableCell>{account.name || "Missing"}</TableCell>
-                                      <TableCell>
-                                        {account.websiteurl ? (
-                                          <Link href={getWebsiteHref(account.websiteurl)} rel="noreferrer" target="_blank">
-                                            {account.websiteurl}
-                                          </Link>
-                                        ) : (
-                                          "Missing"
-                                        )}
-                                      </TableCell>
-                                      <TableCell>{account.address1_country || "Missing"}</TableCell>
-                                      <TableCell>{account.address1_stateorprovince || "Missing"}</TableCell>
-                                      <TableCell>{account.address1_city || "Missing"}</TableCell>
-                                      <TableCell>{account.telephone1 || "Missing"}</TableCell>
-                                      <TableCell>{account.new_sector || "Missing"}</TableCell>
-                                      <TableCell>{account.createdon || "Missing"}</TableCell>
-                                    </TableRow>
-                                  ))}
-                                </TableBody>
-                              </Table>
-                            </TableContainer>
-                          </Box>
-                        </Collapse>
-                      </TableCell>
-                    </TableRow>
-                  </Fragment>
                 );
               })
             ) : (
@@ -642,6 +710,92 @@ export default function DuplicateAccounts() {
           </TableBody>
         </Table>
       </TableContainer>
+
+      <Dialog fullWidth maxWidth="lg" onClose={closeComparison} open={Boolean(activeGroup)}>
+        <DialogTitle sx={{ fontWeight: 800 }}>Compare Duplicate Accounts</DialogTitle>
+        <DialogContent dividers>
+          {deleteError ? <Alert severity="error" sx={{ mb: 2 }}>{deleteError}</Alert> : null}
+          <Typography color="text.secondary" sx={{ mb: 2 }} variant="body2">
+            Select the account to delete. The account with the lower completeness score is selected by default.
+          </Typography>
+          {activeGroup ? (
+            <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
+              <Table sx={{ minWidth: 760, tableLayout: "fixed" }}>
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ fontWeight: 800, width: 180 }}>Field</TableCell>
+                    {activeGroup.accounts.map((account) => {
+                      const completeness = getAccountCompleteness(account);
+                      return (
+                        <TableCell key={account.accountid} sx={{ verticalAlign: "top" }}>
+                          <Stack spacing={1}>
+                            <Stack alignItems="center" direction="row" spacing={1}>
+                              <Radio
+                                checked={selectedAccountId === account.accountid}
+                                inputProps={{ "aria-label": `Select ${account.name || account.accountid} for deletion` }}
+                                onChange={() => setSelectedAccountId(account.accountid)}
+                                value={account.accountid}
+                              />
+                              <Typography sx={{ fontWeight: 800 }}>{account.name || "Unnamed account"}</Typography>
+                            </Stack>
+                            <Chip
+                              color={completeness.score === Math.max(...activeGroup.accounts.map((item) => getAccountCompleteness(item).score)) ? "success" : "warning"}
+                              label={`${completeness.score}% complete (${completeness.filledFieldCount}/${completeness.totalFieldCount} fields)`}
+                              size="small"
+                              sx={{ fontWeight: 800, width: "fit-content" }}
+                            />
+                          </Stack>
+                        </TableCell>
+                      );
+                    })}
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {comparisonFields.map((field) => (
+                    <TableRow key={field.key}>
+                      <TableCell component="th" scope="row" sx={{ fontWeight: 800 }}>{field.label}</TableCell>
+                      {activeGroup.accounts.map((account) => (
+                        <TableCell
+                          key={`${account.accountid}-${field.key}`}
+                          sx={{ backgroundColor: isMissingValue(account[field.key]) ? "rgba(211, 47, 47, 0.05)" : "inherit", verticalAlign: "top" }}
+                        >
+                          <ComparisonValue field={field} value={account[field.key]} />
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          ) : null}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2 }}>
+          <Button disabled={isDeleting} onClick={closeComparison}>Cancel</Button>
+          <Button
+            color="error"
+            disabled={!selectedAccountId || isDeleting}
+            onClick={() => setIsDeleteConfirmationOpen(true)}
+            variant="contained"
+          >
+            Delete Selected Account
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog onClose={() => !isDeleting && setIsDeleteConfirmationOpen(false)} open={isDeleteConfirmationOpen}>
+        <DialogTitle sx={{ fontWeight: 800 }}>Delete this account?</DialogTitle>
+        <DialogContent>
+          <Typography>
+            This permanently deletes {activeGroup?.accounts.find((account) => account.accountid === selectedAccountId)?.name || "the selected account"} from Dynamics. This action cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button disabled={isDeleting} onClick={() => setIsDeleteConfirmationOpen(false)}>Cancel</Button>
+          <Button color="error" disabled={isDeleting} onClick={deleteSelectedAccount} variant="contained">
+            {isDeleting ? "Deleting..." : "Delete Account"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Paper>
   );
 }

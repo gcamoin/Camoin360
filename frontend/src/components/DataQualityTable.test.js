@@ -34,7 +34,7 @@ function makeAccount(index, overrides = {}) {
     telephone1: `555-010${index}`,
     new_datasource: "Dynamics",
     new_employees: 100 + index,
-    new_NAICStext: "Industrial Machinery Manufacturing",
+    new_naicstext: "Industrial Machinery Manufacturing",
     ...overrides,
   };
 }
@@ -243,7 +243,7 @@ describe("DataQualityTable pagination edge cases", () => {
         address1_stateorprovince: "TX",
         address1_city: "Austin",
         description: "Builds precision components.",
-        new_NAICStext: "Machine Shops",
+        new_naicstext: "Machine Shops",
       }),
     ]);
     const companyButton = Array.from(view.container.querySelectorAll("button")).find(
