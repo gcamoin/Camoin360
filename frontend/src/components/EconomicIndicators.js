@@ -88,10 +88,108 @@ function ChartCard({ title, source, children }) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+const TREND_STYLES = {
+  RISING: { label: "RISING", bg: "#fff7ed", color: "#ea580c" },
+  MODERATE: { label: "MODERATE", bg: "#f0fdf4", color: "#16a34a" },
+  STABLE: { label: "STABLE", bg: "#eff6ff", color: "#2563eb" },
+  DECLINING: { label: "DECLINING", bg: "#fef2f2", color: "#dc2626" },
+  UNKNOWN: { label: "—", bg: "#f8fafc", color: "#64748b" },
+};
+
+function TrendBadge({ trend }) {
+  const style = TREND_STYLES[trend] || TREND_STYLES.UNKNOWN;
+  return (
+    <Box
+      component="span"
+      sx={{
+        display: "inline-block",
+        px: 1,
+        py: 0.25,
+        borderRadius: 0.75,
+        fontSize: "0.7rem",
+        fontWeight: 700,
+        letterSpacing: "0.04em",
+        backgroundColor: style.bg,
+        color: style.color,
+      }}
+    >
+      {style.label}
+    </Box>
+  );
+}
+
+function InflationTable({ rows }) {
+  if (!rows || rows.length === 0) return null;
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 2,
+        p: 2.5,
+        backgroundColor: "common.white",
+      }}
+    >
+      <Typography fontWeight={700} fontSize="0.88rem" color="text.primary" mb={1.5}>
+        Inflation Index – Consumer Price Index
+      </Typography>
+      <Box
+        component="table"
+        sx={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}
+      >
+        <Box component="thead">
+          <Box component="tr">
+            {["INDEX", "MONTH", "CHANGE", "TREND"].map((col) => (
+              <Box
+                key={col}
+                component="th"
+                sx={{
+                  textAlign: "left",
+                  pb: 1,
+                  pt: 0,
+                  pr: 2,
+                  color: "text.disabled",
+                  fontWeight: 600,
+                  fontSize: "0.72rem",
+                  letterSpacing: "0.06em",
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                {col}
+              </Box>
+            ))}
+          </Box>
+        </Box>
+        <Box component="tbody">
+          {rows.map((row, i) => (
+            <Box component="tr" key={i}>
+              <Box component="td" sx={{ py: 1.25, pr: 2, color: "text.primary", fontWeight: 500 }}>
+                {row.index}
+              </Box>
+              <Box component="td" sx={{ py: 1.25, pr: 2, color: "text.secondary" }}>
+                {row.month}
+              </Box>
+              <Box component="td" sx={{ py: 1.25, pr: 2, color: "text.primary", fontWeight: 600 }}>
+                {row.change}
+              </Box>
+              <Box component="td" sx={{ py: 1.25 }}>
+                <TrendBadge trend={row.trend} />
+              </Box>
+            </Box>
+          ))}
+        </Box>
+      </Box>
+    </Paper>
+  );
+}
+
 export default function EconomicIndicators() {
   const isMountedRef = useRef(true);
   const [range, setRange] = useState("All Years");
   const [series, setSeries] = useState(EMPTY_SERIES);
+  const [cpiTable, setCpiTable] = useState([]);
   const [sources, setSources] = useState({});
   const [updatedAt, setUpdatedAt] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -123,6 +221,7 @@ export default function EconomicIndicators() {
         treasury: response.data?.series?.treasury || [],
         housing: response.data?.series?.housing || [],
       });
+      setCpiTable(response.data?.cpi_table || []);
       setSources(response.data?.sources || {});
       setUpdatedAt(response.data?.updated_at || "");
     } catch (fetchError) {
@@ -241,7 +340,7 @@ export default function EconomicIndicators() {
       >
         {/* Consumer Sentiment Index */}
         <ChartCard title="Consumer Sentiment Index" source={sources.sentiment || "University of Michigan via FRED"}>
-          <ResponsiveContainer width="100%" height={210}>
+          <ResponsiveContainer width="100%" height={320}>
             <AreaChart data={sentiment} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
               <defs>
                 <linearGradient id="sentimentGrad" x1="0" y1="0" x2="0" y2="1">
@@ -272,7 +371,7 @@ export default function EconomicIndicators() {
 
         {/* Quarterly GDP Growth */}
         <ChartCard title="Quarterly GDP Growth" source={sources.gdp || "U.S. Bureau of Economic Analysis via FRED"}>
-          <ResponsiveContainer width="100%" height={210}>
+          <ResponsiveContainer width="100%" height={320}>
             <BarChart data={gdp} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
               <XAxis
@@ -298,7 +397,7 @@ export default function EconomicIndicators() {
 
         {/* Treasury Yield Trends */}
         <ChartCard title="Treasury Yield Trends" source={sources.treasury || "2 Year vs 10 Year Yields"}>
-          <ResponsiveContainer width="100%" height={210}>
+          <ResponsiveContainer width="100%" height={320}>
             <LineChart data={treasury} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis
@@ -344,7 +443,7 @@ export default function EconomicIndicators() {
 
         {/* U.S. House Price Index */}
         <ChartCard title="U.S. House Price Index" source={sources.housing || "Federal Housing Finance Agency via FRED"}>
-          <ResponsiveContainer width="100%" height={210}>
+          <ResponsiveContainer width="100%" height={320}>
             <AreaChart data={housing} margin={{ top: 4, right: 8, bottom: 0, left: -20 }}>
               <defs>
                 <linearGradient id="sp500Grad" x1="0" y1="0" x2="0" y2="1">
@@ -373,6 +472,9 @@ export default function EconomicIndicators() {
           </ResponsiveContainer>
         </ChartCard>
       </Box>
+
+      {/* Inflation Index Table */}
+      <InflationTable rows={cpiTable} />
     </Stack>
   );
 }

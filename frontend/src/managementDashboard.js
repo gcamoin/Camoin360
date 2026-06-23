@@ -263,7 +263,7 @@ export default function ManagementDashboard({ onLogout }) {
         </Box>
 
         <Box component="main" sx={{ py: { xs: 3, md: 6 } }}>
-          <Container maxWidth="lg">
+          <Container maxWidth="xl">
             <Stack spacing={3}>
               <Box>
                 <Typography
