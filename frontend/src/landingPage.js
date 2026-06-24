@@ -14,7 +14,6 @@ import {
 
 import DataQualityTable from "./components/DataQualityTable";
 import DuplicateAccounts from "./components/DuplicateAccounts";
-import MarketingLists from "./components/MarketingLists";
 import MetricsDashboard from "./components/MetricsDashboard";
 import SummaryAnalytics from "./components/SummaryAnalytics";
 
@@ -42,13 +41,6 @@ const views = {
     title: "Duplicate Accounts",
     description: "Find and review possible duplicate Dynamics account records before enrichment updates.",
   },
-  marketingLists: {
-    label: "Marketing Lists",
-    icon: "campaign",
-    route: "/dashboard/marketing-lists",
-    title: "Marketing Lists",
-    description: "Manage Dynamics marketing lists and filter by client, campaign, creator, member type, and list metadata.",
-  },
   summaryAnalytics: {
     label: "Summary Analytics",
     icon: "chart",
@@ -60,7 +52,6 @@ const views = {
 
 const iconPaths = {
   chart: "M5 19V9h3v10H5Zm5 0V5h3v14h-3Zm5 0v-7h3v7h-3Z",
-  campaign: "M4 10v4h3l5 4V6l-5 4H4Zm10.5 4.8 1.4 1.4A6 6 0 0 0 18 12a6 6 0 0 0-2.1-4.2l-1.4 1.4A4 4 0 0 1 16 12a4 4 0 0 1-1.5 2.8Z",
   checklist: "M5.5 7.5 7 9l3-3 .9.9L7 10.8 4.6 8.4l.9-.9ZM13 8h7v2h-7V8ZM5.5 14.5 7 16l3-3 .9.9L7 17.8l-2.4-2.4.9-.9ZM13 15h7v2h-7v-2Z",
   collapse: "M15.5 5 8.5 12l7 7-1.4 1.4L5.7 12l8.4-8.4L15.5 5Zm4 0-7 7 7 7-1.4 1.4L9.7 12l8.4-8.4L19.5 5Z",
   duplicate: "M7 7V5c0-1.1.9-2 2-2h8c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2h-2v2c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V9c0-1.1.9-2 2-2h2Zm2 0h4c1.1 0 2 .9 2 2v6h2V5H9v2Zm-4 2v10h8V9H5Z",
@@ -131,17 +122,22 @@ export default function LandingPage({ onLogout }) {
         <Box
           component="aside"
           sx={{
+            alignSelf: { md: "start" },
             backgroundColor: "primary.main",
             color: "common.white",
+            height: { md: "100vh" },
+            overflow: { md: "hidden" },
             p: { xs: 2, md: 3 },
+            position: { md: "sticky" },
+            top: { md: 0 },
             transition: "padding 180ms ease",
           }}
         >
           <Stack
             spacing={3}
             sx={{
-              height: "100%",
-              minHeight: { md: "calc(100vh - 48px)" },
+              height: { md: "100%" },
+              minHeight: 0,
             }}
           >
             <Box
@@ -202,7 +198,15 @@ export default function LandingPage({ onLogout }) {
 
             <Divider sx={{ borderColor: "rgba(255,255,255,0.18)" }} />
 
-            <Stack component="nav" spacing={1}>
+            <Stack
+              component="nav"
+              spacing={1}
+              sx={{
+                flex: { md: 1 },
+                minHeight: 0,
+                overflowY: { md: "auto" },
+              }}
+            >
               {Object.entries(views).map(([viewKey, view]) => {
                 const isActive = activeView === viewKey;
 
@@ -241,8 +245,6 @@ export default function LandingPage({ onLogout }) {
               })}
             </Stack>
 
-            <Box sx={{ flex: 1 }} />
-
             <Button
               fullWidth
               onClick={onLogout}
@@ -273,11 +275,11 @@ export default function LandingPage({ onLogout }) {
 
         <Box component="main" sx={{ py: { xs: 3, md: 6 } }}>
           <Container
-            maxWidth={["dataQuality", "duplicateAccounts", "marketingLists"].includes(activeView) ? false : "lg"}
+            maxWidth={["dataQuality", "duplicateAccounts"].includes(activeView) ? false : "lg"}
             sx={{
               px: {
                 xs: 2,
-                md: ["dataQuality", "duplicateAccounts", "marketingLists"].includes(activeView) ? 3 : 4,
+                md: ["dataQuality", "duplicateAccounts"].includes(activeView) ? 3 : 4,
               },
             }}
           >
@@ -309,7 +311,6 @@ export default function LandingPage({ onLogout }) {
               {activeView === "seamless" && <MetricsDashboard />}
               {activeView === "dataQuality" && <DataQualityTable />}
               {activeView === "duplicateAccounts" && <DuplicateAccounts />}
-              {activeView === "marketingLists" && <MarketingLists />}
               {activeView === "summaryAnalytics" && <SummaryAnalytics />}
             </Stack>
           </Container>

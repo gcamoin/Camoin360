@@ -16,6 +16,7 @@ import {
   InputLabel,
   Link,
   LinearProgress,
+  Menu,
   MenuItem,
   Paper,
   Select,
@@ -27,7 +28,6 @@ import {
   TableHead,
   TablePagination,
   TableRow,
-  TableSortLabel,
   TextField,
   Typography,
 } from "@mui/material";
@@ -39,12 +39,14 @@ const DEFAULT_ROWS_PER_PAGE = 25;
 const numberFormatter = new Intl.NumberFormat();
 const DEFAULT_FILTERS = {
   search: "",
+  website: "",
   country: "",
   state: "",
   industry: "",
   intentLevel: "",
   visitorType: "",
   reviewStatus: "",
+  missingData: "",
   startDate: "",
   endDate: "",
 };
@@ -421,23 +423,18 @@ function getMissingFields(row) {
     .map(([label]) => `Missing ${label}`);
 }
 
-function MissingFieldChips({ fields, maxVisible = 2 }) {
+function MissingFieldsBadge({ fields }) {
   if (!fields.length) {
     return <Typography color="success.main" variant="body2">Complete</Typography>;
   }
 
-  const visibleFields = fields.slice(0, maxVisible);
-  const hiddenCount = fields.length - visibleFields.length;
-
   return (
-    <Stack direction="row" flexWrap="wrap" gap={0.75}>
-      {visibleFields.map((fieldName) => (
-        <Chip color="warning" key={fieldName} label={fieldName} size="small" />
-      ))}
-      {hiddenCount > 0 ? (
-        <Chip label={`+${hiddenCount} More`} size="small" sx={{ fontWeight: 800 }} />
-      ) : null}
-    </Stack>
+    <Chip
+      color="warning"
+      label={`⚠ ${fields.length} Missing Field${fields.length === 1 ? "" : "s"}`}
+      size="small"
+      sx={{ fontWeight: 800 }}
+    />
   );
 }
 
@@ -504,11 +501,16 @@ function FilterSelect({ label, onChange, options, value }) {
         value={value}
       >
         <MenuItem value="">All</MenuItem>
-        {options.map((option) => (
-          <MenuItem key={option} value={option}>
-            {option}
-          </MenuItem>
-        ))}
+        {options.map((option) => {
+          const optionValue = typeof option === "object" ? option.value : option;
+          const optionLabel = typeof option === "object" ? option.label : option;
+
+          return (
+            <MenuItem key={optionValue} value={optionValue}>
+              {optionLabel}
+            </MenuItem>
+          );
+        })}
       </Select>
     </FormControl>
   );
@@ -538,6 +540,7 @@ function FutureActionButton({ children }) {
 export default function LeadfeederVisits() {
   const [visits, setVisits] = useState([]);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [columnMenu, setColumnMenu] = useState({ anchorEl: null, columnKey: "" });
   const [reviewStatusesByCompanyKey, setReviewStatusesByCompanyKey] = useState({});
   const [selectedCompanyKey, setSelectedCompanyKey] = useState("");
   const [isDetailOpen, setIsDetailOpen] = useState(false);
@@ -706,17 +709,24 @@ export default function LeadfeederVisits() {
         const companySearch = normalizeText(filters.search);
         const visitDate = row.visit_date;
         const companyMatches = !companySearch || normalizeText(row.company_name).includes(companySearch);
+        const websiteMatches = !filters.website || normalizeText(row.website).includes(normalizeText(filters.website));
         const startMatches = !filters.startDate || (visitDate && visitDate >= filters.startDate);
         const endMatches = !filters.endDate || (visitDate && visitDate <= filters.endDate);
+        const missingDataMatches =
+          !filters.missingData ||
+          (filters.missingData === "complete" && row.missing_fields.length === 0) ||
+          (filters.missingData === "missing" && row.missing_fields.length > 0);
 
         return (
           companyMatches &&
+          websiteMatches &&
           (!filters.country || row.country === filters.country) &&
           (!filters.state || row.state === filters.state) &&
           (!filters.industry || row.industry === filters.industry) &&
           (!filters.intentLevel || row.intent_level === filters.intentLevel) &&
           (!filters.visitorType || row.visitor_type === filters.visitorType) &&
           (!filters.reviewStatus || row.review_status === filters.reviewStatus) &&
+          missingDataMatches &&
           startMatches &&
           endMatches
         );
@@ -730,6 +740,7 @@ export default function LeadfeederVisits() {
   );
 
   const activeFilterCount = Object.values(filters).filter((value) => !isMissingValue(value)).length;
+  const activeColumn = columns.find((column) => column.key === columnMenu.columnKey);
   const paginatedCompanyRows = useMemo(
     () => sortedCompanyRows.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
     [page, rowsPerPage, sortedCompanyRows]
@@ -756,12 +767,58 @@ export default function LeadfeederVisits() {
     setPage(0);
   }
 
-  function handleSort(columnKey) {
+  function handleSort(columnKey, direction) {
     setPage(0);
-    setSortConfig((currentSort) => ({
-      key: columnKey,
-      direction: currentSort.key === columnKey && currentSort.direction === "asc" ? "desc" : "asc",
-    }));
+    setSortConfig({ key: columnKey, direction });
+  }
+
+  function clearSort(columnKey) {
+    if (sortConfig.key === columnKey) {
+      setPage(0);
+      setSortConfig({ key: "", direction: "asc" });
+    }
+  }
+
+  function openColumnMenu(event, columnKey) {
+    setColumnMenu({ anchorEl: event.currentTarget, columnKey });
+  }
+
+  function closeColumnMenu() {
+    setColumnMenu({ anchorEl: null, columnKey: "" });
+  }
+
+  function getColumnFilterKeys(columnKey) {
+    const filterKeysByColumn = {
+      company_name: ["search"],
+      website: ["website"],
+      country: ["country"],
+      state: ["state"],
+      industry: ["industry"],
+      visit_count: ["visitorType"],
+      last_visit_date: ["startDate", "endDate"],
+      intent_score: ["intentLevel"],
+      missing_fields: ["missingData"],
+      review_status: ["reviewStatus"],
+    };
+
+    return filterKeysByColumn[columnKey] || [];
+  }
+
+  function columnHasActiveFilter(columnKey) {
+    return getColumnFilterKeys(columnKey).some((filterKey) => !isMissingValue(filters[filterKey]));
+  }
+
+  function clearColumnFilters(columnKey) {
+    const filterKeys = getColumnFilterKeys(columnKey);
+
+    setPage(0);
+    setFilters((currentFilters) => {
+      const nextFilters = { ...currentFilters };
+      filterKeys.forEach((filterKey) => {
+        nextFilters[filterKey] = "";
+      });
+      return nextFilters;
+    });
   }
 
   function setCompanyReviewStatus(companyKey, reviewStatus) {
@@ -951,6 +1008,18 @@ export default function LeadfeederVisits() {
               }
               sx={{ fontWeight: 800 }}
             />
+            {activeFilterCount ? (
+              <Button
+                onClick={() => {
+                  setFilters(DEFAULT_FILTERS);
+                  setPage(0);
+                }}
+                size="small"
+                sx={{ borderRadius: 1, fontWeight: 800, minHeight: 32, whiteSpace: "nowrap" }}
+              >
+                Clear filters
+              </Button>
+            ) : null}
             <Button
               disabled={!sortedCompanyRows.length}
               onClick={exportLeadfeederCsv}
@@ -962,113 +1031,6 @@ export default function LeadfeederVisits() {
             </Button>
           </Stack>
         </Box>
-
-        <Stack
-          direction={{ xs: "column", lg: "row" }}
-          spacing={2}
-          sx={{
-            alignItems: { xs: "stretch", lg: "center" },
-            borderBottom: "1px solid rgba(0, 51, 108, 0.10)",
-            flexWrap: { lg: "wrap" },
-            px: { xs: 2, md: 3 },
-            py: 2,
-            rowGap: 2,
-          }}
-          useFlexGap
-        >
-          <TextField
-            label="Search companies"
-            onChange={(event) => updateFilter("search", event.target.value)}
-            placeholder="Company name..."
-            size="small"
-            sx={{ flex: { lg: "0 1 240px" }, maxWidth: { lg: 240 }, minWidth: { lg: 0 } }}
-            value={filters.search}
-          />
-          <Box
-            sx={{
-              display: "grid",
-              flex: { lg: "1 1 640px" },
-              gap: 2,
-              gridTemplateColumns: {
-                xs: "1fr",
-                sm: "repeat(2, minmax(0, 1fr))",
-                lg: "repeat(4, minmax(0, 1fr))",
-              },
-              minWidth: 0,
-            }}
-          >
-            <FilterSelect
-              label="Country"
-              onChange={(value) => updateFilter("country", value)}
-              options={filterOptions.countries}
-              value={filters.country}
-            />
-            <FilterSelect
-              label="State"
-              onChange={(value) => updateFilter("state", value)}
-              options={filterOptions.states}
-              value={filters.state}
-            />
-            <FilterSelect
-              label="Industry"
-              onChange={(value) => updateFilter("industry", value)}
-              options={filterOptions.industries}
-              value={filters.industry}
-            />
-            <FilterSelect
-              label="Intent Level"
-              onChange={(value) => updateFilter("intentLevel", value)}
-              options={INTENT_LEVELS}
-              value={filters.intentLevel}
-            />
-            <FilterSelect
-              label="Visitor Type"
-              onChange={(value) => updateFilter("visitorType", value)}
-              options={VISITOR_TYPES}
-              value={filters.visitorType}
-            />
-            <FilterSelect
-              label="Review Status"
-              onChange={(value) => updateFilter("reviewStatus", value)}
-              options={REVIEW_STATUSES}
-              value={filters.reviewStatus}
-            />
-            <TextField
-              InputLabelProps={{ shrink: true }}
-              label="Date Range Start"
-              onChange={(event) => updateFilter("startDate", event.target.value)}
-              size="small"
-              type="date"
-              value={filters.startDate}
-            />
-            <TextField
-              InputLabelProps={{ shrink: true }}
-              label="Date Range End"
-              onChange={(event) => updateFilter("endDate", event.target.value)}
-              size="small"
-              type="date"
-              value={filters.endDate}
-            />
-          </Box>
-          <Button
-            disabled={!activeFilterCount}
-            onClick={() => {
-              setFilters(DEFAULT_FILTERS);
-              setPage(0);
-            }}
-            size="small"
-            sx={{
-              borderRadius: 1,
-              flex: { lg: "0 0 auto" },
-              fontWeight: 800,
-              minHeight: 40,
-              whiteSpace: "nowrap",
-            }}
-            variant="outlined"
-          >
-            Clear filters
-          </Button>
-        </Stack>
 
         <Box
           sx={{
@@ -1118,7 +1080,6 @@ export default function LeadfeederVisits() {
                   {columns.map((column) => (
                     <TableCell
                       key={column.key}
-                      sortDirection={sortConfig.key === column.key ? sortConfig.direction : false}
                       sx={{
                         backgroundColor: "primary.main",
                         color: "common.white",
@@ -1132,19 +1093,58 @@ export default function LeadfeederVisits() {
                       {column.sortable === false ? (
                         column.label
                       ) : (
-                        <TableSortLabel
-                          active={sortConfig.key === column.key}
-                          direction={sortConfig.key === column.key ? sortConfig.direction : "asc"}
-                          onClick={() => handleSort(column.key)}
-                          sx={{
-                            color: "common.white",
-                            fontWeight: 800,
-                            "&.Mui-active": { color: "common.white" },
-                            "& .MuiTableSortLabel-icon": { color: "common.white !important" },
-                          }}
-                        >
-                          {column.label}
-                        </TableSortLabel>
+                        <Box sx={{ alignItems: "center", display: "flex", gap: 1, justifyContent: "space-between" }}>
+                          <Typography
+                            component="span"
+                            sx={{
+                              color: "common.white",
+                              fontSize: "0.875rem",
+                              fontWeight: 800,
+                              lineHeight: 1.15,
+                            }}
+                          >
+                            {column.label}
+                          </Typography>
+                          <Button
+                            aria-label={`${column.label} filter and sort options`}
+                            onClick={(event) => openColumnMenu(event, column.key)}
+                            size="small"
+                            sx={{
+                              borderColor:
+                                columnHasActiveFilter(column.key) || sortConfig.key === column.key
+                                  ? "common.white"
+                                  : "rgba(255, 255, 255, 0.55)",
+                              color: "common.white",
+                              flex: "0 0 auto",
+                              minWidth: 28,
+                              px: 0.5,
+                              py: 0.25,
+                            }}
+                            variant="outlined"
+                          >
+                            <Box
+                              aria-hidden="true"
+                              sx={{
+                                borderLeft: "6px solid transparent",
+                                borderRight: "6px solid transparent",
+                                borderTop: "8px solid currentColor",
+                                height: 0,
+                                position: "relative",
+                                width: 0,
+                                "&::after": {
+                                  backgroundColor: "currentColor",
+                                  borderRadius: 999,
+                                  content: '""',
+                                  height: 5,
+                                  left: -1,
+                                  position: "absolute",
+                                  top: -1,
+                                  width: 2,
+                                },
+                              }}
+                            />
+                          </Button>
+                        </Box>
                       )}
                     </TableCell>
                   ))}
@@ -1197,7 +1197,7 @@ export default function LeadfeederVisits() {
                       <IntentScoreBadge intentLevel={row.intent_level} score={row.intent_score} />
                     </TableCell>
                     <TableCell sx={{ overflowWrap: "anywhere" }}>
-                      <MissingFieldChips fields={row.missing_fields} />
+                      <MissingFieldsBadge fields={row.missing_fields} />
                     </TableCell>
                     <TableCell>
                       <Chip
@@ -1278,6 +1278,154 @@ export default function LeadfeederVisits() {
         ) : (
           <EmptyState hasActiveFilters={activeFilterCount > 0} />
         )}
+        <Menu
+          anchorEl={columnMenu.anchorEl}
+          onClose={closeColumnMenu}
+          open={Boolean(columnMenu.anchorEl)}
+        >
+          <Box sx={{ p: 1.5, width: 260 }}>
+            <Typography color="text.secondary" sx={{ mb: 1 }} variant="overline">
+              {activeColumn?.label || "Column"} Options
+            </Typography>
+
+            {activeColumn?.key === "company_name" ? (
+              <TextField
+                autoFocus
+                fullWidth
+                label="Company name"
+                onChange={(event) => updateFilter("search", event.target.value)}
+                size="small"
+                value={filters.search}
+              />
+            ) : null}
+            {activeColumn?.key === "website" ? (
+              <TextField
+                autoFocus
+                fullWidth
+                label="Website"
+                onChange={(event) => updateFilter("website", event.target.value)}
+                size="small"
+                value={filters.website}
+              />
+            ) : null}
+            {activeColumn?.key === "country" ? (
+              <FilterSelect
+                label="Country"
+                onChange={(value) => updateFilter("country", value)}
+                options={filterOptions.countries}
+                value={filters.country}
+              />
+            ) : null}
+            {activeColumn?.key === "state" ? (
+              <FilterSelect
+                label="State"
+                onChange={(value) => updateFilter("state", value)}
+                options={filterOptions.states}
+                value={filters.state}
+              />
+            ) : null}
+            {activeColumn?.key === "industry" ? (
+              <FilterSelect
+                label="Industry"
+                onChange={(value) => updateFilter("industry", value)}
+                options={filterOptions.industries}
+                value={filters.industry}
+              />
+            ) : null}
+            {activeColumn?.key === "visit_count" ? (
+              <FilterSelect
+                label="Visitor Type"
+                onChange={(value) => updateFilter("visitorType", value)}
+                options={VISITOR_TYPES}
+                value={filters.visitorType}
+              />
+            ) : null}
+            {activeColumn?.key === "last_visit_date" ? (
+              <Stack spacing={1.5}>
+                <TextField
+                  InputLabelProps={{ shrink: true }}
+                  fullWidth
+                  label="From"
+                  onChange={(event) => updateFilter("startDate", event.target.value)}
+                  size="small"
+                  type="date"
+                  value={filters.startDate}
+                />
+                <TextField
+                  InputLabelProps={{ shrink: true }}
+                  fullWidth
+                  label="To"
+                  onChange={(event) => updateFilter("endDate", event.target.value)}
+                  size="small"
+                  type="date"
+                  value={filters.endDate}
+                />
+              </Stack>
+            ) : null}
+            {activeColumn?.key === "intent_score" ? (
+              <FilterSelect
+                label="Intent Level"
+                onChange={(value) => updateFilter("intentLevel", value)}
+                options={INTENT_LEVELS}
+                value={filters.intentLevel}
+              />
+            ) : null}
+            {activeColumn?.key === "missing_fields" ? (
+              <FilterSelect
+                label="Data Completeness"
+                onChange={(value) => updateFilter("missingData", value)}
+                options={[
+                  { label: "Has missing fields", value: "missing" },
+                  { label: "Complete", value: "complete" },
+                ]}
+                value={filters.missingData}
+              />
+            ) : null}
+            {activeColumn?.key === "review_status" ? (
+              <FilterSelect
+                label="Review Status"
+                onChange={(value) => updateFilter("reviewStatus", value)}
+                options={REVIEW_STATUSES}
+                value={filters.reviewStatus}
+              />
+            ) : null}
+          </Box>
+          <Divider />
+          <MenuItem
+            onClick={() => {
+              handleSort(columnMenu.columnKey, "asc");
+              closeColumnMenu();
+            }}
+          >
+            Sort ascending
+          </MenuItem>
+          <MenuItem
+            onClick={() => {
+              handleSort(columnMenu.columnKey, "desc");
+              closeColumnMenu();
+            }}
+          >
+            Sort descending
+          </MenuItem>
+          <MenuItem
+            disabled={sortConfig.key !== columnMenu.columnKey}
+            onClick={() => {
+              clearSort(columnMenu.columnKey);
+              closeColumnMenu();
+            }}
+          >
+            Clear sort
+          </MenuItem>
+          <MenuItem
+            disabled={!columnHasActiveFilter(columnMenu.columnKey)}
+            onClick={() => {
+              clearColumnFilters(columnMenu.columnKey);
+              closeColumnMenu();
+            }}
+          >
+            Clear filter
+          </MenuItem>
+        </Menu>
         <TablePagination
           component="div"
           count={filteredCompanyRows.length}
@@ -1478,7 +1626,7 @@ export default function LeadfeederVisits() {
                       Missing Fields
                     </Typography>
                     <Box sx={{ mt: 0.75 }}>
-                      <MissingFieldChips fields={selectedCompany.missing_fields} maxVisible={selectedCompany.missing_fields.length} />
+                      <MissingFieldsBadge fields={selectedCompany.missing_fields} />
                     </Box>
                   </Box>
                 </Box>

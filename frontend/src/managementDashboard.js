@@ -92,17 +92,22 @@ export default function ManagementDashboard({ onLogout }) {
         <Box
           component="aside"
           sx={{
+            alignSelf: { md: "start" },
             backgroundColor: "primary.main",
             color: "common.white",
+            height: { md: "100vh" },
+            overflow: { md: "hidden" },
             p: { xs: 2, md: 3 },
+            position: { md: "sticky" },
+            top: { md: 0 },
             transition: "padding 180ms ease",
           }}
         >
           <Stack
             spacing={3}
             sx={{
-              height: "100%",
-              minHeight: { md: "calc(100vh - 48px)" },
+              height: { md: "100%" },
+              minHeight: 0,
             }}
           >
             <Box
@@ -158,7 +163,15 @@ export default function ManagementDashboard({ onLogout }) {
 
             <Divider sx={{ borderColor: "rgba(255,255,255,0.18)" }} />
 
-            <Stack component="nav" spacing={1}>
+            <Stack
+              component="nav"
+              spacing={1}
+              sx={{
+                flex: { md: 1 },
+                minHeight: 0,
+                overflowY: { md: "auto" },
+              }}
+            >
               {Object.entries(views).map(([viewKey, view]) => {
                 const isActive = activeView === viewKey;
 
@@ -194,8 +207,6 @@ export default function ManagementDashboard({ onLogout }) {
                 );
               })}
             </Stack>
-
-            <Box sx={{ flex: 1 }} />
 
             <Button
               fullWidth
