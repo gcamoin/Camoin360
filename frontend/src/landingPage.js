@@ -274,7 +274,12 @@ export default function LandingPage({ onLogout }) {
         <Box component="main" sx={{ py: { xs: 3, md: 6 } }}>
           <Container
             maxWidth={["dataQuality", "duplicateAccounts", "marketingLists"].includes(activeView) ? false : "lg"}
-            sx={{ px: { xs: 2, md: ["dataQuality", "duplicateAccounts", "marketingLists"].includes(activeView) ? 3 : 4 } }}
+            sx={{
+              px: {
+                xs: 2,
+                md: ["dataQuality", "duplicateAccounts", "marketingLists"].includes(activeView) ? 3 : 4,
+              },
+            }}
           >
             <Stack spacing={3}>
               <Box>

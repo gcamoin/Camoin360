@@ -43,6 +43,7 @@ def load_metrics():
     default_data = {
         "accounts_processed": 0,
         "accounts_updated": 0,
+        "processed_log": [],
         "updates_log": []
     }
 
@@ -86,6 +87,11 @@ def load_metrics():
                 []
             )
 
+            data.setdefault(
+                "processed_log",
+                []
+            )
+
             # -------------------------------
             # REMOVE OLD LEGACY KEY
             # -------------------------------
@@ -112,6 +118,10 @@ def increment_processed():
     data = load_metrics()
 
     data["accounts_processed"] += 1
+    data["processed_log"].append({
+        "timestamp": datetime.utcnow().isoformat()
+    })
+    data["processed_log"] = data["processed_log"][-500:]
 
     print(
         f"📊 Accounts processed: "
@@ -155,10 +165,23 @@ def log_update(company_name, changes):
     # -------------------------------
     # CREATE AUDIT ENTRY
     # -------------------------------
+    normalized_changes = (
+        [
+            {
+                "field": field,
+                "old": None,
+                "new": value
+            }
+            for field, value in changes.items()
+        ]
+        if isinstance(changes, dict)
+        else changes
+    )
+
     entry = {
         "company": company_name,
         "timestamp": datetime.utcnow().isoformat(),
-        "changes": changes
+        "changes": normalized_changes
     }
 
     # -------------------------------
@@ -196,6 +219,7 @@ def reset_metrics():
     default_data = {
         "accounts_processed": 0,
         "accounts_updated": 0,
+        "processed_log": [],
         "updates_log": []
     }
 

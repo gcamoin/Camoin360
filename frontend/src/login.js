@@ -3,19 +3,30 @@ import {
   Box,
   Button,
   Container,
+  FormControl,
+  InputLabel,
   Link,
+  MenuItem,
   Paper,
+  Select,
   Stack,
   TextField,
   Typography,
   useTheme,
 } from "@mui/material";
 
-import { getApiErrorMessage } from "./auth";
+import { getApiErrorMessage, getPreferredDashboardView } from "./auth";
 
-export default function Login({ onLogin, onManagementLogin, onShowSignup }) {
+const dashboardOptions = [
+  { value: "main", label: "Enrichment Operations" },
+  { value: "prospecting", label: "Dynamics Prospecting" },
+  { value: "management", label: "Management" },
+];
+
+export default function Login({ onLogin, onShowSignup }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [dashboardView, setDashboardView] = useState(getPreferredDashboardView);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const theme = useTheme();
@@ -31,16 +42,8 @@ export default function Login({ onLogin, onManagementLogin, onShowSignup }) {
     setError("");
     setIsSubmitting(true);
 
-    const submitter = event.nativeEvent.submitter;
-    const isManagementLogin =
-      submitter?.value === "management";
-
     try {
-      if (isManagementLogin) {
-        await onManagementLogin(loginCredentials);
-      } else {
-        await onLogin(loginCredentials);
-      }
+      await onLogin(loginCredentials, dashboardView);
     } catch (loginError) {
       setError(getApiErrorMessage(loginError, "Unable to sign in."));
     } finally {
@@ -182,6 +185,21 @@ export default function Login({ onLogin, onManagementLogin, onShowSignup }) {
                 type="password"
                 value={password}
               />
+              <FormControl fullWidth>
+                <InputLabel id="dashboard-view-label">Open dashboard</InputLabel>
+                <Select
+                  label="Open dashboard"
+                  labelId="dashboard-view-label"
+                  onChange={(event) => setDashboardView(event.target.value)}
+                  value={dashboardView}
+                >
+                  {dashboardOptions.map((option) => (
+                    <MenuItem key={option.value} value={option.value}>
+                      {option.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
               {error ? (
                 <Typography color="error" variant="body2">
                   {error}
@@ -192,7 +210,6 @@ export default function Login({ onLogin, onManagementLogin, onShowSignup }) {
                 fullWidth
                 size="large"
                 type="submit"
-                value="standard"
                 variant="contained"
                 sx={{
                   py: 1.4,
@@ -201,24 +218,6 @@ export default function Login({ onLogin, onManagementLogin, onShowSignup }) {
                 }}
               >
                 {isSubmitting ? "Signing in..." : "Sign in"}
-              </Button>
-              <Button
-                disabled={isSubmitting}
-                fullWidth
-                size="large"
-                type="submit"
-                value="management"
-                variant="outlined"
-                sx={{
-                  py: 1.4,
-                  fontWeight: 800,
-                  borderWidth: 2,
-                  "&:hover": {
-                    borderWidth: 2,
-                  },
-                }}
-              >
-                Management dashbaord login
               </Button>
               <Typography
                 color="text.secondary"

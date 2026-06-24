@@ -10,19 +10,17 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  FormControl,
-  InputLabel,
+  Menu,
   MenuItem,
   Paper,
-  Select,
   Stack,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
+  TablePagination,
   TableRow,
-  TableSortLabel,
   TextField,
   Typography,
 } from "@mui/material";
@@ -30,6 +28,7 @@ import {
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
 
 const API_URL = `${API_BASE_URL}/marketing-lists`;
+const DEFAULT_ROWS_PER_PAGE = 25;
 
 const columns = [
   { key: "client_name", label: "Client Name", width: 190 },
@@ -43,16 +42,6 @@ const columns = [
 
 function isMissingValue(value) {
   return value === null || value === undefined || String(value).trim() === "";
-}
-
-function uniqueValues(values) {
-  return Array.from(
-    new Set(
-      values
-        .filter((value) => !isMissingValue(value))
-        .map((value) => String(value).trim())
-    )
-  ).sort((a, b) => a.localeCompare(b));
 }
 
 function formatDate(value) {
@@ -72,13 +61,11 @@ function normalizeSearch(value) {
   return String(value || "").trim().toLowerCase();
 }
 
-function matchesQuery(value, query) {
-  const normalizedQuery = normalizeSearch(query);
-
-  return !normalizedQuery || normalizeSearch(value).includes(normalizedQuery);
-}
-
 function getSortValue(marketingList, key) {
+  if (!key) {
+    return "";
+  }
+
   if (key === "member_count") {
     return Number(marketingList.member_count || 0);
   }
@@ -91,6 +78,10 @@ function getSortValue(marketingList, key) {
 }
 
 function sortMarketingLists(marketingLists, sortConfig) {
+  if (!sortConfig.key) {
+    return marketingLists;
+  }
+
   return [...marketingLists].sort((firstList, secondList) => {
     const firstValue = getSortValue(firstList, sortConfig.key);
     const secondValue = getSortValue(secondList, sortConfig.key);
@@ -108,12 +99,20 @@ function sortMarketingLists(marketingLists, sortConfig) {
   });
 }
 
-function getNextSortDirection(currentSort, columnKey) {
-  if (currentSort.key !== columnKey) {
-    return "asc";
+function getColumnFilterValue(marketingList, columnKey) {
+  if (columnKey === "createdon") {
+    return formatDate(marketingList.createdon);
   }
 
-  return currentSort.direction === "asc" ? "desc" : "asc";
+  if (columnKey === "member_count") {
+    return marketingList.member_count ?? "";
+  }
+
+  return marketingList[columnKey];
+}
+
+function getFormattedDynamicsValue(record, fieldName) {
+  return record?.[`${fieldName}@OData.Community.Display.V1.FormattedValue`] || record?.[fieldName];
 }
 
 export default function MarketingLists() {
@@ -121,65 +120,101 @@ export default function MarketingLists() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [sortConfig, setSortConfig] = useState({ key: "createdon", direction: "desc" });
-  const [clientFilter, setClientFilter] = useState("all");
-  const [campaignFilter, setCampaignFilter] = useState("all");
-  const [createdByFilter, setCreatedByFilter] = useState("all");
-  const [memberTypeFilter, setMemberTypeFilter] = useState("all");
-  const [createdDateQuery, setCreatedDateQuery] = useState("");
-  const [nameQuery, setNameQuery] = useState("");
+  const [columnFilters, setColumnFilters] = useState(() => ({}));
+  const [columnMenu, setColumnMenu] = useState({ anchorEl: null, columnKey: "" });
   const [activeMarketingList, setActiveMarketingList] = useState(null);
   const [listMembers, setListMembers] = useState({ accounts: [], contacts: [] });
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
   const [memberError, setMemberError] = useState("");
-
-  const clients = useMemo(() => uniqueValues(marketingLists.map((list) => list.client_name)), [marketingLists]);
-  const campaigns = useMemo(() => uniqueValues(marketingLists.map((list) => list.campaign)), [marketingLists]);
-  const creators = useMemo(() => uniqueValues(marketingLists.map((list) => list.created_by)), [marketingLists]);
-  const memberTypes = useMemo(() => uniqueValues(marketingLists.map((list) => list.list_member_type)), [marketingLists]);
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
 
   const filteredMarketingLists = useMemo(
-    () =>
-      marketingLists.filter((marketingList) => {
-        const matchesClient = clientFilter === "all" || marketingList.client_name === clientFilter;
-        const matchesCampaign = campaignFilter === "all" || marketingList.campaign === campaignFilter;
-        const matchesCreator = createdByFilter === "all" || marketingList.created_by === createdByFilter;
-        const matchesMemberType = memberTypeFilter === "all" || marketingList.list_member_type === memberTypeFilter;
-        const matchesDate = matchesQuery(formatDate(marketingList.createdon), createdDateQuery);
-        const matchesName = matchesQuery(marketingList.marketing_list_name, nameQuery);
+    () => {
+      const normalizedColumnFilters = Object.entries(columnFilters)
+        .map(([columnKey, filterValue]) => [columnKey, normalizeSearch(filterValue)])
+        .filter(([_columnKey, filterValue]) => filterValue);
 
-        return matchesClient && matchesCampaign && matchesCreator && matchesMemberType && matchesDate && matchesName;
-      }),
-    [campaignFilter, clientFilter, createdByFilter, createdDateQuery, marketingLists, memberTypeFilter, nameQuery]
+      return marketingLists.filter((marketingList) =>
+        normalizedColumnFilters.every(([columnKey, filterValue]) =>
+          normalizeSearch(getColumnFilterValue(marketingList, columnKey)).includes(filterValue)
+        )
+      );
+    },
+    [columnFilters, marketingLists]
   );
 
   const sortedMarketingLists = useMemo(
     () => sortMarketingLists(filteredMarketingLists, sortConfig),
     [filteredMarketingLists, sortConfig]
   );
+  const paginatedMarketingLists = useMemo(
+    () => sortedMarketingLists.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
+    [page, rowsPerPage, sortedMarketingLists]
+  );
 
   const activeFilterCount = [
-    clientFilter !== "all",
-    campaignFilter !== "all",
-    createdByFilter !== "all",
-    memberTypeFilter !== "all",
-    Boolean(createdDateQuery.trim()),
-    Boolean(nameQuery.trim()),
+    ...Object.values(columnFilters).map((filterValue) => Boolean(String(filterValue || "").trim())),
   ].filter(Boolean).length;
-
-  function updateSort(columnKey) {
-    setSortConfig((currentSort) => ({
-      key: columnKey,
-      direction: getNextSortDirection(currentSort, columnKey),
-    }));
-  }
+  const activeColumnMenu = columns.find((column) => column.key === columnMenu.columnKey);
 
   function resetFilters() {
-    setClientFilter("all");
-    setCampaignFilter("all");
-    setCreatedByFilter("all");
-    setMemberTypeFilter("all");
-    setCreatedDateQuery("");
-    setNameQuery("");
+    setColumnFilters({});
+    setPage(0);
+  }
+
+  function updateColumnFilter(columnKey, value) {
+    setPage(0);
+    setColumnFilters((currentFilters) => {
+      const nextFilters = { ...currentFilters };
+
+      if (value.trim()) {
+        nextFilters[columnKey] = value;
+      } else {
+        delete nextFilters[columnKey];
+      }
+
+      return nextFilters;
+    });
+  }
+
+  function openColumnMenu(event, columnKey) {
+    setColumnMenu({ anchorEl: event.currentTarget, columnKey });
+  }
+
+  function closeColumnMenu() {
+    setColumnMenu({ anchorEl: null, columnKey: "" });
+  }
+
+  function handleSort(columnKey, direction) {
+    setPage(0);
+    setSortConfig((currentSort) => {
+      if (currentSort.key === columnKey && currentSort.direction === direction) {
+        return currentSort;
+      }
+
+      return { key: columnKey, direction };
+    });
+  }
+
+  function clearSort(columnKey) {
+    setPage(0);
+    setSortConfig((currentSort) => {
+      if (currentSort.key !== columnKey) {
+        return currentSort;
+      }
+
+      return { key: "", direction: "asc" };
+    });
+  }
+
+  function handleChangePage(_event, nextPage) {
+    setPage(nextPage);
+  }
+
+  function handleChangeRowsPerPage(event) {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
   }
 
   async function openMemberModal(marketingList) {
@@ -210,6 +245,14 @@ export default function MarketingLists() {
     setListMembers({ accounts: [], contacts: [] });
     setMemberError("");
   }
+
+  useEffect(() => {
+    const lastPage = Math.max(0, Math.ceil(filteredMarketingLists.length / rowsPerPage) - 1);
+
+    if (page > lastPage) {
+      setPage(lastPage);
+    }
+  }, [filteredMarketingLists.length, page, rowsPerPage]);
 
   useEffect(() => {
     let isMounted = true;
@@ -287,85 +330,23 @@ export default function MarketingLists() {
             Marketing Lists
           </Typography>
           <Typography color="text.secondary" variant="body2">
-            Showing {sortedMarketingLists.length} of {marketingLists.length} marketing lists.
+            Showing {paginatedMarketingLists.length} of {filteredMarketingLists.length} filtered marketing lists.
           </Typography>
         </Box>
-        <Chip label={`${marketingLists.length} total`} sx={{ fontWeight: 800 }} />
+        <Stack alignItems="center" direction="row" spacing={1}>
+          {activeFilterCount ? (
+            <Button
+              onClick={resetFilters}
+              size="small"
+              sx={{ borderRadius: 1, fontWeight: 800, whiteSpace: "nowrap" }}
+              variant="outlined"
+            >
+              Reset Filters
+            </Button>
+          ) : null}
+          <Chip label={`${marketingLists.length} total`} sx={{ fontWeight: 800 }} />
+        </Stack>
       </Box>
-
-      <Stack
-        direction={{ xs: "column", lg: "row" }}
-        spacing={2}
-        sx={{
-          alignItems: { xs: "stretch", lg: "center" },
-          borderBottom: "1px solid rgba(0, 51, 108, 0.10)",
-          flexWrap: { lg: "wrap" },
-          px: { xs: 2, md: 3 },
-          py: 2,
-          rowGap: 2,
-        }}
-        useFlexGap
-      >
-        <FormControl size="small" sx={{ flex: { lg: "0 1 190px" }, maxWidth: { lg: 190 }, minWidth: { lg: 0 } }}>
-          <InputLabel id="marketing-client-filter-label">Client Name</InputLabel>
-          <Select label="Client Name" labelId="marketing-client-filter-label" onChange={(event) => setClientFilter(event.target.value)} value={clientFilter}>
-            <MenuItem value="all">All clients</MenuItem>
-            {clients.map((client) => (
-              <MenuItem key={client} value={client}>{client}</MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-        <FormControl size="small" sx={{ flex: { lg: "0 1 190px" }, maxWidth: { lg: 190 }, minWidth: { lg: 0 } }}>
-          <InputLabel id="marketing-campaign-filter-label">Campaign</InputLabel>
-          <Select label="Campaign" labelId="marketing-campaign-filter-label" onChange={(event) => setCampaignFilter(event.target.value)} value={campaignFilter}>
-            <MenuItem value="all">All campaigns</MenuItem>
-            {campaigns.map((campaign) => (
-              <MenuItem key={campaign} value={campaign}>{campaign}</MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-        <TextField
-          label="Date Created"
-          onChange={(event) => setCreatedDateQuery(event.target.value)}
-          size="small"
-          sx={{ flex: { lg: "0 1 150px" }, maxWidth: { lg: 150 }, minWidth: { lg: 0 } }}
-          value={createdDateQuery}
-        />
-        <TextField
-          label="Marketing List Name"
-          onChange={(event) => setNameQuery(event.target.value)}
-          size="small"
-          sx={{ flex: { lg: "0 1 220px" }, maxWidth: { lg: 220 }, minWidth: { lg: 0 } }}
-          value={nameQuery}
-        />
-        <FormControl size="small" sx={{ flex: { lg: "0 1 190px" }, maxWidth: { lg: 190 }, minWidth: { lg: 0 } }}>
-          <InputLabel id="marketing-created-by-filter-label">Created By</InputLabel>
-          <Select label="Created By" labelId="marketing-created-by-filter-label" onChange={(event) => setCreatedByFilter(event.target.value)} value={createdByFilter}>
-            <MenuItem value="all">All creators</MenuItem>
-            {creators.map((creator) => (
-              <MenuItem key={creator} value={creator}>{creator}</MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-        <FormControl size="small" sx={{ flex: { lg: "0 1 190px" }, maxWidth: { lg: 190 }, minWidth: { lg: 0 } }}>
-          <InputLabel id="marketing-member-type-filter-label">List Type</InputLabel>
-          <Select label="List Type" labelId="marketing-member-type-filter-label" onChange={(event) => setMemberTypeFilter(event.target.value)} value={memberTypeFilter}>
-            <MenuItem value="all">All list types</MenuItem>
-            {memberTypes.map((memberType) => (
-              <MenuItem key={memberType} value={memberType}>{memberType}</MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-        <Button
-          disabled={!activeFilterCount}
-          onClick={resetFilters}
-          size="small"
-          sx={{ borderRadius: 1, flex: { lg: "0 0 auto" }, fontWeight: 800, minHeight: 40, whiteSpace: "nowrap" }}
-          variant="outlined"
-        >
-          Reset Filters
-        </Button>
-      </Stack>
 
       <TableContainer sx={{ overflowX: "auto" }}>
         <Table size="small" sx={{ minWidth: 1350, tableLayout: "fixed" }}>
@@ -382,25 +363,69 @@ export default function MarketingLists() {
                     width: column.width,
                   }}
                 >
-                  <TableSortLabel
-                    active={sortConfig.key === column.key}
-                    direction={sortConfig.key === column.key ? sortConfig.direction : "asc"}
-                    onClick={() => updateSort(column.key)}
-                    sx={{
-                      color: "common.white",
-                      "&.Mui-active": { color: "common.white" },
-                      "& .MuiTableSortLabel-icon": { color: "common.white !important" },
-                    }}
-                  >
-                    {column.label}
-                  </TableSortLabel>
+                  <Box sx={{ alignItems: "center", display: "flex", gap: 1, justifyContent: "space-between" }}>
+                    <Typography
+                      component="span"
+                      sx={{
+                        color: "common.white",
+                        fontSize: "0.875rem",
+                        fontWeight: 800,
+                        lineHeight: 1.15,
+                        minWidth: 0,
+                        overflow: "visible",
+                        textOverflow: "clip",
+                        whiteSpace: "normal",
+                        wordBreak: "normal",
+                      }}
+                    >
+                      {column.label}
+                    </Typography>
+                    <Button
+                      aria-label={`${column.label} filter and sort options`}
+                      onClick={(event) => openColumnMenu(event, column.key)}
+                      size="small"
+                      sx={{
+                        borderColor: columnFilters[column.key] ? "common.white" : "rgba(255, 255, 255, 0.55)",
+                        color: "common.white",
+                        flex: "0 0 auto",
+                        fontSize: "0.7rem",
+                        lineHeight: 1,
+                        minWidth: 28,
+                        px: 0.5,
+                        py: 0.25,
+                      }}
+                      variant="outlined"
+                    >
+                      <Box
+                        aria-hidden="true"
+                        sx={{
+                          borderLeft: "6px solid transparent",
+                          borderRight: "6px solid transparent",
+                          borderTop: "8px solid currentColor",
+                          height: 0,
+                          position: "relative",
+                          width: 0,
+                          "&::after": {
+                            backgroundColor: "currentColor",
+                            borderRadius: 999,
+                            content: '""',
+                            height: 5,
+                            left: -1,
+                            position: "absolute",
+                            top: -1,
+                            width: 2,
+                          },
+                        }}
+                      />
+                    </Button>
+                  </Box>
                 </TableCell>
               ))}
             </TableRow>
           </TableHead>
           <TableBody>
-            {sortedMarketingLists.length ? (
-              sortedMarketingLists.map((marketingList) => (
+            {paginatedMarketingLists.length ? (
+              paginatedMarketingLists.map((marketingList) => (
                 <TableRow hover key={marketingList.listid || marketingList.marketing_list_name}>
                   <TableCell>{marketingList.client_name || "Missing"}</TableCell>
                   <TableCell>{marketingList.campaign || "Missing"}</TableCell>
@@ -440,6 +465,69 @@ export default function MarketingLists() {
           </TableBody>
         </Table>
       </TableContainer>
+      <TablePagination
+        component="div"
+        count={filteredMarketingLists.length}
+        onPageChange={handleChangePage}
+        onRowsPerPageChange={handleChangeRowsPerPage}
+        page={page}
+        rowsPerPage={rowsPerPage}
+        rowsPerPageOptions={[25, 50, 100]}
+      />
+      <Menu
+        anchorEl={columnMenu.anchorEl}
+        onClose={closeColumnMenu}
+        open={Boolean(columnMenu.anchorEl)}
+      >
+        <Box sx={{ p: 1.5, width: 240 }}>
+          <Typography color="text.secondary" sx={{ mb: 1 }} variant="overline">
+            {activeColumnMenu?.label || "Column"} Options
+          </Typography>
+          <TextField
+            autoFocus
+            fullWidth
+            inputProps={{ "aria-label": `Filter ${activeColumnMenu?.label || "column"}` }}
+            label="Filter"
+            onChange={(event) => updateColumnFilter(columnMenu.columnKey, event.target.value)}
+            size="small"
+            value={columnFilters[columnMenu.columnKey] || ""}
+          />
+        </Box>
+        <MenuItem
+          onClick={() => {
+            handleSort(columnMenu.columnKey, "asc");
+            closeColumnMenu();
+          }}
+        >
+          Sort ascending
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            handleSort(columnMenu.columnKey, "desc");
+            closeColumnMenu();
+          }}
+        >
+          Sort descending
+        </MenuItem>
+        <MenuItem
+          disabled={sortConfig.key !== columnMenu.columnKey}
+          onClick={() => {
+            clearSort(columnMenu.columnKey);
+            closeColumnMenu();
+          }}
+        >
+          Clear sort
+        </MenuItem>
+        <MenuItem
+          disabled={!columnFilters[columnMenu.columnKey]}
+          onClick={() => {
+            updateColumnFilter(columnMenu.columnKey, "");
+            closeColumnMenu();
+          }}
+        >
+          Clear filter
+        </MenuItem>
+      </Menu>
 
       <Dialog fullWidth maxWidth="lg" onClose={closeMemberModal} open={Boolean(activeMarketingList)}>
         <DialogTitle sx={{ fontWeight: 800 }}>
@@ -466,8 +554,8 @@ export default function MarketingLists() {
                       <TableHead>
                         <TableRow>
                           <TableCell sx={{ fontWeight: 800 }}>Account Name</TableCell>
+                          <TableCell sx={{ fontWeight: 800 }}>Sector</TableCell>
                           <TableCell sx={{ fontWeight: 800 }}>Website</TableCell>
-                          <TableCell sx={{ fontWeight: 800 }}>Email</TableCell>
                           <TableCell sx={{ fontWeight: 800 }}>Phone</TableCell>
                         </TableRow>
                       </TableHead>
@@ -475,8 +563,8 @@ export default function MarketingLists() {
                         {listMembers.accounts.map((account) => (
                           <TableRow key={account.accountid || account.name}>
                             <TableCell>{account.name || "Missing"}</TableCell>
+                            <TableCell>{getFormattedDynamicsValue(account, "new_sector") || "Missing"}</TableCell>
                             <TableCell sx={{ overflowWrap: "anywhere" }}>{account.websiteurl || "Missing"}</TableCell>
-                            <TableCell sx={{ overflowWrap: "anywhere" }}>{account.emailaddress1 || "Missing"}</TableCell>
                             <TableCell>{account.telephone1 || "Missing"}</TableCell>
                           </TableRow>
                         ))}
@@ -500,7 +588,6 @@ export default function MarketingLists() {
                         <TableRow>
                           <TableCell sx={{ fontWeight: 800 }}>Contact Name</TableCell>
                           <TableCell sx={{ fontWeight: 800 }}>Job Title</TableCell>
-                          <TableCell sx={{ fontWeight: 800 }}>Email</TableCell>
                           <TableCell sx={{ fontWeight: 800 }}>Phone</TableCell>
                         </TableRow>
                       </TableHead>
@@ -509,7 +596,6 @@ export default function MarketingLists() {
                           <TableRow key={contact.contactid || contact.fullname}>
                             <TableCell>{contact.fullname || "Missing"}</TableCell>
                             <TableCell>{contact.jobtitle || "Missing"}</TableCell>
-                            <TableCell sx={{ overflowWrap: "anywhere" }}>{contact.emailaddress1 || "Missing"}</TableCell>
                             <TableCell>{contact.telephone1 || "Missing"}</TableCell>
                           </TableRow>
                         ))}

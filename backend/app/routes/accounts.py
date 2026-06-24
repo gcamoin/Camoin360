@@ -14,6 +14,7 @@ from ..services.dynamics import (
     delete_account,
     get_marketing_lists,
     get_marketing_list_members,
+    get_leadfeeder_visits,
     enrich_single_account_test,
     enrich_account,
     enrich_accounts,
@@ -106,6 +107,44 @@ async def fetch_duplicate_account_records_alias(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Unable to load Dynamics duplicate account records: {exc}",
+        ) from exc
+
+
+async def get_leadfeeder_visits_response(limit: int):
+    visits = await get_leadfeeder_visits(limit)
+
+    return {
+        "count": len(visits),
+        "limit": limit,
+        "data": visits,
+    }
+
+
+@router.get("/leadfeeder-visits")
+async def fetch_leadfeeder_visits(
+    limit: int = Query(default=200, ge=1, le=1000),
+    _user=Depends(require_user),
+):
+    try:
+        return await get_leadfeeder_visits_response(limit)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to load Leadfeeder visits: {exc}",
+        ) from exc
+
+
+@router.get("/accounts/leadfeeder-visits")
+async def fetch_account_leadfeeder_visits_alias(
+    limit: int = Query(default=200, ge=1, le=1000),
+    _user=Depends(require_user),
+):
+    try:
+        return await get_leadfeeder_visits_response(limit)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to load Leadfeeder visits: {exc}",
         ) from exc
 
 

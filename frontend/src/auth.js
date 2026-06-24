@@ -7,7 +7,9 @@ function getDefaultApiBaseUrl() {
 
 export const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || getDefaultApiBaseUrl();
 const AUTH_STORAGE_KEY = "sophie:authToken";
+const DASHBOARD_STORAGE_KEY = "sophie:dashboardView";
 const UNAUTHORIZED_EVENT = "sophie:auth-unauthorized";
+const DASHBOARD_VIEWS = new Set(["main", "management", "prospecting"]);
 
 function decodeTokenPayload(token) {
   try {
@@ -47,6 +49,17 @@ export function saveAuthToken(token) {
 
 export function clearAuthToken() {
   window.localStorage.removeItem(AUTH_STORAGE_KEY);
+}
+
+export function getPreferredDashboardView() {
+  const dashboardView = window.localStorage.getItem(DASHBOARD_STORAGE_KEY);
+  return DASHBOARD_VIEWS.has(dashboardView) ? dashboardView : "main";
+}
+
+export function savePreferredDashboardView(dashboardView) {
+  if (DASHBOARD_VIEWS.has(dashboardView)) {
+    window.localStorage.setItem(DASHBOARD_STORAGE_KEY, dashboardView);
+  }
 }
 
 export function getAuthHeaders() {

@@ -1,37 +1,41 @@
 import { useEffect, useState } from "react";
-import { clearAuthToken, getAuthToken, loginUser, onUnauthorized, signupUser } from "./auth";
+import {
+  clearAuthToken,
+  getAuthToken,
+  getPreferredDashboardView,
+  loginUser,
+  onUnauthorized,
+  savePreferredDashboardView,
+  signupUser,
+} from "./auth";
 import LandingPage from "./landingPage";
 import Login from "./login";
 import ManagementDashboard from "./managementDashboard";
+import ProspectingDashboard from "./prospectingDashboard";
 import SignUp from "./signup";
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(() => Boolean(getAuthToken()));
   const [authView, setAuthView] = useState("login");
-  const [dashboardView, setDashboardView] = useState("main");
+  const [dashboardView, setDashboardView] = useState(getPreferredDashboardView);
 
   useEffect(() => {
     return onUnauthorized(() => {
       setIsLoggedIn(false);
       setAuthView("login");
-      setDashboardView("main");
     });
   }, []);
 
-  async function handleLogin(credentials) {
+  async function handleLogin(credentials, nextDashboardView) {
     await loginUser(credentials);
-    setDashboardView("main");
-    setIsLoggedIn(true);
-  }
-
-  async function handleManagementLogin(credentials) {
-    await loginUser(credentials);
-    setDashboardView("management");
+    savePreferredDashboardView(nextDashboardView);
+    setDashboardView(nextDashboardView);
     setIsLoggedIn(true);
   }
 
   async function handleSignup(credentials) {
     await signupUser(credentials);
+    savePreferredDashboardView("main");
     setDashboardView("main");
     setIsLoggedIn(true);
   }
@@ -40,12 +44,15 @@ export default function App() {
     clearAuthToken();
     setIsLoggedIn(false);
     setAuthView("login");
-    setDashboardView("main");
   }
 
   if (isLoggedIn) {
     if (dashboardView === "management") {
       return <ManagementDashboard onLogout={handleLogout} />;
+    }
+
+    if (dashboardView === "prospecting") {
+      return <ProspectingDashboard onLogout={handleLogout} />;
     }
 
     return <LandingPage onLogout={handleLogout} />;
@@ -63,7 +70,6 @@ export default function App() {
   return (
     <Login
       onLogin={handleLogin}
-      onManagementLogin={handleManagementLogin}
       onShowSignup={() => setAuthView("signup")}
     />
   );
