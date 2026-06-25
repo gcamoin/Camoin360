@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import axios from "axios";
 import {
   Alert,
   Box,
@@ -10,7 +9,6 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
-  DialogTitle,
   Divider,
   FormControl,
   InputLabel,
@@ -33,6 +31,12 @@ import {
 } from "@mui/material";
 
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
+import { getCached } from "../apiClient";
+import {
+  EmptyState as ProfessionalEmptyState,
+  ModalTitle,
+  subtleTableHeadCellSx,
+} from "./UiPrimitives";
 
 const API_URL = `${API_BASE_URL}/leadfeeder-visits`;
 const DEFAULT_ROWS_PER_PAGE = 25;
@@ -478,16 +482,15 @@ function sortRows(rows, sortConfig) {
 
 function EmptyState({ hasActiveFilters = false }) {
   return (
-    <Box sx={{ px: { xs: 2, md: 3 }, py: 7, textAlign: "center" }}>
-      <Typography color="text.secondary" sx={{ fontWeight: 600 }} variant="h6">
-        {hasActiveFilters ? "No matching Leadfeeder visits" : "No Leadfeeder visits found"}
-      </Typography>
-      <Typography color="text.secondary" sx={{ mt: 1 }}>
-        {hasActiveFilters
+    <ProfessionalEmptyState
+      description={
+        hasActiveFilters
           ? "Adjust or clear the filters to broaden the result set."
-          : "Once Leadfeeder visit records are available in Dynamics, they will appear here automatically."}
-      </Typography>
-    </Box>
+          : "Visit records will appear automatically after they are available from Dynamics."
+      }
+      icon={hasActiveFilters ? "search" : "database"}
+      title={hasActiveFilters ? "No matching Leadfeeder visits" : "No Leadfeeder visits found"}
+    />
   );
 }
 
@@ -559,7 +562,10 @@ export default function LeadfeederVisits() {
       setError("");
 
       try {
-        const response = await axios.get(API_URL, { headers: getAuthHeaders() });
+        const response = await getCached(API_URL, {
+          headers: getAuthHeaders(),
+          ttl: 3 * 60 * 1000,
+        });
 
         if (isMounted) {
           setVisits(response.data?.data || []);
@@ -1067,8 +1073,7 @@ export default function LeadfeederVisits() {
                   <TableCell
                     padding="none"
                     sx={{
-                      backgroundColor: "primary.main",
-                      color: "common.white",
+                      ...subtleTableHeadCellSx,
                       minWidth: selectionColumnWidth,
                       px: 0,
                       py: 1,
@@ -1081,10 +1086,7 @@ export default function LeadfeederVisits() {
                     <TableCell
                       key={column.key}
                       sx={{
-                        backgroundColor: "primary.main",
-                        color: "common.white",
-                        fontWeight: 800,
-                        py: 1.25,
+                        ...subtleTableHeadCellSx,
                         top: 0,
                         width: column.width,
                         zIndex: 3,
@@ -1097,7 +1099,7 @@ export default function LeadfeederVisits() {
                           <Typography
                             component="span"
                             sx={{
-                              color: "common.white",
+                              color: "inherit",
                               fontSize: "0.875rem",
                               fontWeight: 800,
                               lineHeight: 1.15,
@@ -1112,9 +1114,9 @@ export default function LeadfeederVisits() {
                             sx={{
                               borderColor:
                                 columnHasActiveFilter(column.key) || sortConfig.key === column.key
-                                  ? "common.white"
-                                  : "rgba(255, 255, 255, 0.55)",
-                              color: "common.white",
+                                  ? "primary.main"
+                                  : "rgba(18, 59, 100, 0.26)",
+                              color: "primary.main",
                               flex: "0 0 auto",
                               minWidth: 28,
                               px: 0.5,
@@ -1555,14 +1557,12 @@ export default function LeadfeederVisits() {
       >
         {selectedCompany ? (
           <>
-            <DialogTitle>
-              <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="h6">
-                {selectedCompany.company_name || "Missing Company Name"}
-              </Typography>
-              <Typography color="text.secondary" variant="body2">
-                Leadfeeder visitor details and review context.
-              </Typography>
-            </DialogTitle>
+            <ModalTitle
+              onClose={() => setIsDetailOpen(false)}
+              subtitle="Leadfeeder visitor details and review context."
+            >
+              {selectedCompany.company_name || "Missing Company Name"}
+            </ModalTitle>
             <DialogContent dividers>
               <Stack spacing={3}>
                 <Box

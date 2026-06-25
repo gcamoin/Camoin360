@@ -5,6 +5,7 @@ import {
   Container,
   Divider,
   IconButton,
+  Paper,
   SvgIcon,
   Stack,
   Tooltip,
@@ -12,6 +13,7 @@ import {
   useTheme,
 } from "@mui/material";
 import EconomicIndicators from "./components/EconomicIndicators";
+import { EmptyState } from "./components/UiPrimitives";
 
 const views = {
   overview: {
@@ -75,7 +77,7 @@ export default function ManagementDashboard({ onLogout }) {
     <Box
       sx={{
         minHeight: "100vh",
-        background: `radial-gradient(circle at top left, ${theme.palette.secondary.main}22, transparent 32%), linear-gradient(180deg, #f8fbf5 0%, #edf3e3 100%)`,
+        background: `radial-gradient(circle at top left, ${theme.palette.secondary.main}12, transparent 30%), ${theme.palette.background.default}`,
       }}
     >
       <Box
@@ -83,7 +85,7 @@ export default function ManagementDashboard({ onLogout }) {
           display: "grid",
           gridTemplateColumns: {
             xs: "1fr",
-            md: sidebarCollapsed ? "88px minmax(0, 1fr)" : "260px minmax(0, 1fr)",
+            md: sidebarCollapsed ? "88px minmax(0, 1fr)" : "272px minmax(0, 1fr)",
           },
           minHeight: "100vh",
           transition: "grid-template-columns 180ms ease",
@@ -98,13 +100,13 @@ export default function ManagementDashboard({ onLogout }) {
             height: { md: "100vh" },
             overflow: { md: "hidden" },
             p: { xs: 2, md: 3 },
-            position: { md: "sticky" },
+            position: { xs: "relative", md: "sticky" },
             top: { md: 0 },
             transition: "padding 180ms ease",
           }}
         >
           <Stack
-            spacing={3}
+            spacing={{ xs: 1.5, md: 3 }}
             sx={{
               height: { md: "100%" },
               minHeight: 0,
@@ -150,6 +152,7 @@ export default function ManagementDashboard({ onLogout }) {
                   color: "common.white",
                   height: 36,
                   width: 36,
+                  display: { xs: "none", md: "inline-flex" },
                   "&:hover": {
                     borderColor: "common.white",
                     backgroundColor: "rgba(255,255,255,0.10)",
@@ -165,11 +168,14 @@ export default function ManagementDashboard({ onLogout }) {
 
             <Stack
               component="nav"
+              direction={{ xs: "row", md: "column" }}
               spacing={1}
               sx={{
                 flex: { md: 1 },
                 minHeight: 0,
+                overflowX: { xs: "auto", md: "visible" },
                 overflowY: { md: "auto" },
+                pb: { xs: 0.5, md: 0 },
               }}
             >
               {Object.entries(views).map(([viewKey, view]) => {
@@ -190,6 +196,8 @@ export default function ManagementDashboard({ onLogout }) {
                         minWidth: 0,
                         px: sidebarCollapsed ? 1 : 2,
                         py: 1.25,
+                        whiteSpace: "nowrap",
+                        width: { xs: "auto", md: "100%" },
                         "& .MuiButton-startIcon": {
                           m: sidebarCollapsed ? 0 : undefined,
                         },
@@ -220,8 +228,14 @@ export default function ManagementDashboard({ onLogout }) {
                 justifyContent: sidebarCollapsed ? "center" : "flex-start",
                 minWidth: 0,
                 px: sidebarCollapsed ? 1 : 2,
+                alignSelf: { xs: "flex-start", md: "stretch" },
+                fontSize: { xs: 0, md: "0.875rem" },
+                position: { xs: "absolute", md: "static" },
+                right: { xs: 16, md: "auto" },
+                top: { xs: 16, md: "auto" },
+                width: { xs: 40, md: "100%" },
                 "& .MuiButton-startIcon": {
-                  m: sidebarCollapsed ? 0 : undefined,
+                  m: { xs: 0, md: sidebarCollapsed ? 0 : undefined },
                 },
                 "&:hover": {
                   borderColor: "common.white",
@@ -236,7 +250,7 @@ export default function ManagementDashboard({ onLogout }) {
           </Stack>
         </Box>
 
-        <Box component="main" sx={{ py: { xs: 3, md: 6 } }}>
+        <Box component="main" sx={{ py: { xs: 3, md: 5 } }}>
           <Container maxWidth="lg">
             <Stack spacing={3}>
               <Box>
@@ -244,8 +258,8 @@ export default function ManagementDashboard({ onLogout }) {
                   component="h2"
                   sx={{
                     color: "primary.main",
-                    fontSize: { xs: "2rem", md: "2.65rem" },
-                    fontWeight: 800,
+                    fontSize: { xs: "2rem", md: "2.35rem" },
+                    fontWeight: 750,
                     lineHeight: 1.1,
                     mb: 1,
                   }}
@@ -264,6 +278,25 @@ export default function ManagementDashboard({ onLogout }) {
               </Box>
 
               {activeView === "economicIndicators" && <EconomicIndicators />}
+              {activeView !== "economicIndicators" && (
+                <Paper
+                  elevation={0}
+                  sx={{
+                    border: "1px solid",
+                    borderColor: "divider",
+                    borderRadius: 2,
+                    overflow: "hidden",
+                  }}
+                >
+                  <EmptyState
+                    actionLabel="Refresh"
+                    description={`${currentView.title} data will appear here after its reporting source is connected.`}
+                    icon="database"
+                    onAction={() => window.location.reload()}
+                    title={`${currentView.title} is not available yet`}
+                  />
+                </Paper>
+              )}
             </Stack>
           </Container>
         </Box>

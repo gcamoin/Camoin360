@@ -1,4 +1,5 @@
 import axios from "axios";
+import { clearApiCache } from "./apiClient";
 
 function getDefaultApiBaseUrl() {
   const hostname = window.location.hostname || "127.0.0.1";
@@ -49,6 +50,7 @@ export function saveAuthToken(token) {
 
 export function clearAuthToken() {
   window.localStorage.removeItem(AUTH_STORAGE_KEY);
+  clearApiCache();
 }
 
 export function getPreferredDashboardView() {
@@ -88,6 +90,10 @@ export function onUnauthorized(callback) {
 }
 
 export function getApiErrorMessage(error, fallbackMessage) {
+  if (error.code === "ECONNABORTED") {
+    return "The request is taking longer than expected. Try again; cached data may be available shortly.";
+  }
+
   if (!error.response) {
     return `Cannot reach the backend at ${API_BASE_URL}. Make sure the FastAPI server is running.`;
   }

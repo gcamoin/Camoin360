@@ -16,15 +16,16 @@ load_dotenv(REPO_ROOT / ".env")
 load_dotenv(BACKEND_ROOT / ".env")
 
 API_URL = os.getenv("DYNAMICS_API_URL")
-DATA_QUALITY_CACHE_TTL_SECONDS = 120
-DATA_QUALITY_ACCOUNT_LIMIT = 30000
+DATA_QUALITY_CACHE_TTL_SECONDS = 300
+DATA_QUALITY_ACCOUNT_LIMIT = int(os.getenv("DATA_QUALITY_ACCOUNT_LIMIT", "5000"))
 SUMMARY_CACHE_TTL_SECONDS = 600
 DATA_QUALITY_REQUEST_TIMEOUT_SECONDS = 60
 DUPLICATE_ACCOUNT_DEFAULT_LIMIT = 1000
 DUPLICATE_ACCOUNT_MAX_LIMIT = 1000
-MARKETING_LIST_DEFAULT_LIMIT = 5000
+MARKETING_LIST_DEFAULT_LIMIT = int(os.getenv("MARKETING_LIST_DEFAULT_LIMIT", "500"))
 MARKETING_LIST_REQUEST_TIMEOUT_SECONDS = 60
 MARKETING_LIST_CLIENT_ACCOUNT_SCAN_LIMIT = 25
+MARKETING_LIST_CLIENT_ENRICHMENT_LIMIT = int(os.getenv("MARKETING_LIST_CLIENT_ENRICHMENT_LIMIT", "50"))
 LEADFEEDER_VISIT_DEFAULT_LIMIT = 200
 LEADFEEDER_VISIT_MAX_LIMIT = 1000
 LEADFEEDER_VISIT_REQUEST_TIMEOUT_SECONDS = 60
@@ -32,12 +33,13 @@ MARKETING_LIST_ACCOUNT_WEBSITE_VISIT_RELATIONSHIP_CANDIDATES = (
     "cr73c_lfapp_websitevisit",
 )
 WEBSITE_VISIT_CLIENT_RELATIONSHIP_CANDIDATES = ("new_Client",)
-_DATA_QUALITY_CACHE = {"expires_at": 0, "data": None}
+_DATA_QUALITY_CACHE = {"expires_at": 0, "data": None, "limit": 0}
 _SUMMARY_CACHE = {"expires_at": 0, "data": None}
 _MARKETING_LIST_CAMPAIGN_NAVIGATION_CACHE = {"loaded": False, "value": None}
 _ACCOUNT_WEBSITE_VISIT_NAVIGATION_CACHE = {"loaded": False, "value": None}
 _WEBSITE_VISIT_CLIENT_NAVIGATION_CACHE = {"loaded": False, "value": None}
 _WEBSITE_VISIT_ACCOUNT_NAVIGATION_CACHE = {"loaded": False, "value": None}
+_DATA_QUALITY_REFRESH_TASK = None
 
 STATE_ABBREVIATIONS = {
     "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
@@ -101,10 +103,15 @@ async def get_accounts_missing_data():
     return response.json().get("value", [])
 
 
-async def get_accounts_data_quality():
+async def get_accounts_data_quality(limit: int | None = None):
+    account_limit = max(1, min(limit or DATA_QUALITY_ACCOUNT_LIMIT, DATA_QUALITY_ACCOUNT_LIMIT))
     now = time.time()
-    if _DATA_QUALITY_CACHE["data"] is not None and _DATA_QUALITY_CACHE["expires_at"] > now:
-        return _DATA_QUALITY_CACHE["data"]
+    if (
+        _DATA_QUALITY_CACHE["data"] is not None
+        and _DATA_QUALITY_CACHE["expires_at"] > now
+        and _DATA_QUALITY_CACHE["limit"] >= account_limit
+    ):
+        return _DATA_QUALITY_CACHE["data"][:account_limit]
 
     token = await get_access_token()
 
@@ -112,7 +119,7 @@ async def get_accounts_data_quality():
         f"{API_URL}/accounts?"
         "$select=accountid,name,address1_stateorprovince,address1_country,address1_city,new_sector,new_subsector,new_naicstext,description,websiteurl,telephone1,new_datasource,new_employees&"
         "$orderby=name asc&"
-        f"$top={DATA_QUALITY_ACCOUNT_LIMIT}"
+        f"$top={account_limit}"
     )
 
     headers = {
@@ -129,7 +136,7 @@ async def get_accounts_data_quality():
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            while next_url and len(accounts) < DATA_QUALITY_ACCOUNT_LIMIT:
+            while next_url and len(accounts) < account_limit:
                 response = await client.get(next_url, headers=headers)
 
                 if response.status_code != 200:
@@ -143,11 +150,42 @@ async def get_accounts_data_quality():
             f"Dynamics request timed out after {DATA_QUALITY_REQUEST_TIMEOUT_SECONDS} seconds while loading data quality accounts"
         ) from exc
 
-    accounts = accounts[:DATA_QUALITY_ACCOUNT_LIMIT]
+    accounts = accounts[:account_limit]
     _DATA_QUALITY_CACHE["data"] = accounts
+    _DATA_QUALITY_CACHE["limit"] = account_limit
     _DATA_QUALITY_CACHE["expires_at"] = now + DATA_QUALITY_CACHE_TTL_SECONDS
 
     return accounts
+
+
+def get_cached_accounts_data_quality():
+    return _DATA_QUALITY_CACHE["data"] or []
+
+
+def invalidate_account_read_caches():
+    _DATA_QUALITY_CACHE["data"] = None
+    _DATA_QUALITY_CACHE["expires_at"] = 0
+    _DATA_QUALITY_CACHE["limit"] = 0
+    _SUMMARY_CACHE["data"] = None
+    _SUMMARY_CACHE["expires_at"] = 0
+
+
+def start_data_quality_refresh():
+    global _DATA_QUALITY_REFRESH_TASK
+
+    if _DATA_QUALITY_REFRESH_TASK and not _DATA_QUALITY_REFRESH_TASK.done():
+        return
+
+    async def refresh():
+        global _DATA_QUALITY_REFRESH_TASK
+        try:
+            await get_accounts_data_quality(1000)
+        except Exception:
+            return
+        finally:
+            _DATA_QUALITY_REFRESH_TASK = None
+
+    _DATA_QUALITY_REFRESH_TASK = asyncio.create_task(refresh())
 
 
 async def get_duplicate_account_records(limit: int = DUPLICATE_ACCOUNT_DEFAULT_LIMIT):
@@ -206,10 +244,7 @@ async def delete_account(account_id: str):
     if response.status_code not in [200, 204]:
         raise Exception(f"Dynamics DELETE error: {response.text}")
 
-    _DATA_QUALITY_CACHE["data"] = None
-    _DATA_QUALITY_CACHE["expires_at"] = 0
-    _SUMMARY_CACHE["data"] = None
-    _SUMMARY_CACHE["expires_at"] = 0
+    invalidate_account_read_caches()
 
     return {"status": "deleted", "account_id": account_id}
 
@@ -599,7 +634,21 @@ async def enrich_marketing_lists_with_client_names(
 
         return marketing_list
 
-    return await asyncio.gather(*(enrich_row(marketing_list) for marketing_list in marketing_lists))
+    enrichment_candidates = []
+    for marketing_list in marketing_lists:
+        if (
+            len(enrichment_candidates) < MARKETING_LIST_CLIENT_ENRICHMENT_LIMIT
+            and not marketing_list.get("client_name")
+            and marketing_list.get("listid")
+        ):
+            enrichment_candidates.append(marketing_list)
+
+    enriched_rows = await asyncio.gather(*(enrich_row(marketing_list) for marketing_list in enrichment_candidates))
+    enriched_by_id = {row.get("listid"): row for row in enriched_rows}
+    return [
+        enriched_by_id.get(marketing_list.get("listid"), marketing_list)
+        for marketing_list in marketing_lists
+    ]
 
 
 def is_missing_dynamics_property_error(response: httpx.Response):

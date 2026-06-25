@@ -11,7 +11,6 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
-  DialogTitle,
   LinearProgress,
   Paper,
   Snackbar,
@@ -41,6 +40,8 @@ import {
 } from "recharts";
 
 import { API_BASE_URL, getAuthHeaders, handleUnauthorized } from "../auth";
+import { getCached, invalidateApiCache } from "../apiClient";
+import { EmptyState, ModalTitle } from "./UiPrimitives";
 
 const API_URL = `${API_BASE_URL}/metrics`;
 const ENRICH_ALL_URL = `${API_BASE_URL}/accounts/enrich-all`;
@@ -233,18 +234,8 @@ function TrendChartCard({ children, subtitle, title }) {
 
 function EmptySection({ message, minHeight = 160 }) {
   return (
-    <Box
-      sx={{
-        alignItems: "center",
-        display: "flex",
-        justifyContent: "center",
-        minHeight,
-        px: 2,
-        py: 3,
-        textAlign: "center",
-      }}
-    >
-      <Typography color="text.secondary">{message}</Typography>
+    <Box sx={{ minHeight }}>
+      <EmptyState compact description={message} icon="database" title="No data available" />
     </Box>
   );
 }
@@ -300,13 +291,17 @@ export default function MetricsDashboard() {
     recentPage * recentRowsPerPage + recentRowsPerPage
   );
 
-  const loadMetrics = useCallback(async (showLoading = false) => {
+  const loadMetrics = useCallback(async (showLoading = false, force = false) => {
     if (showLoading) {
       setIsLoadingMetrics(true);
     }
 
     try {
-      const response = await axios.get(API_URL, { headers: getAuthHeaders() });
+      const response = await getCached(API_URL, {
+        force,
+        headers: getAuthHeaders(),
+        ttl: 30 * 1000,
+      });
       setMetrics(response.data);
       setHasLoadedMetrics(true);
       setLoadError("");
@@ -393,7 +388,8 @@ export default function MetricsDashboard() {
   }
 
   async function refreshMetrics() {
-    await loadMetrics();
+    invalidateApiCache(API_URL);
+    await loadMetrics(false, true);
   }
 
   async function runEnrichment() {
@@ -437,14 +433,14 @@ export default function MetricsDashboard() {
   useEffect(() => {
     let isMounted = true;
 
-    const fetchMetrics = async (showLoading = false) => {
-      if (isMounted) {
-        await loadMetrics(showLoading);
+    const fetchMetrics = async (showLoading = false, force = false) => {
+      if (isMounted && document.visibilityState === "visible") {
+        await loadMetrics(showLoading, force);
       }
     };
 
     fetchMetrics(true);
-    const intervalId = setInterval(() => fetchMetrics(false), 10000);
+    const intervalId = setInterval(() => fetchMetrics(false, true), 60000);
 
     return () => {
       isMounted = false;
@@ -501,7 +497,7 @@ export default function MetricsDashboard() {
         <Stack spacing={2}>
           <Alert severity="error">{loadError}</Alert>
           <Button
-            onClick={() => loadMetrics(true)}
+            onClick={() => loadMetrics(true, true)}
             sx={{ alignSelf: "flex-start", borderRadius: 1, fontWeight: 800 }}
             variant="contained"
           >
@@ -517,7 +513,7 @@ export default function MetricsDashboard() {
       {loadError ? (
         <Alert
           action={
-            <Button color="inherit" onClick={() => loadMetrics()} size="small">
+            <Button color="inherit" onClick={() => loadMetrics(false, true)} size="small">
               Retry
             </Button>
           }
@@ -1429,9 +1425,12 @@ export default function MetricsDashboard() {
         onClose={() => setSelectedPipelineCategory(null)}
         open={Boolean(selectedPipelineCategory)}
       >
-        <DialogTitle sx={{ fontWeight: 800 }}>
+        <ModalTitle
+          onClose={() => setSelectedPipelineCategory(null)}
+          subtitle="Accounts included in this readiness category."
+        >
           {selectedPipelineCategory?.category || "Pipeline Records"}
-        </DialogTitle>
+        </ModalTitle>
         <DialogContent dividers>
           <TableContainer sx={{ overflowX: "auto" }}>
             <Table size="small" sx={{ minWidth: 720 }}>

@@ -10,6 +10,7 @@ import {
   TableRow,
   Typography,
 } from "@mui/material";
+import { EmptyState, subtleTableHeadCellSx } from "./UiPrimitives";
 
 const columns = [
   { key: "client_name", label: "Client Name", width: 280 },
@@ -61,10 +62,7 @@ export default function PEClients() {
                 <TableCell
                   key={column.key}
                   sx={{
-                    backgroundColor: "primary.main",
-                    color: "common.white",
-                    fontWeight: 800,
-                    py: 1.25,
+                    ...subtleTableHeadCellSx,
                     width: column.width,
                   }}
                 >
@@ -75,13 +73,14 @@ export default function PEClients() {
           </TableHead>
           <TableBody>
             <TableRow>
-              <TableCell colSpan={columns.length} sx={{ px: 3, py: 7, textAlign: "center" }}>
-                <Typography color="text.secondary" sx={{ fontWeight: 700 }}>
-                  No PE clients available yet.
-                </Typography>
-                <Typography color="text.secondary" sx={{ mt: 0.5 }} variant="body2">
-                  Client records will appear here when a data source is connected.
-                </Typography>
+              <TableCell colSpan={columns.length} sx={{ p: 0 }}>
+                <EmptyState
+                  actionLabel="Refresh"
+                  description="Client access and contract records will appear here after a data source is connected."
+                  icon="database"
+                  onAction={() => window.location.reload()}
+                  title="No PE clients available"
+                />
               </TableCell>
             </TableRow>
           </TableBody>

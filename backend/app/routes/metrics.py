@@ -3,7 +3,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends
 
 from .auth import require_user
-from ..services.dynamics import get_accounts_data_quality
+from ..services.dynamics import get_cached_accounts_data_quality, start_data_quality_refresh
 from ..services.metrics import load_metrics
 from ..services.usage import load_usage, WEEKLY_LIMIT
 
@@ -450,10 +450,9 @@ async def get_metrics(_user=Depends(require_user)):
     metrics = load_metrics()
     updates_log = metrics.get("updates_log", [])
     recent_activity = build_recent_activity(updates_log)
-    try:
-        data_quality_pipeline = build_data_quality_pipeline(await get_accounts_data_quality())
-    except Exception:
-        data_quality_pipeline = build_data_quality_pipeline([])
+    cached_accounts = get_cached_accounts_data_quality()
+    data_quality_pipeline = build_data_quality_pipeline(cached_accounts)
+    start_data_quality_refresh()
 
     credits_used = usage.get("credits_used", 0)
     remaining_credits = max(WEEKLY_LIMIT - credits_used, 0)

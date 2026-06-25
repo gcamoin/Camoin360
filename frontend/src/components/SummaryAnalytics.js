@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from "react";
-import axios from "axios";
 import {
   Alert,
   Box,
@@ -28,6 +27,8 @@ import {
 } from "recharts";
 
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
+import { getCached } from "../apiClient";
+import { EmptyState, subtleTableHeadCellSx } from "./UiPrimitives";
 
 const API_URL = `${API_BASE_URL}/accounts/summary-analytics`;
 
@@ -93,7 +94,10 @@ export default function SummaryAnalytics() {
       setError("");
 
       try {
-        const response = await axios.get(API_URL, { headers: getAuthHeaders() });
+        const response = await getCached(API_URL, {
+          headers: getAuthHeaders(),
+          ttl: 10 * 60 * 1000,
+        });
         if (isMounted) {
           const nextSummary = {
             total_accounts: response.data?.total_accounts || 0,
@@ -241,9 +245,12 @@ export default function SummaryAnalytics() {
               </ResponsiveContainer>
             </Box>
           ) : (
-            <Box sx={{ alignItems: "center", display: "flex", height: "100%", justifyContent: "center" }}>
-              <Typography color="text.secondary">No sector data found.</Typography>
-            </Box>
+            <EmptyState
+              compact
+              description="Sector distribution will appear after account data is available from Dynamics."
+              icon="database"
+              title="No sector data found"
+            />
           )}
         </Box>
       </Paper>
@@ -261,20 +268,14 @@ export default function SummaryAnalytics() {
             <TableHead>
               <TableRow>
                 <TableCell
-                  sx={{
-                    backgroundColor: "primary.main",
-                    color: "common.white",
-                    fontWeight: 800,
-                  }}
+                  sx={subtleTableHeadCellSx}
                 >
                   Sector
                 </TableCell>
                 <TableCell
                   align="right"
                   sx={{
-                    backgroundColor: "primary.main",
-                    color: "common.white",
-                    fontWeight: 800,
+                    ...subtleTableHeadCellSx,
                     whiteSpace: "nowrap",
                   }}
                 >
@@ -292,10 +293,13 @@ export default function SummaryAnalytics() {
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={2}>
-                    <Typography color="text.secondary" sx={{ py: 3, textAlign: "center" }}>
-                      No sector data found.
-                    </Typography>
+                  <TableCell colSpan={2} sx={{ p: 0 }}>
+                    <EmptyState
+                      compact
+                      description="Account sector totals will appear once Dynamics data is available."
+                      icon="database"
+                      title="No sector data found"
+                    />
                   </TableCell>
                 </TableRow>
               )}

@@ -9,7 +9,6 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
-  DialogTitle,
   FormControl,
   InputLabel,
   Link,
@@ -30,6 +29,8 @@ import {
 } from "@mui/material";
 
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
+import { getCached, invalidateApiCache } from "../apiClient";
+import { EmptyState, ModalTitle, subtleTableHeadCellSx } from "./UiPrimitives";
 
 const API_URL = `${API_BASE_URL}/accounts/duplicates`;
 const REVIEWED_GROUP_STORAGE_KEY = "sophie:reviewedDuplicateGroups";
@@ -340,6 +341,7 @@ export default function DuplicateAccounts() {
 
     try {
       await axios.delete(`${API_BASE_URL}/accounts/${selectedAccountId}`, { headers: getAuthHeaders() });
+      invalidateApiCache(API_URL);
       setDuplicateGroups((currentGroups) =>
         currentGroups
           .map((group) => {
@@ -391,7 +393,7 @@ export default function DuplicateAccounts() {
       setError("");
 
       try {
-        const response = await axios.get(API_URL, { headers: getAuthHeaders() });
+        const response = await getCached(API_URL, { headers: getAuthHeaders() });
 
         if (isMounted) {
           setAccountCount(response.data?.account_count || 0);
@@ -591,10 +593,7 @@ export default function DuplicateAccounts() {
                 <TableCell
                   key={column.key}
                   sx={{
-                    backgroundColor: "primary.main",
-                    color: "common.white",
-                    fontWeight: 800,
-                    py: 1.25,
+                    ...subtleTableHeadCellSx,
                     width: column.width,
                   }}
                 >
@@ -604,9 +603,9 @@ export default function DuplicateAccounts() {
                       direction={sortConfig.key === column.key ? sortConfig.direction : "asc"}
                       onClick={() => updateSort(column.key)}
                       sx={{
-                        color: "common.white",
-                        "&.Mui-active": { color: "common.white" },
-                        "& .MuiTableSortLabel-icon": { color: "common.white !important" },
+                        color: "inherit",
+                        "&.Mui-active": { color: "primary.main" },
+                        "& .MuiTableSortLabel-icon": { color: "primary.main !important" },
                       }}
                     >
                       {column.label}
@@ -700,10 +699,19 @@ export default function DuplicateAccounts() {
               })
             ) : (
               <TableRow>
-                <TableCell colSpan={columns.length} sx={{ py: 6, textAlign: "center" }}>
-                  <Typography color="text.secondary">
-                    {activeFilterCount ? "No duplicate groups match the selected filters." : "No potential duplicate accounts were found."}
-                  </Typography>
+                <TableCell colSpan={columns.length} sx={{ p: 0 }}>
+                  <EmptyState
+                    actionLabel={activeFilterCount ? "Clear filters" : undefined}
+                    compact
+                    description={
+                      activeFilterCount
+                        ? "Clear or adjust the active filters to broaden the results."
+                        : "No likely duplicate records were identified in the scanned accounts."
+                    }
+                    icon={activeFilterCount ? "search" : "database"}
+                    onAction={activeFilterCount ? resetFilters : undefined}
+                    title={activeFilterCount ? "No matching duplicate groups" : "No duplicate accounts found"}
+                  />
                 </TableCell>
               </TableRow>
             )}
@@ -712,7 +720,12 @@ export default function DuplicateAccounts() {
       </TableContainer>
 
       <Dialog fullWidth maxWidth="lg" onClose={closeComparison} open={Boolean(activeGroup)}>
-        <DialogTitle sx={{ fontWeight: 800 }}>Compare Duplicate Accounts</DialogTitle>
+        <ModalTitle
+          onClose={closeComparison}
+          subtitle="Compare completeness and choose the record that should be removed."
+        >
+          Compare Duplicate Accounts
+        </ModalTitle>
         <DialogContent dividers>
           {deleteError ? <Alert severity="error" sx={{ mb: 2 }}>{deleteError}</Alert> : null}
           <Typography color="text.secondary" sx={{ mb: 2 }} variant="body2">
@@ -783,7 +796,12 @@ export default function DuplicateAccounts() {
       </Dialog>
 
       <Dialog onClose={() => !isDeleting && setIsDeleteConfirmationOpen(false)} open={isDeleteConfirmationOpen}>
-        <DialogTitle sx={{ fontWeight: 800 }}>Delete this account?</DialogTitle>
+        <ModalTitle
+          onClose={isDeleting ? undefined : () => setIsDeleteConfirmationOpen(false)}
+          subtitle="This action permanently removes the selected Dynamics record."
+        >
+          Delete this account?
+        </ModalTitle>
         <DialogContent>
           <Typography>
             This permanently deletes {activeGroup?.accounts.find((account) => account.accountid === selectedAccountId)?.name || "the selected account"} from Dynamics. This action cannot be undone.

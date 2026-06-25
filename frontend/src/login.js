@@ -58,7 +58,7 @@ export default function Login({ onLogin, onShowSignup }) {
         minHeight: "100vh",
         display: "flex",
         alignItems: "center",
-        background: `radial-gradient(circle at 15% 20%, ${theme.palette.secondary.main}22, transparent 28%), linear-gradient(135deg, #f8fbf5 0%, #edf3e3 45%, #ffffff 100%)`,
+        background: `radial-gradient(circle at 15% 20%, ${theme.palette.secondary.main}14, transparent 28%), linear-gradient(135deg, #F5F7F8 0%, #F0F4F1 48%, #FFFFFF 100%)`,
         py: { xs: 4, md: 8 },
       }}
     >
@@ -88,8 +88,8 @@ export default function Login({ onLogin, onShowSignup }) {
                 component="h1"
                 sx={{
                   color: "primary.main",
-                  fontSize: { xs: "2.4rem", md: "3.8rem" },
-                  fontWeight: 800,
+                  fontSize: { xs: "2.4rem", md: "3.5rem" },
+                  fontWeight: 750,
                   lineHeight: 1,
                   mt: 1,
                 }}
@@ -122,7 +122,7 @@ export default function Login({ onLogin, onShowSignup }) {
                     sx={{
                       borderLeft: `3px solid ${theme.palette.secondary.main}`,
                       color: "primary.main",
-                      fontWeight: 700,
+                      fontWeight: 650,
                       pl: 1.5,
                     }}
                   >
@@ -141,8 +141,8 @@ export default function Login({ onLogin, onShowSignup }) {
               justifySelf: { xs: "stretch", md: "end" },
               p: { xs: 3, sm: 4 },
               border: "1px solid rgba(0, 51, 108, 0.10)",
-              borderRadius: 3,
-              boxShadow: "0 24px 70px rgba(0, 51, 108, 0.14)",
+              borderRadius: 2,
+              boxShadow: "0 24px 64px rgba(24, 50, 74, 0.12)",
             }}
           >
             <Stack component="form" spacing={2.5} onSubmit={handleSubmit}>
@@ -152,7 +152,7 @@ export default function Login({ onLogin, onShowSignup }) {
                   sx={{
                     color: "primary.main",
                     fontSize: "1.75rem",
-                    fontWeight: 800,
+                    fontWeight: 750,
                     mb: 0.75,
                   }}
                 >
@@ -213,8 +213,8 @@ export default function Login({ onLogin, onShowSignup }) {
                 variant="contained"
                 sx={{
                   py: 1.4,
-                  fontWeight: 800,
-                  boxShadow: "0 12px 24px rgba(0, 51, 108, 0.20)",
+                  fontWeight: 700,
+                  boxShadow: "0 8px 18px rgba(18, 59, 100, 0.18)",
                 }}
               >
                 {isSubmitting ? "Signing in..." : "Sign in"}

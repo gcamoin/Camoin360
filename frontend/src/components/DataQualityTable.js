@@ -10,7 +10,6 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
-  DialogTitle,
   LinearProgress,
   Link,
   Menu,
@@ -30,14 +29,19 @@ import {
 } from "@mui/material";
 
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
+import { getCached, invalidateApiCache } from "../apiClient";
 import DataQualityFilters from "./DataQualityFilters";
 import DataQualitySummary from "./DataQualitySummary";
 import FieldUpdateSelector from "./FieldUpdateSelector";
+import { EmptyState, ModalTitle, subtleTableHeadCellSx } from "./UiPrimitives";
 
 const API_URL = `${API_BASE_URL}/accounts/data-quality`;
 const ENRICHMENT_RUN_URL = `${API_BASE_URL}/accounts/enrichment-run`;
 const SEARCH_DEBOUNCE_MS = 200;
 const DEFAULT_ROWS_PER_PAGE = 25;
+const INITIAL_ACCOUNT_LIMIT = 1000;
+const ACCOUNT_LIMIT_STEP = 1000;
+const MAX_ACCOUNT_LIMIT = 5000;
 const usStateNamesByAbbreviation = {
   AL: "Alabama",
   AK: "Alaska",
@@ -111,6 +115,7 @@ let dataQualityCache = null;
 
 export function __resetDataQualityCacheForTests() {
   dataQualityCache = null;
+  invalidateApiCache(API_URL);
 }
 
 const columns = [
@@ -524,7 +529,10 @@ function renderCell(account, columnKey, onCompanyPreview) {
 export default function DataQualityTable() {
   const [accounts, setAccounts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState("");
+  const [loadedAccountLimit, setLoadedAccountLimit] = useState(INITIAL_ACCOUNT_LIMIT);
+  const [hasMoreAccounts, setHasMoreAccounts] = useState(false);
   const [selectedSector, setSelectedSector] = useState("all");
   const [selectedMissingField, setSelectedMissingField] = useState("all");
   const [selectedStates, setSelectedStates] = useState([]);
@@ -781,11 +789,43 @@ export default function DataQualityTable() {
   }
 
   async function refreshAccounts() {
-    const response = await axios.get(API_URL, { headers: getAuthHeaders() });
+    invalidateApiCache(API_URL);
+    const response = await getCached(API_URL, {
+      force: true,
+      headers: getAuthHeaders(),
+      params: { limit: loadedAccountLimit },
+    });
     const preparedRows = prepareAccountRows(response.data?.data || []);
 
     dataQualityCache = preparedRows;
     setAccounts(preparedRows);
+    setHasMoreAccounts(Boolean(response.data?.has_more) && loadedAccountLimit < MAX_ACCOUNT_LIMIT);
+  }
+
+  async function loadMoreAccounts() {
+    const nextLimit = Math.min(loadedAccountLimit + ACCOUNT_LIMIT_STEP, MAX_ACCOUNT_LIMIT);
+    setIsLoadingMore(true);
+    setError("");
+
+    try {
+      const response = await getCached(API_URL, {
+        force: true,
+        headers: getAuthHeaders(),
+        params: { limit: nextLimit },
+        timeout: 30 * 1000,
+      });
+      const preparedRows = prepareAccountRows(response.data?.data || []);
+      dataQualityCache = preparedRows;
+      setAccounts(preparedRows);
+      setLoadedAccountLimit(nextLimit);
+      setHasMoreAccounts(Boolean(response.data?.has_more) && nextLimit < MAX_ACCOUNT_LIMIT);
+    } catch (fetchError) {
+      if (!handleUnauthorized(fetchError)) {
+        setError(getApiErrorMessage(fetchError, "Unable to load more account data."));
+      }
+    } finally {
+      setIsLoadingMore(false);
+    }
   }
 
   async function runSelectedEnrichment() {
@@ -878,11 +918,16 @@ export default function DataQualityTable() {
       setError("");
 
       try {
-        const response = await axios.get(API_URL, { headers: getAuthHeaders() });
+        const response = await getCached(API_URL, {
+          headers: getAuthHeaders(),
+          params: { limit: INITIAL_ACCOUNT_LIMIT },
+        });
         if (isMounted) {
           const preparedRows = prepareAccountRows(response.data?.data || []);
           dataQualityCache = preparedRows;
           setAccounts(preparedRows);
+          setLoadedAccountLimit(response.data?.limit || INITIAL_ACCOUNT_LIMIT);
+          setHasMoreAccounts(Boolean(response.data?.has_more));
         }
       } catch (fetchError) {
         if (handleUnauthorized(fetchError)) {
@@ -968,9 +1013,21 @@ export default function DataQualityTable() {
             py: 1.5,
           }}
         >
-          <Typography color="text.secondary" variant="body2">
-            Showing {paginatedAccounts.length} of {filteredAccounts.length} Accounts
-          </Typography>
+          <Stack alignItems={{ xs: "flex-start", sm: "center" }} direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+            <Typography color="text.secondary" variant="body2">
+              Showing {paginatedAccounts.length} of {filteredAccounts.length} Accounts
+            </Typography>
+            {hasMoreAccounts ? (
+              <Button
+                disabled={isLoadingMore}
+                onClick={loadMoreAccounts}
+                size="small"
+                variant="outlined"
+              >
+                {isLoadingMore ? "Loading more..." : `Load next ${ACCOUNT_LIMIT_STEP.toLocaleString()}`}
+              </Button>
+            ) : null}
+          </Stack>
           <Stack direction="row" spacing={2}>
             <Typography color="text.secondary" variant="body2">
               {selectedVisibleCount} visible selected
@@ -989,8 +1046,7 @@ export default function DataQualityTable() {
                 <TableCell
                   padding="none"
                   sx={{
-                    backgroundColor: "primary.main",
-                    color: "common.white",
+                    ...subtleTableHeadCellSx,
                     minWidth: selectionColumnWidth,
                     px: 0,
                     py: 1,
@@ -1006,17 +1062,14 @@ export default function DataQualityTable() {
                     inputProps={{ "aria-label": "Select all visible accounts" }}
                     onChange={toggleVisibleAccountSelection}
                     size="small"
-                    sx={{ color: "common.white", p: 0.5, "&.Mui-checked": { color: "common.white" } }}
+                    sx={{ color: "primary.main", p: 0.5, "&.Mui-checked": { color: "primary.main" } }}
                   />
                 </TableCell>
                 {columns.map((column) => (
                   <TableCell
                     key={column.key}
                     sx={{
-                      backgroundColor: "primary.main",
-                      color: "common.white",
-                      fontWeight: 800,
-                      py: 1.25,
+                      ...subtleTableHeadCellSx,
                       top: 0,
                       width: column.width,
                       zIndex: 3,
@@ -1026,7 +1079,7 @@ export default function DataQualityTable() {
                       <Typography
                         component="span"
                         sx={{
-                          color: "common.white",
+                          color: "inherit",
                           fontSize: "0.875rem",
                           fontWeight: 800,
                           lineHeight: 1.15,
@@ -1044,8 +1097,8 @@ export default function DataQualityTable() {
                         onClick={(event) => openColumnMenu(event, column.key)}
                         size="small"
                         sx={{
-                          borderColor: "rgba(255, 255, 255, 0.55)",
-                          color: "common.white",
+                          borderColor: "rgba(18, 59, 100, 0.26)",
+                          color: "primary.main",
                           fontSize: "0.7rem",
                           lineHeight: 1,
                           flex: "0 0 auto",
@@ -1131,10 +1184,13 @@ export default function DataQualityTable() {
                 })
               ) : (
                 <TableRow>
-                  <TableCell colSpan={columns.length + 1}>
-                    <Typography color="text.secondary" sx={{ py: 3, textAlign: "center" }}>
-                      No account records found.
-                    </Typography>
+                  <TableCell colSpan={columns.length + 1} sx={{ p: 0 }}>
+                    <EmptyState
+                      compact
+                      description="Try adjusting your filters, or refresh after Dynamics data becomes available."
+                      icon="search"
+                      title="No account records found"
+                    />
                   </TableCell>
                 </TableRow>
               )}
@@ -1269,9 +1325,12 @@ export default function DataQualityTable() {
       </Paper>
 
       <Dialog fullWidth maxWidth="sm" onClose={() => setIsPreviewOpen(false)} open={isPreviewOpen}>
-        <DialogTitle sx={{ color: "primary.main", fontWeight: 800 }}>
+        <ModalTitle
+          onClose={() => setIsPreviewOpen(false)}
+          subtitle="Confirm the selected accounts and fields before running the update."
+        >
           Preview Enrichment
-        </DialogTitle>
+        </ModalTitle>
         <DialogContent dividers>
           <Box sx={{ display: "grid", gap: 2 }}>
             <Box>
@@ -1324,9 +1383,9 @@ export default function DataQualityTable() {
         </DialogActions>
       </Dialog>
       <Dialog fullWidth maxWidth="md" onClose={() => setPreviewAccount(null)} open={Boolean(previewAccount)}>
-        <DialogTitle sx={{ color: "primary.main", fontWeight: 800 }}>
+        <ModalTitle onClose={() => setPreviewAccount(null)} subtitle="Review the current Dynamics account details.">
           Company Preview
-        </DialogTitle>
+        </ModalTitle>
         <DialogContent dividers>
           {previewAccount ? (
             <Stack spacing={2.5}>

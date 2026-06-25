@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import axios from "axios";
 import {
   Alert,
   Box,
@@ -9,7 +8,6 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
-  DialogTitle,
   Menu,
   MenuItem,
   Paper,
@@ -26,9 +24,14 @@ import {
 } from "@mui/material";
 
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
+import { getCached } from "../apiClient";
+import { EmptyState, ModalTitle, subtleTableHeadCellSx } from "./UiPrimitives";
 
 const API_URL = `${API_BASE_URL}/marketing-lists`;
 const DEFAULT_ROWS_PER_PAGE = 25;
+const INITIAL_LIST_LIMIT = 500;
+const LIST_LIMIT_STEP = 500;
+const MAX_LIST_LIMIT = 5000;
 
 const columns = [
   { key: "client_name", label: "Client Name", width: 190 },
@@ -118,7 +121,10 @@ function getFormattedDynamicsValue(record, fieldName) {
 export default function MarketingLists() {
   const [marketingLists, setMarketingLists] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState("");
+  const [loadedListLimit, setLoadedListLimit] = useState(INITIAL_LIST_LIMIT);
+  const [hasMoreLists, setHasMoreLists] = useState(false);
   const [sortConfig, setSortConfig] = useState({ key: "createdon", direction: "desc" });
   const [columnFilters, setColumnFilters] = useState(() => ({}));
   const [columnMenu, setColumnMenu] = useState({ anchorEl: null, columnKey: "" });
@@ -217,6 +223,31 @@ export default function MarketingLists() {
     setPage(0);
   }
 
+  async function loadMoreMarketingLists() {
+    const nextLimit = Math.min(loadedListLimit + LIST_LIMIT_STEP, MAX_LIST_LIMIT);
+    setIsLoadingMore(true);
+    setError("");
+
+    try {
+      const response = await getCached(API_URL, {
+        force: true,
+        headers: getAuthHeaders(),
+        params: { limit: nextLimit },
+        timeout: 30 * 1000,
+        ttl: 5 * 60 * 1000,
+      });
+      setMarketingLists(response.data?.data || []);
+      setLoadedListLimit(response.data?.limit || nextLimit);
+      setHasMoreLists((response.data?.count || 0) >= nextLimit && nextLimit < MAX_LIST_LIMIT);
+    } catch (fetchError) {
+      if (!handleUnauthorized(fetchError)) {
+        setError(getApiErrorMessage(fetchError, "Unable to load more marketing lists."));
+      }
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }
+
   async function openMemberModal(marketingList) {
     setActiveMarketingList(marketingList);
     setListMembers({ accounts: [], contacts: [] });
@@ -224,9 +255,9 @@ export default function MarketingLists() {
     setIsLoadingMembers(true);
 
     try {
-      const response = await axios.get(
+      const response = await getCached(
         `${API_URL}/${marketingList.listid}/members`,
-        { headers: getAuthHeaders() }
+        { headers: getAuthHeaders(), ttl: 5 * 60 * 1000 }
       );
       setListMembers({
         accounts: response.data?.accounts || [],
@@ -262,10 +293,16 @@ export default function MarketingLists() {
       setError("");
 
       try {
-        const response = await axios.get(API_URL, { headers: getAuthHeaders() });
+        const response = await getCached(API_URL, {
+          headers: getAuthHeaders(),
+          params: { limit: INITIAL_LIST_LIMIT },
+          ttl: 5 * 60 * 1000,
+        });
 
         if (isMounted) {
           setMarketingLists(response.data?.data || []);
+          setLoadedListLimit(response.data?.limit || INITIAL_LIST_LIMIT);
+          setHasMoreLists((response.data?.count || 0) >= INITIAL_LIST_LIMIT);
         }
       } catch (fetchError) {
         if (handleUnauthorized(fetchError)) {
@@ -334,6 +371,11 @@ export default function MarketingLists() {
           </Typography>
         </Box>
         <Stack alignItems="center" direction="row" spacing={1}>
+          {hasMoreLists ? (
+            <Button disabled={isLoadingMore} onClick={loadMoreMarketingLists} size="small" variant="outlined">
+              {isLoadingMore ? "Loading more..." : `Load next ${LIST_LIMIT_STEP}`}
+            </Button>
+          ) : null}
           {activeFilterCount ? (
             <Button
               onClick={resetFilters}
@@ -356,10 +398,7 @@ export default function MarketingLists() {
                 <TableCell
                   key={column.key}
                   sx={{
-                    backgroundColor: "primary.main",
-                    color: "common.white",
-                    fontWeight: 800,
-                    py: 1.25,
+                    ...subtleTableHeadCellSx,
                     width: column.width,
                   }}
                 >
@@ -367,7 +406,7 @@ export default function MarketingLists() {
                     <Typography
                       component="span"
                       sx={{
-                        color: "common.white",
+                        color: "inherit",
                         fontSize: "0.875rem",
                         fontWeight: 800,
                         lineHeight: 1.15,
@@ -385,8 +424,8 @@ export default function MarketingLists() {
                       onClick={(event) => openColumnMenu(event, column.key)}
                       size="small"
                       sx={{
-                        borderColor: columnFilters[column.key] ? "common.white" : "rgba(255, 255, 255, 0.55)",
-                        color: "common.white",
+                        borderColor: columnFilters[column.key] ? "primary.main" : "rgba(18, 59, 100, 0.26)",
+                        color: "primary.main",
                         flex: "0 0 auto",
                         fontSize: "0.7rem",
                         lineHeight: 1,
@@ -455,10 +494,19 @@ export default function MarketingLists() {
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={columns.length} sx={{ py: 6, textAlign: "center" }}>
-                  <Typography color="text.secondary">
-                    {activeFilterCount ? "No marketing lists match the selected filters." : "No marketing lists were found."}
-                  </Typography>
+                <TableCell colSpan={columns.length} sx={{ p: 0 }}>
+                  <EmptyState
+                    actionLabel={activeFilterCount ? "Clear filters" : undefined}
+                    compact
+                    description={
+                      activeFilterCount
+                        ? "Clear or adjust the active column filters to broaden the results."
+                        : "Marketing lists will appear here after they are available from Dynamics."
+                    }
+                    icon={activeFilterCount ? "search" : "database"}
+                    onAction={activeFilterCount ? resetFilters : undefined}
+                    title={activeFilterCount ? "No matching marketing lists" : "No marketing lists found"}
+                  />
                 </TableCell>
               </TableRow>
             )}
@@ -530,9 +578,9 @@ export default function MarketingLists() {
       </Menu>
 
       <Dialog fullWidth maxWidth="lg" onClose={closeMemberModal} open={Boolean(activeMarketingList)}>
-        <DialogTitle sx={{ fontWeight: 800 }}>
+        <ModalTitle onClose={closeMemberModal} subtitle="Accounts and contacts included in this Dynamics marketing list.">
           {activeMarketingList?.marketing_list_name || "Marketing List Members"}
-        </DialogTitle>
+        </ModalTitle>
         <DialogContent dividers>
           {isLoadingMembers ? (
             <Box sx={{ alignItems: "center", display: "flex", flexDirection: "column", gap: 2, py: 6 }}>

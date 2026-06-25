@@ -16,13 +16,15 @@ import DataQualityTable from "./components/DataQualityTable";
 import DuplicateAccounts from "./components/DuplicateAccounts";
 import MetricsDashboard from "./components/MetricsDashboard";
 import SummaryAnalytics from "./components/SummaryAnalytics";
+import { API_BASE_URL, getAuthHeaders } from "./auth";
+import { prefetch } from "./apiClient";
 
 const views = {
   seamless: {
     label: "Seamless",
     icon: "sync",
     route: "/dashboard",
-    title: "Sophie - Seamless AI Updates Dashboard",
+    title: "Enrichment Operations",
     description:
       "Live view of weekly Seamless credit consumption and enrichment throughput across the Dynamics pipeline.",
   },
@@ -60,6 +62,13 @@ const iconPaths = {
   sync: "M7 7h9.2l-2.6-2.6L15 3l5 5-5 5-1.4-1.4L16.2 9H7V7Zm10 10H7.8l2.6 2.6L9 21l-5-5 5-5 1.4 1.4L7.8 15H17v2Z",
 };
 
+const prefetchUrls = {
+  seamless: `${API_BASE_URL}/metrics`,
+  dataQuality: `${API_BASE_URL}/accounts/data-quality`,
+  duplicateAccounts: `${API_BASE_URL}/accounts/duplicates`,
+  summaryAnalytics: `${API_BASE_URL}/accounts/summary-analytics`,
+};
+
 function NavIcon({ name }) {
   return (
     <SvgIcon fontSize="small" viewBox="0 0 24 24">
@@ -89,6 +98,14 @@ export default function LandingPage({ onLogout }) {
     }
   }
 
+  function prefetchView(viewKey) {
+    prefetch(prefetchUrls[viewKey], {
+      headers: getAuthHeaders(),
+      params: viewKey === "dataQuality" ? { limit: 1000 } : undefined,
+      ttl: viewKey === "summaryAnalytics" ? 10 * 60 * 1000 : 5 * 60 * 1000,
+    });
+  }
+
   useEffect(() => {
     function handlePopState() {
       setActiveView(getViewForPath(window.location.pathname));
@@ -105,7 +122,7 @@ export default function LandingPage({ onLogout }) {
     <Box
       sx={{
         minHeight: "100vh",
-        background: `radial-gradient(circle at top left, ${theme.palette.secondary.main}22, transparent 32%), linear-gradient(180deg, #f8fbf5 0%, #edf3e3 100%)`,
+        background: `radial-gradient(circle at top left, ${theme.palette.secondary.main}12, transparent 30%), ${theme.palette.background.default}`,
       }}
     >
       <Box
@@ -113,7 +130,7 @@ export default function LandingPage({ onLogout }) {
           display: "grid",
           gridTemplateColumns: {
             xs: "1fr",
-            md: sidebarCollapsed ? "88px minmax(0, 1fr)" : "260px minmax(0, 1fr)",
+            md: sidebarCollapsed ? "88px minmax(0, 1fr)" : "272px minmax(0, 1fr)",
           },
           minHeight: "100vh",
           transition: "grid-template-columns 180ms ease",
@@ -128,13 +145,13 @@ export default function LandingPage({ onLogout }) {
             height: { md: "100vh" },
             overflow: { md: "hidden" },
             p: { xs: 2, md: 3 },
-            position: { md: "sticky" },
+            position: { xs: "relative", md: "sticky" },
             top: { md: 0 },
             transition: "padding 180ms ease",
           }}
         >
           <Stack
-            spacing={3}
+            spacing={{ xs: 1.5, md: 3 }}
             sx={{
               height: { md: "100%" },
               minHeight: 0,
@@ -184,6 +201,7 @@ export default function LandingPage({ onLogout }) {
                     color: "common.white",
                     height: 36,
                     width: 36,
+                    display: { xs: "none", md: "inline-flex" },
                     "&:hover": {
                       borderColor: "common.white",
                       backgroundColor: "rgba(255,255,255,0.10)",
@@ -200,11 +218,14 @@ export default function LandingPage({ onLogout }) {
 
             <Stack
               component="nav"
+              direction={{ xs: "row", md: "column" }}
               spacing={1}
               sx={{
                 flex: { md: 1 },
                 minHeight: 0,
+                overflowX: { xs: "auto", md: "visible" },
                 overflowY: { md: "auto" },
+                pb: { xs: 0.5, md: 0 },
               }}
             >
               {Object.entries(views).map(([viewKey, view]) => {
@@ -214,6 +235,8 @@ export default function LandingPage({ onLogout }) {
                   <Tooltip arrow disableHoverListener={!sidebarCollapsed} key={viewKey} placement="right" title={view.label}>
                     <Button
                       fullWidth
+                      onFocus={() => prefetchView(viewKey)}
+                      onMouseEnter={() => prefetchView(viewKey)}
                       onClick={() => navigateToView(viewKey)}
                       startIcon={<NavIcon name={view.icon} />}
                       sx={{
@@ -227,6 +250,8 @@ export default function LandingPage({ onLogout }) {
                         minWidth: 0,
                         px: sidebarCollapsed ? 1 : 2,
                         py: 1.25,
+                        whiteSpace: "nowrap",
+                        width: { xs: "auto", md: "100%" },
                         "& .MuiButton-startIcon": {
                           m: sidebarCollapsed ? 0 : undefined,
                         },
@@ -257,8 +282,14 @@ export default function LandingPage({ onLogout }) {
                 minWidth: 0,
                 justifyContent: sidebarCollapsed ? "center" : "flex-start",
                 px: sidebarCollapsed ? 1 : 2,
+                alignSelf: { xs: "flex-start", md: "stretch" },
+                fontSize: { xs: 0, md: "0.875rem" },
+                position: { xs: "absolute", md: "static" },
+                right: { xs: 16, md: "auto" },
+                top: { xs: 16, md: "auto" },
+                width: { xs: 40, md: "100%" },
                 "& .MuiButton-startIcon": {
-                  m: sidebarCollapsed ? 0 : undefined,
+                  m: { xs: 0, md: sidebarCollapsed ? 0 : undefined },
                 },
                 "&:hover": {
                   borderColor: "common.white",
@@ -273,7 +304,7 @@ export default function LandingPage({ onLogout }) {
           </Stack>
         </Box>
 
-        <Box component="main" sx={{ py: { xs: 3, md: 6 } }}>
+        <Box component="main" sx={{ py: { xs: 3, md: 5 } }}>
           <Container
             maxWidth={["dataQuality", "duplicateAccounts"].includes(activeView) ? false : "lg"}
             sx={{
@@ -289,8 +320,8 @@ export default function LandingPage({ onLogout }) {
                   component="h2"
                   sx={{
                     color: "primary.main",
-                    fontSize: { xs: "2rem", md: "2.65rem" },
-                    fontWeight: 800,
+                    fontSize: { xs: "2rem", md: "2.35rem" },
+                    fontWeight: 750,
                     lineHeight: 1.1,
                     mb: 1,
                   }}

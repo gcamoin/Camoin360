@@ -17,6 +17,9 @@ import {
 import LeadfeederVisits from "./components/LeadfeederVisits";
 import MarketingLists from "./components/MarketingLists";
 import PEClients from "./components/PEClients";
+import { EmptyState } from "./components/UiPrimitives";
+import { API_BASE_URL, getAuthHeaders } from "./auth";
+import { prefetch } from "./apiClient";
 
 const tabs = {
   marketing: {
@@ -54,6 +57,11 @@ const iconPaths = {
   leadfeeder: "M4 5h16v3H4V5Zm2 5h12v3H6v-3Zm3 5h6v4H9v-4Z",
   prospects: "M8 11a4 4 0 1 1 8 0 4 4 0 0 1-8 0Zm-4 9c.7-3.1 3.9-5 8-5s7.3 1.9 8 5H4Z",
   signout: "M10 17v-2h4V9h-4V7h6v10h-6Zm-1-1-5-4 5-4v3h6v2H9v3Z",
+};
+
+const prefetchUrls = {
+  marketing: `${API_BASE_URL}/marketing-lists`,
+  leadfeeder: `${API_BASE_URL}/leadfeeder-visits`,
 };
 
 function NavIcon({ name }) {
@@ -96,11 +104,13 @@ function EmptyProspectingPanel({ title }) {
         </Box>
         <Chip label="0 total" sx={{ fontWeight: 800 }} />
       </Box>
-      <Box sx={{ px: { xs: 2, md: 3 }, py: 6, textAlign: "center" }}>
-        <Typography color="text.secondary">
-          Connect a data source to populate this tab.
-        </Typography>
-      </Box>
+      <EmptyState
+        actionLabel="Refresh"
+        description="Connect the prospecting source to begin reviewing and qualifying records here."
+        icon="database"
+        onAction={() => window.location.reload()}
+        title="No prospect records yet"
+      />
     </Paper>
   );
 }
@@ -111,11 +121,22 @@ export default function ProspectingDashboard({ onLogout }) {
   const theme = useTheme();
   const currentTab = tabs[activeTab];
 
+  function prefetchTab(tabKey) {
+    const url = prefetchUrls[tabKey];
+    if (url) {
+      prefetch(url, {
+        headers: getAuthHeaders(),
+        params: tabKey === "marketing" ? { limit: 500 } : undefined,
+        ttl: 5 * 60 * 1000,
+      });
+    }
+  }
+
   return (
     <Box
       sx={{
         minHeight: "100vh",
-        background: `radial-gradient(circle at top left, ${theme.palette.secondary.main}22, transparent 32%), linear-gradient(180deg, #f8fbf5 0%, #edf3e3 100%)`,
+        background: `radial-gradient(circle at top left, ${theme.palette.secondary.main}12, transparent 30%), ${theme.palette.background.default}`,
       }}
     >
       <Box
@@ -123,7 +144,7 @@ export default function ProspectingDashboard({ onLogout }) {
           display: "grid",
           gridTemplateColumns: {
             xs: "1fr",
-            md: sidebarCollapsed ? "88px minmax(0, 1fr)" : "260px minmax(0, 1fr)",
+            md: sidebarCollapsed ? "88px minmax(0, 1fr)" : "272px minmax(0, 1fr)",
           },
           minHeight: "100vh",
           transition: "grid-template-columns 180ms ease",
@@ -138,13 +159,13 @@ export default function ProspectingDashboard({ onLogout }) {
             height: { md: "100vh" },
             overflow: { md: "hidden" },
             p: { xs: 2, md: 3 },
-            position: { md: "sticky" },
+            position: { xs: "relative", md: "sticky" },
             top: { md: 0 },
             transition: "padding 180ms ease",
           }}
         >
           <Stack
-            spacing={3}
+            spacing={{ xs: 1.5, md: 3 }}
             sx={{
               height: { md: "100%" },
               minHeight: 0,
@@ -187,6 +208,7 @@ export default function ProspectingDashboard({ onLogout }) {
                   color: "common.white",
                   height: 36,
                   width: 36,
+                  display: { xs: "none", md: "inline-flex" },
                   "&:hover": {
                     borderColor: "common.white",
                     backgroundColor: "rgba(255,255,255,0.10)",
@@ -202,11 +224,14 @@ export default function ProspectingDashboard({ onLogout }) {
 
             <Stack
               component="nav"
+              direction={{ xs: "row", md: "column" }}
               spacing={1}
               sx={{
                 flex: { md: 1 },
                 minHeight: 0,
+                overflowX: { xs: "auto", md: "visible" },
                 overflowY: { md: "auto" },
+                pb: { xs: 0.5, md: 0 },
               }}
             >
               {Object.entries(tabs).map(([tabKey, tab]) => {
@@ -216,6 +241,8 @@ export default function ProspectingDashboard({ onLogout }) {
                   <Tooltip arrow disableHoverListener={!sidebarCollapsed} key={tabKey} placement="right" title={tab.label}>
                     <Button
                       fullWidth
+                      onFocus={() => prefetchTab(tabKey)}
+                      onMouseEnter={() => prefetchTab(tabKey)}
                       onClick={() => setActiveTab(tabKey)}
                       startIcon={<NavIcon name={tab.icon} />}
                       sx={{
@@ -228,7 +255,12 @@ export default function ProspectingDashboard({ onLogout }) {
                         ml: !sidebarCollapsed && tab.parent ? 2 : 0,
                         px: sidebarCollapsed ? 1 : 2,
                         py: 1.25,
-                        width: !sidebarCollapsed && tab.parent ? "calc(100% - 16px)" : "100%",
+                        width: {
+                          xs: "auto",
+                          md: !sidebarCollapsed && tab.parent ? "calc(100% - 16px)" : "100%",
+                        },
+                        minWidth: { xs: "max-content", md: 0 },
+                        whiteSpace: "nowrap",
                         "& .MuiButton-startIcon": {
                           m: sidebarCollapsed ? 0 : undefined,
                         },
@@ -259,8 +291,14 @@ export default function ProspectingDashboard({ onLogout }) {
                 justifyContent: sidebarCollapsed ? "center" : "flex-start",
                 minWidth: 0,
                 px: sidebarCollapsed ? 1 : 2,
+                alignSelf: { xs: "flex-start", md: "stretch" },
+                fontSize: { xs: 0, md: "0.875rem" },
+                position: { xs: "absolute", md: "static" },
+                right: { xs: 16, md: "auto" },
+                top: { xs: 16, md: "auto" },
+                width: { xs: 40, md: "100%" },
                 "& .MuiButton-startIcon": {
-                  m: sidebarCollapsed ? 0 : undefined,
+                  m: { xs: 0, md: sidebarCollapsed ? 0 : undefined },
                 },
                 "&:hover": {
                   backgroundColor: "rgba(255,255,255,0.10)",
@@ -275,7 +313,7 @@ export default function ProspectingDashboard({ onLogout }) {
           </Stack>
         </Box>
 
-        <Box component="main" sx={{ py: { xs: 3, md: 6 } }}>
+        <Box component="main" sx={{ py: { xs: 3, md: 5 } }}>
           <Container
             maxWidth={["marketing", "leadfeeder", "peClients"].includes(activeTab) ? false : "lg"}
             sx={{ px: { xs: 2, md: ["marketing", "leadfeeder", "peClients"].includes(activeTab) ? 3 : 4 } }}
@@ -286,8 +324,8 @@ export default function ProspectingDashboard({ onLogout }) {
                   component="h2"
                   sx={{
                     color: "primary.main",
-                    fontSize: { xs: "2rem", md: "2.65rem" },
-                    fontWeight: 800,
+                    fontSize: { xs: "2rem", md: "2.35rem" },
+                    fontWeight: 750,
                     lineHeight: 1.1,
                     mb: 1,
                   }}

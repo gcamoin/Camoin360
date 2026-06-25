@@ -5,13 +5,13 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
-  DialogTitle,
   IconButton,
   LinearProgress,
   Paper,
   Tooltip,
   Typography,
 } from "@mui/material";
+import { ModalTitle } from "./UiPrimitives";
 
 function getSeverityColor(pct) {
   if (pct >= 50) return { accent: "#c62828", bg: "#fff5f5", barBg: "rgba(198,40,40,0.12)" };
@@ -72,14 +72,12 @@ export default function DataQualitySummary({ filteredAccountCount, missingCounts
       </Paper>
 
       <Dialog fullWidth maxWidth="md" onClose={() => setOpen(false)} open={open}>
-        <DialogTitle sx={{ pb: 0.5 }}>
-          <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="h6">
-            Missing Data Breakdown
-          </Typography>
-          <Typography color="text.secondary" variant="body2">
-            Across {filteredAccountCount?.toLocaleString()} filtered accounts
-          </Typography>
-        </DialogTitle>
+        <ModalTitle
+          onClose={() => setOpen(false)}
+          subtitle={`Across ${filteredAccountCount?.toLocaleString()} filtered accounts`}
+        >
+          Missing Data Breakdown
+        </ModalTitle>
         <DialogContent dividers sx={{ pt: 2.5 }}>
           <Box
             sx={{

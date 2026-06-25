@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from .auth import require_user
+from ..services.cache import AsyncStaleCache
 from ..services.duplicate_accounts import find_duplicate_account_groups
 from ..services.dynamics import (
     get_account_sector_counts,
@@ -15,6 +16,7 @@ from ..services.dynamics import (
     get_marketing_lists,
     get_marketing_list_members,
     get_leadfeeder_visits,
+    invalidate_account_read_caches,
     enrich_single_account_test,
     enrich_account,
     enrich_accounts,
@@ -23,6 +25,20 @@ from ..services.dynamics import (
 )
 
 router = APIRouter()
+read_cache = AsyncStaleCache()
+DATA_QUALITY_TTL_SECONDS = 300
+DUPLICATE_TTL_SECONDS = 300
+MARKETING_LIST_TTL_SECONDS = 300
+LEADFEEDER_TTL_SECONDS = 180
+SUMMARY_TTL_SECONDS = 900
+STALE_GRACE_SECONDS = 1800
+
+
+def invalidate_account_endpoint_caches():
+    invalidate_account_read_caches()
+    read_cache.invalidate("data-quality:")
+    read_cache.invalidate("duplicates:")
+    read_cache.invalidate("summary")
 
 
 class EnrichmentPreviewRequest(BaseModel):
@@ -55,9 +71,17 @@ async def fetch_accounts():
 
 
 @router.get("/accounts/data-quality")
-async def fetch_accounts_data_quality(_user=Depends(require_user)):
+async def fetch_accounts_data_quality(
+    limit: int = Query(default=1000, ge=100, le=5000),
+    _user=Depends(require_user),
+):
     try:
-        accounts = await get_accounts_data_quality()
+        accounts = await read_cache.get(
+            f"data-quality:{limit}",
+            lambda: get_accounts_data_quality(limit),
+            ttl_seconds=DATA_QUALITY_TTL_SECONDS,
+            stale_seconds=STALE_GRACE_SECONDS,
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -66,20 +90,30 @@ async def fetch_accounts_data_quality(_user=Depends(require_user)):
 
     return {
         "count": len(accounts),
+        "limit": limit,
+        "has_more": len(accounts) >= limit,
         "data": accounts
     }
 
 
 async def get_duplicate_account_response(limit: int):
-    accounts = await get_duplicate_account_records(limit)
-    duplicate_groups = find_duplicate_account_groups(accounts)
+    async def load_response():
+        accounts = await get_duplicate_account_records(limit)
+        duplicate_groups = find_duplicate_account_groups(accounts)
 
-    return {
-        "account_count": len(accounts),
-        "duplicate_group_count": len(duplicate_groups),
-        "limit": limit,
-        "groups": duplicate_groups
-    }
+        return {
+            "account_count": len(accounts),
+            "duplicate_group_count": len(duplicate_groups),
+            "limit": limit,
+            "groups": duplicate_groups,
+        }
+
+    return await read_cache.get(
+        f"duplicates:{limit}",
+        load_response,
+        ttl_seconds=DUPLICATE_TTL_SECONDS,
+        stale_seconds=STALE_GRACE_SECONDS,
+    )
 
 
 @router.get("/accounts/duplicates")
@@ -111,13 +145,20 @@ async def fetch_duplicate_account_records_alias(
 
 
 async def get_leadfeeder_visits_response(limit: int):
-    visits = await get_leadfeeder_visits(limit)
+    async def load_response():
+        visits = await get_leadfeeder_visits(limit)
+        return {
+            "count": len(visits),
+            "limit": limit,
+            "data": visits,
+        }
 
-    return {
-        "count": len(visits),
-        "limit": limit,
-        "data": visits,
-    }
+    return await read_cache.get(
+        f"leadfeeder:{limit}",
+        load_response,
+        ttl_seconds=LEADFEEDER_TTL_SECONDS,
+        stale_seconds=STALE_GRACE_SECONDS,
+    )
 
 
 @router.get("/leadfeeder-visits")
@@ -151,7 +192,9 @@ async def fetch_account_leadfeeder_visits_alias(
 @router.delete("/accounts/{account_id}")
 async def delete_duplicate_account(account_id: UUID, _user=Depends(require_user)):
     try:
-        return await delete_account(str(account_id))
+        result = await delete_account(str(account_id))
+        invalidate_account_endpoint_caches()
+        return result
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -162,7 +205,12 @@ async def delete_duplicate_account(account_id: UUID, _user=Depends(require_user)
 @router.get("/accounts/summary-analytics")
 async def fetch_account_summary_analytics(_user=Depends(require_user)):
     try:
-        return await get_account_sector_counts()
+        return await read_cache.get(
+            "summary",
+            get_account_sector_counts,
+            ttl_seconds=SUMMARY_TTL_SECONDS,
+            stale_seconds=STALE_GRACE_SECONDS,
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -172,11 +220,16 @@ async def fetch_account_summary_analytics(_user=Depends(require_user)):
 
 @router.get("/marketing-lists")
 async def fetch_marketing_lists(
-    limit: int = Query(default=5000, ge=1, le=10000),
+    limit: int = Query(default=500, ge=1, le=5000),
     _user=Depends(require_user),
 ):
     try:
-        marketing_lists = await get_marketing_lists(limit)
+        marketing_lists = await read_cache.get(
+            f"marketing-lists:{limit}",
+            lambda: get_marketing_lists(limit),
+            ttl_seconds=MARKETING_LIST_TTL_SECONDS,
+            stale_seconds=STALE_GRACE_SECONDS,
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -193,7 +246,12 @@ async def fetch_marketing_lists(
 @router.get("/marketing-lists/{list_id}/members")
 async def fetch_marketing_list_members(list_id: UUID, _user=Depends(require_user)):
     try:
-        return await get_marketing_list_members(str(list_id))
+        return await read_cache.get(
+            f"marketing-list-members:{list_id}",
+            lambda: get_marketing_list_members(str(list_id)),
+            ttl_seconds=MARKETING_LIST_TTL_SECONDS,
+            stale_seconds=STALE_GRACE_SECONDS,
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -225,7 +283,9 @@ async def create_enrichment_preview(request: EnrichmentPreviewRequest, _user=Dep
 @router.post("/accounts/enrichment-run", response_model=EnrichmentRunResponse)
 async def run_enrichment(request: EnrichmentPreviewRequest, _user=Depends(require_user)):
     try:
-        return await enrich_selected_accounts(request.account_ids, request.fields_to_update)
+        result = await enrich_selected_accounts(request.account_ids, request.fields_to_update)
+        invalidate_account_endpoint_caches()
+        return result
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -244,33 +304,45 @@ async def fetch_accounts_missing_website():
 
 @router.post("/accounts/enrich-one/{account_id}")
 async def enrich_one(account_id: str):
-    return await enrich_single_account_test(account_id)
+    result = await enrich_single_account_test(account_id)
+    invalidate_account_endpoint_caches()
+    return result
 
 
 @router.post("/accounts/revert/{account_id}")
 async def revert_account(account_id: str):
-    return await revert_account_fields(account_id)
+    result = await revert_account_fields(account_id)
+    invalidate_account_endpoint_caches()
+    return result
 
 
 @router.post("/accounts/revert-email/{account_id}")
 async def revert_email(account_id: str):
-    return await revert_account_fields(account_id, {
+    result = await revert_account_fields(account_id, {
         "emailaddress1": None
     })
+    invalidate_account_endpoint_caches()
+    return result
 
 
 @router.post("/accounts/revert-phone/{account_id}")
 async def revert_phone(account_id: str):
-    return await revert_account_fields(account_id, {
+    result = await revert_account_fields(account_id, {
         "telephone1": None
     })
+    invalidate_account_endpoint_caches()
+    return result
 
 
 @router.post("/accounts/enrich/{account_id}")
 async def enrich_account_route(account_id: str):
-    return await enrich_account(account_id)
+    result = await enrich_account(account_id)
+    invalidate_account_endpoint_caches()
+    return result
 
 
 @router.post("/accounts/enrich-all")
 async def enrich_all_accounts_route():
-    return await enrich_accounts()
+    result = await enrich_accounts()
+    invalidate_account_endpoint_caches()
+    return result
