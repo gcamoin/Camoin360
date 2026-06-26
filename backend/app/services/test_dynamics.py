@@ -1,8 +1,16 @@
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from . import dynamics
-from .dynamics import get_leadfeeder_visits, get_marketing_list_members, get_marketing_lists, normalize_marketing_list_record
+from .dynamics import (
+    create_pe_client,
+    create_pe_client_user,
+    get_leadfeeder_visits,
+    get_marketing_list_members,
+    get_marketing_lists,
+    get_pe_clients,
+    normalize_marketing_list_record,
+)
 
 
 class FakeDynamicsResponse:
@@ -75,6 +83,115 @@ class FakeAsyncClient:
             return FakeDynamicsResponse(self.website_visit_payload)
 
         return FakeDynamicsResponse(self.list_payload)
+
+
+class PEClientServiceTest(unittest.IsolatedAsyncioTestCase):
+    async def test_get_pe_clients_filters_client_accounts_and_normalizes_fields(self):
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {
+            "value": [
+                {
+                    "accountid": "account-1",
+                    "name": "Example Capital",
+                    "address1_city": "Albany",
+                    "address1_stateorprovince": "NY",
+                    "cr73c_softwarecontractexpirationdate": "2027-06-30",
+                    "new_account_contact": [{"contactid": "contact-1"}],
+                }
+            ]
+        }
+        client = AsyncMock()
+        client.get.return_value = response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+
+        with (
+            patch("backend.app.services.dynamics.get_access_token", AsyncMock(return_value="token")),
+            patch("backend.app.services.dynamics.httpx.AsyncClient", return_value=client),
+            patch("backend.app.services.dynamics.API_URL", "https://example.crm/api/data/v9.2"),
+        ):
+            result = await get_pe_clients(100)
+
+        requested_url = client.get.await_args.args[0]
+        self.assertIn("$filter=new_client eq true", requested_url)
+        self.assertEqual(result[0]["client_name"], "Example Capital")
+        self.assertEqual(result[0]["users"], 1)
+
+    async def test_create_pe_client_writes_account_fields_and_client_flag(self):
+        response = MagicMock()
+        response.status_code = 201
+        response.json.return_value = {
+            "accountid": "account-1",
+            "name": "Example Capital",
+            "address1_city": "Albany",
+            "address1_stateorprovince": "NY",
+            "cr73c_softwarecontractexpirationdate": "2027-06-30",
+        }
+        client = AsyncMock()
+        client.post.return_value = response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+
+        with (
+            patch("backend.app.services.dynamics.get_access_token", AsyncMock(return_value="token")),
+            patch("backend.app.services.dynamics.httpx.AsyncClient", return_value=client),
+            patch("backend.app.services.dynamics.API_URL", "https://example.crm/api/data/v9.2"),
+        ):
+            result = await create_pe_client(
+                {
+                    "client_name": "Example Capital",
+                    "city": "Albany",
+                    "state": "NY",
+                    "contract_expiration": "2027-06-30",
+                }
+            )
+
+        request_payload = client.post.await_args.kwargs["json"]
+        self.assertTrue(request_payload["new_client"])
+        self.assertEqual(request_payload["name"], "Example Capital")
+        self.assertEqual(request_payload["cr73c_softwarecontractexpirationdate"], "2027-06-30")
+        self.assertEqual(result["account_id"], "account-1")
+
+    async def test_create_pe_client_user_links_contact_to_client_account(self):
+        response = MagicMock()
+        response.status_code = 201
+        response.json.return_value = {
+            "contactid": "contact-1",
+            "firstname": "Jamie",
+            "lastname": "Taylor",
+            "emailaddress1": "jamie@example.com",
+        }
+        client = AsyncMock()
+        client.post.return_value = response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+
+        with (
+            patch("backend.app.services.dynamics.get_access_token", AsyncMock(return_value="token")),
+            patch("backend.app.services.dynamics.httpx.AsyncClient", return_value=client),
+            patch("backend.app.services.dynamics.API_URL", "https://example.crm/api/data/v9.2"),
+        ):
+            result = await create_pe_client_user(
+                {
+                    "account_id": "account-1",
+                    "first_name": "Jamie",
+                    "last_name": "Taylor",
+                    "email": "jamie@example.com",
+                    "phone": "555-0100",
+                    "username": "",
+                    "password": "Temporary-Pass-123",
+                }
+            )
+
+        request_payload = client.post.await_args.kwargs["json"]
+        self.assertEqual(request_payload["new_client@odata.bind"], "/accounts(account-1)")
+        self.assertEqual(request_payload["parentcustomerid_account@odata.bind"], "/accounts(account-1)")
+        self.assertEqual(request_payload["adx_identity_username"], "jamie@example.com")
+        self.assertEqual(request_payload["adx_identity_newpassword"], "Temporary-Pass-123")
+        self.assertTrue(request_payload["adx_identity_logonenabled"])
+        self.assertNotIn("password", result)
+        self.assertEqual(result["contact_id"], "contact-1")
 
 
 class MarketingListNormalizationTest(unittest.TestCase):

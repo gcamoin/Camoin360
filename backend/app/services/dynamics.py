@@ -29,6 +29,9 @@ MARKETING_LIST_CLIENT_ENRICHMENT_LIMIT = int(os.getenv("MARKETING_LIST_CLIENT_EN
 LEADFEEDER_VISIT_DEFAULT_LIMIT = 200
 LEADFEEDER_VISIT_MAX_LIMIT = 1000
 LEADFEEDER_VISIT_REQUEST_TIMEOUT_SECONDS = 60
+PE_CLIENT_DEFAULT_LIMIT = 1000
+PE_CLIENT_MAX_LIMIT = 5000
+PE_CLIENT_REQUEST_TIMEOUT_SECONDS = 60
 MARKETING_LIST_ACCOUNT_WEBSITE_VISIT_RELATIONSHIP_CANDIDATES = (
     "cr73c_lfapp_websitevisit",
 )
@@ -1008,6 +1011,133 @@ async def get_accounts_needing_enrichment():
         raise Exception(f"Dynamics GET error: {response.text}")
 
     return response.json().get("value", [])
+
+
+def normalize_pe_client_record(account: dict):
+    return {
+        "account_id": account.get("accountid", ""),
+        "client_name": account.get("name", ""),
+        "city": account.get("address1_city", ""),
+        "state": account.get("address1_stateorprovince", ""),
+        "users": len(account.get("new_account_contact") or []),
+        "contract_expiration": account.get("cr73c_softwarecontractexpirationdate"),
+    }
+
+
+async def get_pe_clients(limit: int | None = None):
+    client_limit = max(1, min(limit or PE_CLIENT_DEFAULT_LIMIT, PE_CLIENT_MAX_LIMIT))
+    token = await get_access_token()
+    url = (
+        f"{API_URL}/accounts?"
+        "$select=accountid,name,address1_city,address1_stateorprovince,"
+        "cr73c_softwarecontractexpirationdate&"
+        "$expand=new_account_contact($select=contactid)&"
+        "$filter=new_client eq true&"
+        "$orderby=name asc&"
+        f"$top={client_limit}"
+    )
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "OData-Version": "4.0",
+        "Prefer": "odata.maxpagesize=5000",
+    }
+    accounts = []
+    next_url = url
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(PE_CLIENT_REQUEST_TIMEOUT_SECONDS)) as client:
+            while next_url and len(accounts) < client_limit:
+                response = await client.get(next_url, headers=headers)
+
+                if response.status_code != 200:
+                    raise Exception(f"Dynamics GET error: {response.text}")
+
+                payload = response.json()
+                accounts.extend(payload.get("value", []))
+                next_url = payload.get("@odata.nextLink")
+    except httpx.TimeoutException as exc:
+        raise Exception(
+            f"Dynamics request timed out after {PE_CLIENT_REQUEST_TIMEOUT_SECONDS} seconds while loading PE clients"
+        ) from exc
+
+    return [normalize_pe_client_record(account) for account in accounts[:client_limit]]
+
+
+async def create_pe_client(client_details: dict):
+    token = await get_access_token()
+    url = f"{API_URL}/accounts"
+    payload = {
+        "name": client_details["client_name"],
+        "address1_city": client_details.get("city") or None,
+        "address1_stateorprovince": client_details.get("state") or None,
+        "cr73c_softwarecontractexpirationdate": client_details.get("contract_expiration") or None,
+        "new_client": True,
+    }
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "OData-Version": "4.0",
+        "Prefer": "return=representation",
+    }
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(PE_CLIENT_REQUEST_TIMEOUT_SECONDS)) as client:
+        response = await client.post(url, headers=headers, json=payload)
+
+    if response.status_code not in (200, 201, 204):
+        raise Exception(f"Dynamics CREATE error: {response.text}")
+
+    account = response.json() if response.status_code != 204 else payload
+    if response.status_code == 204:
+        entity_url = response.headers.get("OData-EntityId", "")
+        account["accountid"] = entity_url.rsplit("(", 1)[-1].rstrip(")") if entity_url else ""
+
+    return normalize_pe_client_record(account)
+
+
+async def create_pe_client_user(user_details: dict):
+    token = await get_access_token()
+    account_id = user_details["account_id"]
+    url = f"{API_URL}/contacts"
+    payload = {
+        "firstname": user_details["first_name"],
+        "lastname": user_details["last_name"],
+        "emailaddress1": user_details["email"],
+        "telephone1": user_details.get("phone") or None,
+        "adx_identity_username": user_details.get("username") or user_details["email"],
+        "adx_identity_newpassword": user_details["password"],
+        "adx_identity_logonenabled": True,
+        "new_client@odata.bind": f"/accounts({account_id})",
+        "parentcustomerid_account@odata.bind": f"/accounts({account_id})",
+    }
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "OData-Version": "4.0",
+        "Prefer": "return=representation",
+    }
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(PE_CLIENT_REQUEST_TIMEOUT_SECONDS)) as client:
+        response = await client.post(url, headers=headers, json=payload)
+
+    if response.status_code not in (200, 201, 204):
+        raise Exception(f"Dynamics CREATE contact error: {response.text}")
+
+    contact = response.json() if response.status_code != 204 else payload
+    return {
+        "contact_id": contact.get("contactid", ""),
+        "account_id": account_id,
+        "first_name": contact.get("firstname", user_details["first_name"]),
+        "last_name": contact.get("lastname", user_details["last_name"]),
+        "email": contact.get("emailaddress1", user_details["email"]),
+        "phone": contact.get("telephone1", user_details.get("phone") or ""),
+        "username": contact.get(
+            "adx_identity_username",
+            user_details.get("username") or user_details["email"],
+        ),
+    }
 
 
 async def update_account(account_id: str, updates: dict):

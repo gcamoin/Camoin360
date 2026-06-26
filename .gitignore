@@ -3,6 +3,7 @@ venv/
 __pycache__/
 backend/app/services/users.json
 *.pyc
+*.db
 logs/
 frontend/build/
 frontend/node_modules/.cache/
