@@ -2,13 +2,15 @@ import hmac
 import os
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
-from fastapi import Query
-from pydantic import BaseModel, Field
+from datetime import date
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from .auth import require_user
 from ..services.cache import AsyncStaleCache
 from ..services.duplicate_accounts import find_duplicate_account_groups
+from ..services.organizations import increment_organization_user_count
 from ..services.dynamics import (
     get_account_sector_counts,
     get_accounts_missing_data,
@@ -19,6 +21,9 @@ from ..services.dynamics import (
     get_marketing_lists,
     get_marketing_list_members,
     get_leadfeeder_visits,
+    get_pe_clients,
+    create_pe_client,
+    create_pe_client_user,
     invalidate_account_read_caches,
     enrich_one_account,
     enrich_account,
@@ -62,6 +67,40 @@ class EnrichmentRunResponse(BaseModel):
     updated: int
     skipped: int = 0
     results: list[dict]
+
+
+class PEClientCreateRequest(BaseModel):
+    client_name: str = Field(min_length=1, max_length=160)
+    city: str = Field(default="", max_length=80)
+    state: str = Field(default="", max_length=50)
+    contract_expiration: date | None = None
+
+    @field_validator("client_name", "city", "state", mode="before")
+    @classmethod
+    def strip_text_fields(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
+class PEClientUserCreateRequest(BaseModel):
+    account_id: UUID
+    first_name: str = Field(min_length=1, max_length=50)
+    last_name: str = Field(min_length=1, max_length=50)
+    email: str = Field(min_length=3, max_length=100)
+    phone: str = Field(default="", max_length=50)
+    username: str = Field(default="", max_length=100)
+    password: SecretStr = Field(min_length=8, max_length=128)
+
+    @field_validator("first_name", "last_name", "email", "phone", "username", mode="before")
+    @classmethod
+    def strip_user_text_fields(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value):
+        if "@" not in value:
+            raise ValueError("Enter a valid email address")
+        return value.lower()
 
 
 @router.get("/accounts/missing-data")
@@ -218,6 +257,66 @@ async def fetch_account_summary_analytics(_user=Depends(require_user)):
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Unable to load Dynamics sector summary: {exc}",
+        ) from exc
+
+
+@router.get("/pe-clients")
+async def fetch_pe_clients(
+    limit: int = Query(default=1000, ge=1, le=5000),
+    _user=Depends(require_user),
+):
+    try:
+        clients = await get_pe_clients(limit)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to load Dynamics PE clients: {exc}",
+        ) from exc
+
+    return {"count": len(clients), "limit": limit, "data": clients}
+
+
+@router.post("/pe-clients", status_code=status.HTTP_201_CREATED)
+async def add_pe_client(request: PEClientCreateRequest, _user=Depends(require_user)):
+    try:
+        client = await create_pe_client(
+            {
+                "client_name": request.client_name,
+                "city": request.city,
+                "state": request.state,
+                "contract_expiration": request.contract_expiration.isoformat()
+                if request.contract_expiration
+                else None,
+            }
+        )
+        return {"data": client}
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to create Dynamics PE client: {exc}",
+        ) from exc
+
+
+@router.post("/pe-clients/users", status_code=status.HTTP_201_CREATED)
+async def add_pe_client_user(request: PEClientUserCreateRequest, _user=Depends(require_user)):
+    try:
+        user = await create_pe_client_user(
+            {
+                "account_id": str(request.account_id),
+                "first_name": request.first_name,
+                "last_name": request.last_name,
+                "email": request.email,
+                "phone": request.phone,
+                "username": request.username,
+                "password": request.password.get_secret_value(),
+            }
+        )
+        increment_organization_user_count(str(request.account_id))
+        return {"data": user}
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to create Dynamics PE client user: {exc}",
         ) from exc
 
 

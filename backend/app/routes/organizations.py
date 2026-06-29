@@ -13,14 +13,12 @@ from ..schemas.organization import (
     OrganizationUpdate,
 )
 from ..services.client_users import create_client_user, list_client_users
-from ..services.dynamics import create_pe_client, get_pe_clients
 from ..services.organizations import (
+    create_organization,
     delete_organization,
     get_organization,
-    list_organizations,
-    sync_organizations,
+    list_manual_organizations,
     update_organization,
-    upsert_organization,
 )
 
 
@@ -40,11 +38,7 @@ async def fetch_organizations(
     limit: int = Query(default=1000, ge=1, le=5000),
     _user=Depends(require_user),
 ):
-    try:
-        dynamics_organizations = await get_pe_clients(limit)
-        organizations = sync_organizations(dynamics_organizations)
-    except Exception:
-        organizations = list_organizations()
+    organizations = list_manual_organizations()[:limit]
 
     return {"count": len(organizations), "data": organizations}
 
@@ -52,9 +46,9 @@ async def fetch_organizations(
 @router.post("", response_model=OrganizationResponse, status_code=status.HTTP_201_CREATED)
 async def add_organization(request: OrganizationCreate, _user=Depends(require_user)):
     try:
-        dynamics_organization = await create_pe_client(
+        return create_organization(
             {
-                "client_name": request.organization_name,
+                "organization_name": request.organization_name,
                 "city": request.city,
                 "state": request.state,
                 "contract_expiration": request.contract_expiration.isoformat()
@@ -62,7 +56,6 @@ async def add_organization(request: OrganizationCreate, _user=Depends(require_us
                 else None,
             }
         )
-        return upsert_organization(dynamics_organization)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

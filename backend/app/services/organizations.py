@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from ..database import get_database_connection
 from ..models.organization import Organization
 
@@ -9,6 +11,21 @@ def list_organizations():
             SELECT id, dynamics_account_id, organization_name, city, state, user_count,
                    contract_expiration, created_at, updated_at
             FROM organizations
+            ORDER BY organization_name COLLATE NOCASE ASC
+            """
+        ).fetchall()
+
+    return [Organization.from_row(row) for row in rows]
+
+
+def list_manual_organizations():
+    with get_database_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, dynamics_account_id, organization_name, city, state, user_count,
+                   contract_expiration, created_at, updated_at
+            FROM organizations
+            WHERE dynamics_account_id LIKE 'manual-%'
             ORDER BY organization_name COLLATE NOCASE ASC
             """
         ).fetchall()
@@ -34,6 +51,39 @@ def get_organization(organization_id: int):
 
     if row is None:
         raise LookupError("Organization not found")
+
+    return Organization.from_row(row)
+
+
+def create_organization(organization_details: dict):
+    with get_database_connection() as connection:
+        dynamics_account_id = f"manual-{uuid4()}"
+        connection.execute(
+            """
+            INSERT INTO organizations (
+                dynamics_account_id, organization_name, city, state, user_count,
+                contract_expiration
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                dynamics_account_id,
+                organization_details["organization_name"],
+                organization_details.get("city") or "",
+                organization_details.get("state") or "",
+                0,
+                organization_details.get("contract_expiration"),
+            ),
+        )
+        row = connection.execute(
+            """
+            SELECT id, dynamics_account_id, organization_name, city, state, user_count,
+                   contract_expiration, created_at, updated_at
+            FROM organizations
+            WHERE dynamics_account_id = ?
+            """,
+            (dynamics_account_id,),
+        ).fetchone()
 
     return Organization.from_row(row)
 

@@ -6,8 +6,10 @@ from unittest.mock import patch
 from backend.app import database
 from backend.app.services.client_users import create_client_user, list_client_users
 from backend.app.services.organizations import (
+    create_organization,
     delete_organization,
     get_organization,
+    list_manual_organizations,
     list_organizations,
     sync_organizations,
     update_organization,
@@ -28,6 +30,44 @@ class OrganizationServiceTest(unittest.TestCase):
     def tearDown(self):
         self.database_path_patch.stop()
         self.temporary_directory.cleanup()
+
+    def test_creates_manual_organization_without_dynamics_account(self):
+        created = create_organization(
+            {
+                "organization_name": "Manual Capital",
+                "city": "Albany",
+                "state": "NY",
+                "contract_expiration": "2027-06-30",
+            }
+        )
+
+        self.assertTrue(created.dynamics_account_id.startswith("manual-"))
+        self.assertEqual(created.organization_name, "Manual Capital")
+        self.assertEqual(created.user_count, 0)
+        self.assertEqual(list_organizations(), [created])
+
+    def test_lists_only_manual_organizations(self):
+        manual = create_organization(
+            {
+                "organization_name": "Manual Capital",
+                "city": "Albany",
+                "state": "NY",
+                "contract_expiration": None,
+            }
+        )
+        upsert_organization(
+            {
+                "account_id": "dynamics-account-1",
+                "client_name": "Dynamics Capital",
+                "city": "Boston",
+                "state": "MA",
+                "users": 0,
+                "contract_expiration": None,
+            }
+        )
+
+        self.assertEqual(list_manual_organizations(), [manual])
+        self.assertEqual(len(list_organizations()), 2)
 
     def test_creates_and_updates_organization_table_records(self):
         created = upsert_organization(

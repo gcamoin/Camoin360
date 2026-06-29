@@ -126,7 +126,7 @@ export default function MarketingLists() {
   const [loadedListLimit, setLoadedListLimit] = useState(INITIAL_LIST_LIMIT);
   const [hasMoreLists, setHasMoreLists] = useState(false);
   const [sortConfig, setSortConfig] = useState({ key: "createdon", direction: "desc" });
-  const [columnFilters, setColumnFilters] = useState(() => ({}));
+  const [searchQuery, setSearchQuery] = useState("");
   const [columnMenu, setColumnMenu] = useState({ anchorEl: null, columnKey: "" });
   const [activeMarketingList, setActiveMarketingList] = useState(null);
   const [listMembers, setListMembers] = useState({ accounts: [], contacts: [] });
@@ -137,17 +137,19 @@ export default function MarketingLists() {
 
   const filteredMarketingLists = useMemo(
     () => {
-      const normalizedColumnFilters = Object.entries(columnFilters)
-        .map(([columnKey, filterValue]) => [columnKey, normalizeSearch(filterValue)])
-        .filter(([_columnKey, filterValue]) => filterValue);
+      const normalizedSearchQuery = normalizeSearch(searchQuery);
+
+      if (!normalizedSearchQuery) {
+        return marketingLists;
+      }
 
       return marketingLists.filter((marketingList) =>
-        normalizedColumnFilters.every(([columnKey, filterValue]) =>
-          normalizeSearch(getColumnFilterValue(marketingList, columnKey)).includes(filterValue)
+        columns.some((column) =>
+          normalizeSearch(getColumnFilterValue(marketingList, column.key)).includes(normalizedSearchQuery)
         )
       );
     },
-    [columnFilters, marketingLists]
+    [marketingLists, searchQuery]
   );
 
   const sortedMarketingLists = useMemo(
@@ -159,29 +161,17 @@ export default function MarketingLists() {
     [page, rowsPerPage, sortedMarketingLists]
   );
 
-  const activeFilterCount = [
-    ...Object.values(columnFilters).map((filterValue) => Boolean(String(filterValue || "").trim())),
-  ].filter(Boolean).length;
+  const hasActiveSearch = Boolean(searchQuery.trim());
   const activeColumnMenu = columns.find((column) => column.key === columnMenu.columnKey);
 
-  function resetFilters() {
-    setColumnFilters({});
+  function clearSearch() {
+    setSearchQuery("");
     setPage(0);
   }
 
-  function updateColumnFilter(columnKey, value) {
+  function updateSearch(value) {
     setPage(0);
-    setColumnFilters((currentFilters) => {
-      const nextFilters = { ...currentFilters };
-
-      if (value.trim()) {
-        nextFilters[columnKey] = value;
-      } else {
-        delete nextFilters[columnKey];
-      }
-
-      return nextFilters;
-    });
+    setSearchQuery(value);
   }
 
   function openColumnMenu(event, columnKey) {
@@ -362,13 +352,30 @@ export default function MarketingLists() {
           py: 2,
         }}
       >
-        <Box>
-          <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="h6">
-            Marketing Lists
-          </Typography>
-          <Typography color="text.secondary" variant="body2">
-            Showing {paginatedMarketingLists.length} of {filteredMarketingLists.length} filtered marketing lists.
-          </Typography>
+        <Box
+          sx={{
+            alignItems: { xs: "stretch", md: "center" },
+            display: "flex",
+            flexDirection: { xs: "column", md: "row" },
+            gap: 2,
+          }}
+        >
+          <Box>
+            <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="h6">
+              Marketing Lists
+            </Typography>
+            <Typography color="text.secondary" variant="body2">
+              Showing {paginatedMarketingLists.length} of {filteredMarketingLists.length} filtered marketing lists.
+            </Typography>
+          </Box>
+          <TextField
+            inputProps={{ "aria-label": "Search marketing lists" }}
+            label="Search marketing lists"
+            onChange={(event) => updateSearch(event.target.value)}
+            size="small"
+            sx={{ minWidth: { sm: 280 } }}
+            value={searchQuery}
+          />
         </Box>
         <Stack alignItems="center" direction="row" spacing={1}>
           {hasMoreLists ? (
@@ -376,14 +383,14 @@ export default function MarketingLists() {
               {isLoadingMore ? "Loading more..." : `Load next ${LIST_LIMIT_STEP}`}
             </Button>
           ) : null}
-          {activeFilterCount ? (
+          {hasActiveSearch ? (
             <Button
-              onClick={resetFilters}
+              onClick={clearSearch}
               size="small"
               sx={{ borderRadius: 1, fontWeight: 800, whiteSpace: "nowrap" }}
               variant="outlined"
             >
-              Reset Filters
+              Clear Search
             </Button>
           ) : null}
           <Chip label={`${marketingLists.length} total`} sx={{ fontWeight: 800 }} />
@@ -420,11 +427,11 @@ export default function MarketingLists() {
                       {column.label}
                     </Typography>
                     <Button
-                      aria-label={`${column.label} filter and sort options`}
+                      aria-label={`${column.label} sort options`}
                       onClick={(event) => openColumnMenu(event, column.key)}
                       size="small"
                       sx={{
-                        borderColor: columnFilters[column.key] ? "primary.main" : "rgba(18, 59, 100, 0.26)",
+                        borderColor: "rgba(18, 59, 100, 0.26)",
                         color: "primary.main",
                         flex: "0 0 auto",
                         fontSize: "0.7rem",
@@ -496,16 +503,16 @@ export default function MarketingLists() {
               <TableRow>
                 <TableCell colSpan={columns.length} sx={{ p: 0 }}>
                   <EmptyState
-                    actionLabel={activeFilterCount ? "Clear filters" : undefined}
+                    actionLabel={hasActiveSearch ? "Clear search" : undefined}
                     compact
                     description={
-                      activeFilterCount
-                        ? "Clear or adjust the active column filters to broaden the results."
+                      hasActiveSearch
+                        ? "Clear or adjust the search to broaden the results."
                         : "Marketing lists will appear here after they are available from Dynamics."
                     }
-                    icon={activeFilterCount ? "search" : "database"}
-                    onAction={activeFilterCount ? resetFilters : undefined}
-                    title={activeFilterCount ? "No matching marketing lists" : "No marketing lists found"}
+                    icon={hasActiveSearch ? "search" : "database"}
+                    onAction={hasActiveSearch ? clearSearch : undefined}
+                    title={hasActiveSearch ? "No matching marketing lists" : "No marketing lists found"}
                   />
                 </TableCell>
               </TableRow>
@@ -529,17 +536,8 @@ export default function MarketingLists() {
       >
         <Box sx={{ p: 1.5, width: 240 }}>
           <Typography color="text.secondary" sx={{ mb: 1 }} variant="overline">
-            {activeColumnMenu?.label || "Column"} Options
+            {activeColumnMenu?.label || "Column"} Sort
           </Typography>
-          <TextField
-            autoFocus
-            fullWidth
-            inputProps={{ "aria-label": `Filter ${activeColumnMenu?.label || "column"}` }}
-            label="Filter"
-            onChange={(event) => updateColumnFilter(columnMenu.columnKey, event.target.value)}
-            size="small"
-            value={columnFilters[columnMenu.columnKey] || ""}
-          />
         </Box>
         <MenuItem
           onClick={() => {
@@ -565,15 +563,6 @@ export default function MarketingLists() {
           }}
         >
           Clear sort
-        </MenuItem>
-        <MenuItem
-          disabled={!columnFilters[columnMenu.columnKey]}
-          onClick={() => {
-            updateColumnFilter(columnMenu.columnKey, "");
-            closeColumnMenu();
-          }}
-        >
-          Clear filter
         </MenuItem>
       </Menu>
 
