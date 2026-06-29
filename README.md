@@ -41,3 +41,34 @@ npm start
 By default, the frontend calls `http://localhost:8000`. To use a different backend URL, start the frontend with `REACT_APP_API_BASE_URL` set.
 
 Signup requires a password with at least 8 characters.
+
+## Power Automate account enrichment
+
+Configure a Power Automate flow with a Dataverse **When a row is added** trigger for
+Accounts, followed by an HTTP action:
+
+```text
+Method: POST
+URL: https://<backend-url>/accounts/enrich-one/{accountid}
+Headers:
+  x-api-key: <POWER_AUTOMATE_API_KEY>
+  Content-Type: application/json
+Body: empty
+```
+
+The endpoint reads the Account, skips it when `cr73c_enrichmentattempted` is already
+true, and otherwise fills only blank fields before marking the attempt complete. It
+returns JSON containing `status`, `fields_updated`, and `skipped_reason`.
+
+Set these backend environment variables: `TENANT_ID`, `CLIENT_ID`, `CLIENT_SECRET`,
+`DYNAMICS_SCOPE`, `DYNAMICS_API_URL`, and `SEAMLESS_API_KEY`. Set
+`POWER_AUTOMATE_API_KEY` to require the `x-api-key` header (strongly recommended for
+any deployed endpoint); if it is unset, the header is optional for local development.
+
+For a local call:
+
+```bash
+curl -X POST "http://localhost:8000/accounts/enrich-one/<accountid>" \
+  -H "x-api-key: $POWER_AUTOMATE_API_KEY" \
+  -H "Content-Type: application/json"
+```

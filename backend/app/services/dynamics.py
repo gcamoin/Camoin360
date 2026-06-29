@@ -2,12 +2,23 @@ import os
 import asyncio
 import time
 import httpx
+import re
+import logging
 from dotenv import load_dotenv
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 from .auth import get_access_token
 from .metrics import increment_processed, log_update
 from .seamless import enrich_with_seamless
 from .usage import can_make_request, increment_usage, load_usage, WEEKLY_LIMIT
+
+logger = logging.getLogger(__name__)
+
+
+class DynamicsApiError(RuntimeError):
+    def __init__(self, message: str, status_code: int):
+        super().__init__(message)
+        self.status_code = status_code
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -43,6 +54,45 @@ _ACCOUNT_WEBSITE_VISIT_NAVIGATION_CACHE = {"loaded": False, "value": None}
 _WEBSITE_VISIT_CLIENT_NAVIGATION_CACHE = {"loaded": False, "value": None}
 _WEBSITE_VISIT_ACCOUNT_NAVIGATION_CACHE = {"loaded": False, "value": None}
 _DATA_QUALITY_REFRESH_TASK = None
+MARKETING_METRICS_CACHE_TTL_SECONDS = 600
+INTERNAL_COMPANY_ACCOUNT_ID = "08c283ff-6186-eb11-a812-0022481d279b"
+TARGET_INDUSTRIES_TABLE = "new_targetindustries"
+TARGET_INDUSTRY_CLIENT_LOOKUP_FIELD = "_new_clientid_value"
+TARGET_INDUSTRY_NAME_FIELD = "new_targetindustrydisplayname"
+TARGET_INDUSTRY_NAICS_FIELD = "new_naicsprefixcode"
+TARGET_INDUSTRY_CODE_FIELDS = (
+    "new_naicsprefixcode",
+    "naicscode",
+    "new_naicscode",
+)
+TARGET_INDUSTRY_ENTITY_SET_CANDIDATES = (
+    "new_targetindustries",
+    "new_targetindustrieses",
+    "new_targetindustry",
+)
+ACCOUNT_NAICS_FIELDS = (
+    "new_naicsprefixcode",
+    "naicscode",
+    "new_naicscode",
+)
+VISITOR_ACCOUNT_LOOKUP_FIELDS = (
+    "_new_account_value",
+    "_lfapp_account_value",
+    "_new_visitoraccount_value",
+    "_lfapp_visitoraccount_value",
+    "_new_visitor_value",
+    "_lfapp_visitor_value",
+)
+_DATA_QUALITY_CACHE = {"expires_at": 0, "data": None}
+_SUMMARY_CACHE = {"expires_at": 0, "data": None}
+_MARKETING_METRICS_CACHE = {"expires_at": 0, "data": None}
+_PROJECT_METRICS_CACHE = {"expires_at": 0, "data": None}
+MARKETING_RANGE_OPTIONS = {
+    "last_week": {"label": "Last Week", "days": 7},
+    "last_month": {"label": "Last Month", "days": 30},
+    "last_6_months": {"label": "Last 6 Months", "months": 6},
+    "last_year": {"label": "Last Year", "months": 12},
+}
 
 STATE_ABBREVIATIONS = {
     "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
@@ -988,6 +1038,617 @@ async def get_account_sector_counts():
     return summary
 
 
+def _shift_month(year: int, month: int, offset: int) -> tuple[int, int]:
+    month_index = (year * 12) + (month - 1) + offset
+    return month_index // 12, (month_index % 12) + 1
+
+
+def _month_buckets(now: datetime, month_count: int) -> list[dict[str, int | str]]:
+    start_year, start_month = _shift_month(now.year, now.month, -(month_count - 1))
+
+    return [
+        {
+            "year": year,
+            "month": month,
+            "month_key": f"{year}-{month:02d}",
+            "month_label": datetime(year, month, 1).strftime("%b '%y"),
+        }
+        for year, month in (_shift_month(start_year, start_month, offset) for offset in range(month_count))
+    ]
+
+
+def _last_twelve_months(now: datetime) -> list[dict[str, int | str]]:
+    return _month_buckets(now, 12)
+
+
+def _day_buckets(start_date: datetime, day_count: int) -> list[dict[str, str]]:
+    return [
+        {
+            "day_key": (start_date + timedelta(days=offset)).strftime("%Y-%m-%d"),
+            "day_label": (start_date + timedelta(days=offset)).strftime("%b %-d"),
+        }
+        for offset in range(day_count)
+    ]
+
+
+def _marketing_window(range_key: str, now: datetime) -> dict[str, object]:
+    option = MARKETING_RANGE_OPTIONS.get(range_key, MARKETING_RANGE_OPTIONS["last_year"])
+
+    if "days" in option:
+        day_count = int(option["days"])
+        start_date = (now - timedelta(days=day_count - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        return {
+            "range": range_key if range_key in MARKETING_RANGE_OPTIONS else "last_year",
+            "label": option["label"],
+            "start_date": start_date,
+            "buckets": _day_buckets(start_date, day_count),
+            "bucket_key": "day_key",
+            "bucket_label": "day_label",
+            "bucket_grain": "day",
+        }
+
+    month_count = int(option["months"])
+    buckets = _month_buckets(now, month_count)
+    return {
+        "range": range_key if range_key in MARKETING_RANGE_OPTIONS else "last_year",
+        "label": option["label"],
+        "start_date": datetime(
+            int(buckets[0]["year"]),
+            int(buckets[0]["month"]),
+            1,
+            tzinfo=timezone.utc,
+        ),
+        "buckets": buckets,
+        "bucket_key": "month_key",
+        "bucket_label": "month_label",
+        "bucket_grain": "month",
+    }
+
+
+async def get_website_visit_metrics(range_key: str = "last_year"):
+    now = time.time()
+    cache_key = range_key if range_key in MARKETING_RANGE_OPTIONS else "last_year"
+    cached_data = _MARKETING_METRICS_CACHE["data"] or {}
+    if cache_key in cached_data and _MARKETING_METRICS_CACHE["expires_at"] > now:
+        return cached_data[cache_key]
+
+    token = await get_access_token()
+    current_time = datetime.now(timezone.utc)
+    window = _marketing_window(range_key, current_time)
+    buckets = window["buckets"]
+    start_date = window["start_date"].strftime("%Y-%m-%dT%H:%M:%SZ")
+    headers = _dynamics_read_headers(token)
+
+    website_visits_url = (
+        f"{API_URL}/lfapp_websitevisits?"
+        f"$filter=_new_client_value eq {INTERNAL_COMPANY_ACCOUNT_ID} and lfapp_time ge {start_date}&"
+        "$orderby=lfapp_time asc"
+    )
+
+    async with httpx.AsyncClient() as client:
+        target_naics_codes = await _fetch_target_industry_naics_codes(client, headers)
+        website_visit_counts = await _count_website_visits(
+            client,
+            website_visits_url,
+            headers,
+            buckets,
+            window["bucket_key"],
+            window["bucket_grain"],
+            target_naics_codes,
+        )
+
+    visit_buckets = [
+        {
+            "period": bucket[window["bucket_label"]],
+            "period_key": bucket[window["bucket_key"]],
+            "visitors": website_visit_counts["counts_by_bucket"][bucket[window["bucket_key"]]],
+            "target_visitors": website_visit_counts["target_counts_by_bucket"][bucket[window["bucket_key"]]],
+        }
+        for bucket in buckets
+    ]
+
+    result = {
+        "company_id": INTERNAL_COMPANY_ACCOUNT_ID,
+        "range": window["range"],
+        "range_label": window["label"],
+        "bucket_grain": window["bucket_grain"],
+        "updated_at": current_time.isoformat(),
+        "total_visitors": website_visit_counts["total"],
+        "target_total_visitors": website_visit_counts["target_total"],
+        "months": visit_buckets,
+        "landing_pages": website_visit_counts["landing_pages"],
+    }
+    cached_data[cache_key] = result
+    _MARKETING_METRICS_CACHE["data"] = cached_data
+    _MARKETING_METRICS_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
+
+    return result
+
+
+async def get_project_creation_metrics():
+    now = time.time()
+    if _PROJECT_METRICS_CACHE["data"] is not None and _PROJECT_METRICS_CACHE["expires_at"] > now:
+        return _PROJECT_METRICS_CACHE["data"]
+
+    token = await get_access_token()
+    current_time = datetime.now(timezone.utc)
+    months = _last_twelve_months(current_time)
+    start_date = _month_window_start(months)
+    headers = _dynamics_read_headers(token)
+
+    projects_url = (
+        f"{API_URL}/new_projects?"
+        "$select=new_projectid,createdon,new_serviceline&"
+        f"$filter=createdon ge {start_date}&"
+        "$orderby=createdon asc"
+    )
+
+    async with httpx.AsyncClient() as client:
+        project_counts = await _count_projects_by_month_and_service_line(
+            client,
+            projects_url,
+            headers,
+            months,
+        )
+
+    project_months = [
+        {
+            "month": month["month_label"],
+            "month_key": month["month_key"],
+            "projects": project_counts["counts_by_month"][month["month_key"]],
+            "service_lines": project_counts["service_lines_by_month"][month["month_key"]],
+        }
+        for month in months
+    ]
+
+    result = {
+        "updated_at": current_time.isoformat(),
+        "total_projects": project_counts["total"],
+        "months": project_months,
+        "service_lines": project_counts["service_line_totals"],
+    }
+    _PROJECT_METRICS_CACHE["data"] = result
+    _PROJECT_METRICS_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
+
+    return result
+
+
+async def _count_projects_by_month_and_service_line(
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    months: list[dict[str, int | str]],
+) -> dict[str, dict[str, int] | int]:
+    counts_by_month = {month["month_key"]: 0 for month in months}
+    service_counts_by_month = {month["month_key"]: {} for month in months}
+    service_line_totals = {}
+    total = 0
+
+    while url:
+        response = await client.get(url, headers=headers)
+
+        if response.status_code != 200:
+            raise Exception(f"Dynamics GET error: {response.text}")
+
+        payload = response.json()
+
+        for project in payload.get("value", []):
+            created_on = project.get("createdon")
+            if not created_on:
+                continue
+
+            parsed_time = datetime.fromisoformat(created_on.replace("Z", "+00:00"))
+            month_key = parsed_time.strftime("%Y-%m")
+
+            if month_key not in counts_by_month:
+                continue
+
+            counts_by_month[month_key] += 1
+            total += 1
+
+            formatted_service_lines = project.get(
+                "new_serviceline@OData.Community.Display.V1.FormattedValue",
+                "",
+            )
+            service_lines = [
+                service_line.strip()
+                for service_line in formatted_service_lines.split(";")
+                if service_line.strip()
+            ] or ["Unspecified"]
+
+            for service_line in service_lines:
+                service_counts = service_counts_by_month[month_key]
+                service_counts[service_line] = service_counts.get(service_line, 0) + 1
+                service_line_totals[service_line] = service_line_totals.get(service_line, 0) + 1
+
+        url = payload.get("@odata.nextLink")
+
+    service_lines_by_month = {
+        month_key: [
+            {"service_line": service_line, "projects": project_count}
+            for service_line, project_count in sorted(
+                service_counts.items(),
+                key=lambda item: (-item[1], item[0].casefold()),
+            )
+        ]
+        for month_key, service_counts in service_counts_by_month.items()
+    }
+
+    return {
+        "counts_by_month": counts_by_month,
+        "service_lines_by_month": service_lines_by_month,
+        "service_line_totals": [
+            {"service_line": service_line, "projects": project_count}
+            for service_line, project_count in sorted(
+                service_line_totals.items(),
+                key=lambda item: (-item[1], item[0].casefold()),
+            )
+        ],
+        "total": total,
+    }
+
+
+def _month_window_start(months: list[dict[str, int | str]]) -> str:
+    first_month = months[0]
+    return datetime(
+        int(first_month["year"]),
+        int(first_month["month"]),
+        1,
+        tzinfo=timezone.utc,
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _dynamics_read_headers(token: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "OData-Version": "4.0",
+        "Prefer": 'odata.include-annotations="OData.Community.Display.V1.FormattedValue",odata.maxpagesize=5000',
+    }
+
+
+async def _count_website_visits(
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    buckets: list[dict[str, int | str]],
+    bucket_key: str,
+    bucket_grain: str,
+    target_naics_codes: set[str] | None = None,
+) -> dict[str, object]:
+    counts_by_bucket = {bucket[bucket_key]: 0 for bucket in buckets}
+    target_counts_by_bucket = {bucket[bucket_key]: 0 for bucket in buckets}
+    landing_page_counts = {}
+    visits_for_targeting = []
+    total = 0
+    target_total = 0
+
+    while url:
+        response = await client.get(url, headers=headers)
+
+        if response.status_code != 200:
+            raise Exception(f"Dynamics GET error: {response.text}")
+
+        payload = response.json()
+
+        for visit in payload.get("value", []):
+            visit_time = visit.get("lfapp_time")
+            if not visit_time:
+                continue
+
+            parsed_time = datetime.fromisoformat(visit_time.replace("Z", "+00:00"))
+            current_key = parsed_time.strftime("%Y-%m-%d" if bucket_grain == "day" else "%Y-%m")
+
+            if current_key not in counts_by_bucket:
+                continue
+
+            landing_page = (visit.get("lfapp_landingpage") or "").strip() or "Unspecified"
+            counts_by_bucket[current_key] += 1
+            landing_page_counts[landing_page] = landing_page_counts.get(landing_page, 0) + 1
+            total += 1
+
+            visitor_account_id = _get_visitor_account_id(visit)
+            if visitor_account_id:
+                visits_for_targeting.append(
+                    {
+                        "bucket_key": current_key,
+                        "visitor_account_id": visitor_account_id,
+                    }
+                )
+
+        url = payload.get("@odata.nextLink")
+
+    if target_naics_codes and visits_for_targeting:
+        visitor_account_ids = {
+            visit["visitor_account_id"]
+            for visit in visits_for_targeting
+        }
+        account_naics_codes = await _fetch_account_naics_codes(client, headers, visitor_account_ids)
+
+        for visit in visits_for_targeting:
+            account_naics = account_naics_codes.get(visit["visitor_account_id"], set())
+            if _has_target_naics_match(account_naics, target_naics_codes):
+                target_counts_by_bucket[visit["bucket_key"]] += 1
+                target_total += 1
+
+    return {
+        "counts_by_bucket": counts_by_bucket,
+        "target_counts_by_bucket": target_counts_by_bucket,
+        "landing_pages": [
+            {"landing_page": landing_page, "visitors": visitor_count}
+            for landing_page, visitor_count in sorted(
+                landing_page_counts.items(),
+                key=lambda item: (-item[1], item[0].casefold()),
+            )
+        ],
+        "total": total,
+        "target_total": target_total,
+    }
+
+
+async def _fetch_target_industry_naics_codes(
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+) -> set[str]:
+    entity_set_name = await _resolve_entity_set_name(
+        client,
+        headers,
+        TARGET_INDUSTRIES_TABLE,
+        TARGET_INDUSTRY_ENTITY_SET_CANDIDATES,
+    )
+    target_naics_codes = set()
+    code_field = await _resolve_existing_field(
+        client,
+        headers,
+        entity_set_name,
+        TARGET_INDUSTRY_CODE_FIELDS,
+        "target industries NAICS",
+    )
+    url = _target_industries_url(entity_set_name, code_field)
+
+    while url:
+        response = await client.get(url, headers=headers)
+
+        if response.status_code == 404:
+            entity_set_name = await _find_working_entity_set_name(
+                client,
+                headers,
+                TARGET_INDUSTRY_ENTITY_SET_CANDIDATES,
+            )
+            code_field = await _resolve_existing_field(
+                client,
+                headers,
+                entity_set_name,
+                TARGET_INDUSTRY_CODE_FIELDS,
+                "target industries NAICS",
+            )
+            url = _target_industries_url(entity_set_name, code_field)
+            response = await client.get(url, headers=headers)
+
+        if response.status_code != 200:
+            raise Exception(f"Dynamics GET error: {response.text}")
+
+        payload = response.json()
+
+        for target_industry in payload.get("value", []):
+            target_naics_codes.update(
+                _normalize_naics_codes(target_industry.get(code_field))
+            )
+
+        url = payload.get("@odata.nextLink")
+
+    return target_naics_codes
+
+
+async def _resolve_entity_set_name(
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+    logical_name: str,
+    fallback_candidates: tuple[str, ...],
+) -> str:
+    metadata_url = (
+        f"{API_URL}/EntityDefinitions(LogicalName='{logical_name}')?"
+        "$select=EntitySetName"
+    )
+    response = await client.get(metadata_url, headers=headers)
+
+    if response.status_code == 200:
+        entity_set_name = response.json().get("EntitySetName")
+        if entity_set_name:
+            return entity_set_name
+
+    return await _find_working_entity_set_name(client, headers, fallback_candidates)
+
+
+async def _find_working_entity_set_name(
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+    candidates: tuple[str, ...],
+) -> str:
+    last_error = ""
+
+    for candidate in candidates:
+        response = await client.get(
+            f"{API_URL}/{candidate}?$select={TARGET_INDUSTRY_NAICS_FIELD}&$top=1",
+            headers=headers,
+        )
+        if response.status_code == 200:
+            return candidate
+
+        last_error = response.text
+
+    raise Exception(f"Unable to find target industries entity set: {last_error}")
+
+
+async def _resolve_existing_field(
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+    entity_set_name: str,
+    field_candidates: tuple[str, ...],
+    field_label: str,
+) -> str:
+    last_error = ""
+
+    for field_name in field_candidates:
+        response = await client.get(
+            f"{API_URL}/{entity_set_name}?$select={field_name}&$top=1",
+            headers=headers,
+        )
+        if response.status_code == 200:
+            return field_name
+
+        last_error = response.text
+
+    raise Exception(f"Unable to find {field_label} field: {last_error}")
+
+
+def _target_industries_url(entity_set_name: str, code_field: str) -> str:
+    return (
+        f"{API_URL}/{entity_set_name}?"
+        f"$select={code_field}&"
+        f"$filter={TARGET_INDUSTRY_CLIENT_LOOKUP_FIELD} eq {INTERNAL_COMPANY_ACCOUNT_ID}"
+    )
+
+
+async def _fetch_account_naics_codes(
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+    account_ids: set[str],
+) -> dict[str, set[str]]:
+    account_naics_codes = {}
+    account_id_list = sorted(account_ids)
+    chunk_size = 20
+    try:
+        account_naics_field = await _resolve_existing_field(
+            client,
+            headers,
+            "accounts",
+            ACCOUNT_NAICS_FIELDS,
+            "account NAICS",
+        )
+    except Exception:
+        return account_naics_codes
+
+    for index in range(0, len(account_id_list), chunk_size):
+        chunk = account_id_list[index:index + chunk_size]
+        account_filter = " or ".join(
+            f"accountid eq {account_id}"
+            for account_id in chunk
+        )
+        url = (
+            f"{API_URL}/accounts?"
+            f"$select=accountid,{account_naics_field}&"
+            f"$filter={account_filter}"
+        )
+
+        while url:
+            response = await client.get(url, headers=headers)
+
+            if response.status_code != 200:
+                raise Exception(f"Dynamics GET error: {response.text}")
+
+            payload = response.json()
+
+            for account in payload.get("value", []):
+                account_id = _clean_guid(account.get("accountid"))
+                if not account_id:
+                    continue
+
+                account_naics_codes[account_id] = _normalize_naics_codes(
+                    account.get(account_naics_field)
+                )
+
+            url = payload.get("@odata.nextLink")
+
+    return account_naics_codes
+
+
+def _get_visitor_account_id(visit: dict) -> str | None:
+    for field_name in VISITOR_ACCOUNT_LOOKUP_FIELDS:
+        account_id = _clean_guid(visit.get(field_name))
+        if account_id:
+            return account_id
+
+    for field_name, field_value in visit.items():
+        normalized_name = field_name.casefold()
+        if (
+            field_name.startswith("_")
+            and field_name.endswith("_value")
+            and "account" in normalized_name
+            and "client" not in normalized_name
+            and "owner" not in normalized_name
+        ):
+            account_id = _clean_guid(field_value)
+            if account_id:
+                return account_id
+
+    return None
+
+
+def _clean_guid(value: object) -> str | None:
+    if not value:
+        return None
+
+    return str(value).strip("{}").casefold()
+
+
+def _normalize_naics_codes(value: object) -> set[str]:
+    if not value:
+        return set()
+
+    codes = set()
+    for part in re.split(r"[,;|/\\\s]+", str(value)):
+        digits = re.sub(r"\D", "", part)
+        if digits:
+            codes.add(digits)
+
+    return codes
+
+
+def _has_target_naics_match(account_naics_codes: set[str], target_naics_codes: set[str]) -> bool:
+    for account_code in account_naics_codes:
+        for target_code in target_naics_codes:
+            if account_code == target_code or account_code.startswith(target_code):
+                return True
+
+    return False
+
+
+async def _count_records_by_month(
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    months: list[dict[str, int | str]],
+    date_field: str,
+) -> dict[str, dict[str, int] | int]:
+    counts_by_month = {month["month_key"]: 0 for month in months}
+    total = 0
+
+    while url:
+        response = await client.get(url, headers=headers)
+
+        if response.status_code != 200:
+            raise Exception(f"Dynamics GET error: {response.text}")
+
+        payload = response.json()
+
+        for record in payload.get("value", []):
+            date_value = record.get(date_field)
+            if not date_value:
+                continue
+
+            parsed_time = datetime.fromisoformat(date_value.replace("Z", "+00:00"))
+            month_key = parsed_time.strftime("%Y-%m")
+
+            if month_key in counts_by_month:
+                counts_by_month[month_key] += 1
+                total += 1
+
+        url = payload.get("@odata.nextLink")
+
+    return {"counts_by_month": counts_by_month, "total": total}
+
+
 async def get_accounts_needing_enrichment():
     token = await get_access_token()
 
@@ -1155,9 +1816,185 @@ async def update_account(account_id: str, updates: dict):
         response = await client.patch(url, headers=headers, json=updates)
 
     if response.status_code not in [200, 204]:
-        raise Exception(f"Dynamics UPDATE error: {response.text}")
+        raise DynamicsApiError(f"Dynamics UPDATE error: {response.text}", response.status_code)
 
     return True
+
+
+ENRICHMENT_ACCOUNT_FIELDS = (
+    "accountid,name,websiteurl,telephone1,description,numberofemployees,"
+    "address1_city,address1_stateorprovince,address1_country,"
+    "cr73c_enrichmentattempted"
+)
+ENRICHMENT_FIELD_NAMES = (
+    "websiteurl",
+    "telephone1",
+    "description",
+    "numberofemployees",
+    "address1_city",
+    "address1_stateorprovince",
+    "address1_country",
+)
+
+
+def _is_blank(value: object) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _normalise_enrichment_value(field_name: str, value: object) -> object | None:
+    if _is_blank(value):
+        return None
+    if field_name == "numberofemployees":
+        try:
+            return int(str(value).replace(",", ""))
+        except (TypeError, ValueError):
+            logger.warning("Ignoring invalid Seamless employee count: %r", value)
+            return None
+    return str(value).strip() if isinstance(value, str) else value
+
+
+async def _mark_enrichment_attempted(account_id: str, updates: dict[str, object]) -> None:
+    """Set the required attempt flag and include the optional timestamp when available."""
+    attempt_updates = {
+        **updates,
+        "cr73c_enrichmentattempted": True,
+        "cr73c_enrichmentlastattemptedon": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    try:
+        await update_account(account_id, attempt_updates)
+    except DynamicsApiError as exc:
+        if exc.status_code != 400:
+            raise
+        # Some Dataverse environments do not have the optional timestamp field.
+        # Retry without it so the required attempt flag is never lost for that reason.
+        logger.warning("Could not update optional enrichment timestamp for %s: %s", account_id, exc)
+        attempt_updates.pop("cr73c_enrichmentlastattemptedon")
+        await update_account(account_id, attempt_updates)
+
+
+async def enrich_one_account(account_id: str) -> dict[str, object]:
+    """Enrich one Account for the Power Automate trigger without overwriting data."""
+    try:
+        account = await get_account(account_id, ENRICHMENT_ACCOUNT_FIELDS)
+    except Exception as exc:
+        logger.exception("Enrichment failed while fetching Dynamics account %s", account_id)
+        return {
+            "account_id": account_id,
+            "account_name": None,
+            "status": "failed",
+            "fields_updated": [],
+            "skipped_reason": f"Unable to fetch Dynamics account: {exc}",
+        }
+
+    account_name = account.get("name")
+    if account.get("cr73c_enrichmentattempted") is True:
+        logger.info("Enrichment skipped for account_id=%s name=%r: already attempted", account_id, account_name)
+        return {
+            "account_id": account_id,
+            "account_name": account_name,
+            "status": "skipped_already_attempted",
+            "fields_updated": [],
+            "skipped_reason": "Enrichment has already been attempted for this account.",
+        }
+
+    if not account_name:
+        try:
+            await _mark_enrichment_attempted(account_id, {})
+        except Exception:
+            logger.exception("Could not mark nameless account attempted for account_id=%s", account_id)
+            return {
+                "account_id": account_id,
+                "account_name": account_name,
+                "status": "failed",
+                "fields_updated": [],
+                "skipped_reason": "Unable to update Dynamics account.",
+            }
+        logger.info("Enrichment no_match for account_id=%s: account has no name", account_id)
+        return {
+            "account_id": account_id,
+            "account_name": account_name,
+            "status": "no_match",
+            "fields_updated": [],
+            "skipped_reason": "Account has no name to search.",
+        }
+
+    if not os.getenv("SEAMLESS_API_KEY"):
+        logger.error("Seamless enrichment cannot run for account_id=%s: SEAMLESS_API_KEY is not configured", account_id)
+        try:
+            await _mark_enrichment_attempted(account_id, {})
+        except Exception:
+            logger.exception("Could not mark unconfigured enrichment attempted for account_id=%s", account_id)
+        return {
+            "account_id": account_id,
+            "account_name": account_name,
+            "status": "failed",
+            "fields_updated": [],
+            "skipped_reason": "Seamless enrichment is not configured.",
+        }
+
+    if not can_make_request():
+        logger.warning("Enrichment skipped for account_id=%s name=%r: weekly credit limit reached", account_id, account_name)
+        return {
+            "account_id": account_id,
+            "account_name": account_name,
+            "status": "skipped_credit_limit",
+            "fields_updated": [],
+            "skipped_reason": f"Weekly Seamless credit limit ({WEEKLY_LIMIT}) has been reached.",
+        }
+
+    try:
+        # A credit is consumed once a Seamless request is attempted, even if it has no match or errors.
+        try:
+            seamless_data = await enrich_with_seamless(account)
+        finally:
+            usage = increment_usage()
+            logger.info("Seamless credit used for account_id=%s; usage=%s/%s", account_id, usage.get("credits_used"), WEEKLY_LIMIT)
+    except Exception as exc:
+        logger.exception("Seamless enrichment failed for account_id=%s name=%r", account_id, account_name)
+        try:
+            await _mark_enrichment_attempted(account_id, {})
+        except Exception:
+            logger.exception("Could not mark failed enrichment attempted for account_id=%s", account_id)
+        return {
+            "account_id": account_id,
+            "account_name": account_name,
+            "status": "failed",
+            "fields_updated": [],
+            "skipped_reason": "Seamless enrichment request failed.",
+        }
+
+    updates: dict[str, object] = {}
+    for field_name in ENRICHMENT_FIELD_NAMES:
+        value = _normalise_enrichment_value(field_name, seamless_data.get(field_name))
+        if _is_blank(account.get(field_name)) and value is not None:
+            updates[field_name] = value
+
+    try:
+        await _mark_enrichment_attempted(account_id, updates)
+    except Exception as exc:
+        logger.exception("Dynamics update failed for account_id=%s name=%r", account_id, account_name)
+        return {
+            "account_id": account_id,
+            "account_name": account_name,
+            "status": "failed",
+            "fields_updated": [],
+            "skipped_reason": "Unable to update Dynamics account.",
+        }
+
+    if not seamless_data:
+        result_status = "no_match"
+    elif updates:
+        result_status = "updated"
+    else:
+        result_status = "no_updates_needed"
+    logger.info("Enrichment %s for account_id=%s name=%r fields=%s", result_status, account_id, account_name, list(updates))
+    return {
+        "account_id": account_id,
+        "account_name": account_name,
+        "status": result_status,
+        "fields_updated": list(updates),
+        "skipped_reason": None,
+    }
 
 
 async def enrich_single_account_test(account_id: str):
@@ -1269,19 +2106,19 @@ async def enrich_account(account_id: str, fields_to_update: list[str] | None = N
     updates = {}
 
     # WEBSITE
-    website = seamless_data.get("website")
+    website = seamless_data.get("websiteurl")
     if should_update_field("websiteurl", requested_fields) and not account.get("websiteurl") and website:
         if not website.startswith("http"):
             website = f"https://{website}"
         updates["websiteurl"] = website
 
     # PHONE
-    phone = seamless_data.get("phone")
+    phone = seamless_data.get("telephone1")
     if should_update_field("telephone1", requested_fields) and not account.get("telephone1") and phone:
         updates["telephone1"] = phone
 
     # STATE
-    state = seamless_data.get("state")
+    state = seamless_data.get("address1_stateorprovince")
     print(f"📍 Raw state: {state}")
     if should_update_field("address1_stateorprovince", requested_fields) and state:
         state_clean = state.strip()
@@ -1291,12 +2128,12 @@ async def enrich_account(account_id: str, fields_to_update: list[str] | None = N
             updates["address1_stateorprovince"] = state_abbr
 
     # COUNTRY
-    country = seamless_data.get("country")
+    country = seamless_data.get("address1_country")
     if should_update_field("address1_country", requested_fields) and not account.get("address1_country") and country:
         updates["address1_country"] = country
 
     # EMPLOYEES
-    employees = seamless_data.get("employees")
+    employees = seamless_data.get("numberofemployees")
     if should_update_field("new_employees", requested_fields) and not account.get("numberofemployees") and employees:
         try:
             updates["numberofemployees"] = int(employees)
@@ -1310,6 +2147,10 @@ async def enrich_account(account_id: str, fields_to_update: list[str] | None = N
         if not account.get("description") or account.get("description").strip() == "":
             updates["description"] = description
             print("📝 Description updated")
+
+    city = seamless_data.get("address1_city")
+    if not account.get("address1_city") and city:
+        updates["address1_city"] = city
 
     if updates:
         print(f"🚀 Updating: {updates}")
