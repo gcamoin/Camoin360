@@ -18,6 +18,7 @@ from ..services.dynamics import (
     get_accounts_needing_enrichment,
     get_duplicate_account_records,
     delete_account,
+    get_marketing_list_conversion_analysis,
     get_marketing_lists,
     get_marketing_list_members,
     get_leadfeeder_visits,
@@ -343,6 +344,46 @@ async def fetch_marketing_lists(
         "limit": limit,
         "data": marketing_lists
     }
+
+
+@router.get("/marketing-lists/conversion-analysis/summary")
+async def fetch_marketing_list_conversion_analysis(
+    limit: int = Query(default=100, ge=1, le=500),
+    years: list[str] | None = Query(default=None),
+    match_mode: str = Query(default="same_year", pattern="^(same_year|any_time|on_after_list_creation)$"),
+    pe_clients: list[str] | None = Query(default=None),
+    bucket_overrides: list[str] | None = Query(default=None),
+    trade_show_terms: list[str] | None = Query(default=None),
+    exclusion_keywords: list[str] | None = Query(default=None),
+    size_threshold: int = Query(default=1500, ge=1, le=100000),
+    _user=Depends(require_user),
+):
+    year_key = ",".join(sorted(years or [])) or "default"
+    pe_client_key = ",".join(sorted(pe_clients or [])) or "auto"
+    bucket_override_key = ",".join(sorted(bucket_overrides or [])) or "auto"
+    trade_show_key = ",".join(sorted(trade_show_terms or [])) or "default"
+    exclusion_key = ",".join(sorted(exclusion_keywords or [])) or "default"
+    try:
+        return await read_cache.get(
+            f"marketing-list-conversion-analysis:{limit}:{year_key}:{match_mode}:{pe_client_key}:{bucket_override_key}:{trade_show_key}:{exclusion_key}:{size_threshold}",
+            lambda: get_marketing_list_conversion_analysis(
+                limit,
+                years,
+                match_mode,
+                pe_clients,
+                bucket_overrides,
+                trade_show_terms,
+                exclusion_keywords,
+                size_threshold,
+            ),
+            ttl_seconds=MARKETING_LIST_TTL_SECONDS,
+            stale_seconds=STALE_GRACE_SECONDS,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to load Dynamics marketing list conversion analysis: {exc}",
+        ) from exc
 
 
 @router.get("/marketing-lists/{list_id}/members")

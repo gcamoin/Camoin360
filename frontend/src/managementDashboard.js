@@ -15,6 +15,7 @@ import {
 import EconomicIndicators from "./components/EconomicIndicators";
 import { EmptyState } from "./components/UiPrimitives";
 import EmployeeProductivity from "./components/EmployeeProductivity";
+import MarketingListConversionAnalysis from "./components/MarketingListConversionAnalysis";
 import MarketingMetrics from "./components/MarketingMetrics";
 import ProductivityProjects from "./components/ProductivityProjects";
 
@@ -44,6 +45,13 @@ const views = {
     icon: "campaign",
     title: "Marketing Metrics",
     description: "Marketing performance and campaign metrics across accounts.",
+  },
+  marketingListConversion: {
+    label: "Conversion Analysis",
+    icon: "campaign",
+    title: "Marketing-List Conversion",
+    description:
+      "Prospect conversion rates for account marketing lists, rolled up by lead-generation channel and client.",
   },
   productivityProjects: {
     label: "Service Lines & Projects",
@@ -313,6 +321,9 @@ export default function ManagementDashboard({ onLogout }) {
 
               {activeView === "economicIndicators" && <EconomicIndicators />}
               {activeView === "marketingMetrics" && <MarketingMetrics />}
+              {activeView === "marketingListConversion" && (
+                <MarketingListConversionAnalysis />
+              )}
               {activeView === "productivityProjects" && (
                 <ProductivityProjects />
               )}

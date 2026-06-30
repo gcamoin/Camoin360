@@ -4,6 +4,7 @@ import time
 import httpx
 import re
 import logging
+from urllib.parse import quote
 from dotenv import load_dotenv
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -34,6 +35,13 @@ DATA_QUALITY_REQUEST_TIMEOUT_SECONDS = 60
 DUPLICATE_ACCOUNT_DEFAULT_LIMIT = 1000
 DUPLICATE_ACCOUNT_MAX_LIMIT = 1000
 MARKETING_LIST_DEFAULT_LIMIT = int(os.getenv("MARKETING_LIST_DEFAULT_LIMIT", "500"))
+MARKETING_LIST_CONVERSION_DEFAULT_LIMIT = int(os.getenv("MARKETING_LIST_CONVERSION_DEFAULT_LIMIT", "100"))
+MARKETING_LIST_CONVERSION_MAX_LIMIT = int(os.getenv("MARKETING_LIST_CONVERSION_MAX_LIMIT", "500"))
+MARKETING_LIST_CONVERSION_DEFAULT_YEARS = tuple(
+    year.strip()
+    for year in os.getenv("MARKETING_LIST_CONVERSION_YEARS", "2025,2026").split(",")
+    if year.strip()
+)
 MARKETING_LIST_REQUEST_TIMEOUT_SECONDS = 60
 MARKETING_LIST_CLIENT_ACCOUNT_SCAN_LIMIT = 25
 MARKETING_LIST_CLIENT_ENRICHMENT_LIMIT = int(os.getenv("MARKETING_LIST_CLIENT_ENRICHMENT_LIMIT", "50"))
@@ -963,7 +971,7 @@ async def get_marketing_list_members(list_id: str):
         _get_marketing_list_relationship_members(
             list_id,
             "listaccount_association",
-            "accountid,name,websiteurl,emailaddress1,telephone1,new_sector",
+            "accountid,name,websiteurl,emailaddress1,telephone1,new_sector,createdon,modifiedon,statuscode,statecode,customertypecode",
         ),
         _get_marketing_list_relationship_members(
             list_id,
@@ -978,6 +986,809 @@ async def get_marketing_list_members(list_id: str):
         "contact_count": len(contacts),
         "accounts": accounts,
         "contacts": contacts,
+    }
+
+
+TRADE_SHOW_TERMS = (
+    "hannover messe",
+    "berlin air show",
+    "mro americas",
+    "data center world",
+    "airventure",
+    "bio",
+    "paris air show",
+    "farnborough",
+    "selectusa",
+    "global food forum",
+)
+
+
+PE_TAG_PATTERNS = (
+    r"\bpe\b",
+    r"prospectengage",
+    r"prospect engage",
+)
+
+
+PE_CLIENT_ALIASES = {
+    "VCEDA": ("vceda",),
+    "Empire State Development": ("empire state development", "esd"),
+    "I-77 Alliance": ("i-77 alliance", "i77 alliance", "i 77 alliance"),
+    "Upstate SC Alliance": ("upstate sc alliance",),
+    "Southern Carolina Alliance": ("southern carolina alliance", "sca"),
+    "Missouri Partnership": ("missouri partnership",),
+    "MBREDC": ("mbredc",),
+    "Catawba County": ("catawba county",),
+    "Nassau County": ("nassau county",),
+    "Ohio SE": ("ohio se", "ohiose", "ohio southeast"),
+    "SEMO REDI": ("semo redi", "semo"),
+}
+
+
+def _normalized_list_label(marketing_list: dict) -> str:
+    return " ".join(
+        str(marketing_list.get(field) or "").lower()
+        for field in ("campaign", "marketing_list_name", "name")
+    )
+
+
+def _active_trade_show_terms(trade_show_terms: list[str] | tuple[str, ...] | None = None) -> tuple[str, ...]:
+    custom_terms = tuple(
+        str(term or "").strip().lower()
+        for term in trade_show_terms or []
+        if str(term or "").strip()
+    )
+    return custom_terms or TRADE_SHOW_TERMS
+
+
+def _active_exclusion_rules(exclusion_keywords: list[str] | tuple[str, ...] | None = None) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    custom_keywords = tuple(
+        str(keyword or "").strip().lower()
+        for keyword in exclusion_keywords or []
+        if str(keyword or "").strip()
+    )
+    if not custom_keywords:
+        return MARKETING_LIST_EXCLUSION_RULES
+
+    return MARKETING_LIST_EXCLUSION_RULES + (
+        ("admin_keyword", "Admin exclusion keyword", custom_keywords),
+    )
+
+
+def _get_trade_show_name(marketing_list: dict, trade_show_terms: list[str] | tuple[str, ...] | None = None) -> str:
+    label = _normalized_list_label(marketing_list)
+    for term in _active_trade_show_terms(trade_show_terms):
+        if term in label:
+            return term.title()
+
+    return ""
+
+
+def _is_trade_show_list(marketing_list: dict, trade_show_terms: list[str] | tuple[str, ...] | None = None) -> bool:
+    return bool(_get_trade_show_name(marketing_list, trade_show_terms))
+
+
+def _has_pe_tag(marketing_list: dict) -> bool:
+    label = _normalized_list_label(marketing_list)
+    return any(re.search(pattern, label) for pattern in PE_TAG_PATTERNS)
+
+
+def _detect_client_name_from_list(marketing_list: dict) -> str:
+    label = _normalized_list_label(marketing_list)
+    for client_name, aliases in PE_CLIENT_ALIASES.items():
+        if any(alias in label for alias in aliases):
+            return client_name
+
+    return ""
+
+
+def _detect_override_client_name_from_list(marketing_list: dict, override_pe_clients: set[str]) -> str:
+    label = _normalized_list_label(marketing_list)
+    for client_name in sorted(override_pe_clients):
+        if client_name.lower() in label:
+            return client_name
+
+    return ""
+
+
+def _classify_campaign_type(marketing_list: dict, pe_clients: set[str] | None = None) -> str:
+    if marketing_list.get("is_trade_show"):
+        return "Trade Show"
+
+    client_name = marketing_list.get("client_name") or _detect_client_name_from_list(marketing_list)
+    if client_name and pe_clients and client_name in pe_clients:
+        return "ProspectEngage (PE)"
+
+    return "Marketing Mission / Other"
+
+
+MARKETING_LIST_EXCLUSION_RULES = (
+    ("camoin_activity", "Camoin/ProspectEngage internal activity", (
+        "prospectengage crm",
+        "pe crm",
+        "pe marketing",
+        "pe demo",
+        "demo follow-up",
+        "pe 3.0",
+        "pe release",
+        "pe client contacts",
+        "pe approved",
+        "prospectengage - target",
+        "pe past prospects email",
+        "nysedc",
+        "sedc meet the consultants",
+        "sedc survey",
+        "expansion solutions",
+        "ct - camoin email",
+    )),
+    ("source_admin_pool", "Source/admin pool", (
+        "suppression",
+        "source-testing",
+        "source testing",
+        "account-removal",
+        "account removal",
+        "missing information",
+        "stock ticker",
+        "stock-ticker",
+        "sector universe",
+        "master",
+        "not-called",
+        "not called",
+        "vetting",
+        "intent feed",
+        "demandbase",
+    )),
+)
+
+
+SALESPERSON_LIST_PATTERNS = (
+    r"\brob\b",
+)
+
+
+def _get_marketing_list_exclusion(
+    marketing_list: dict,
+    company_count: int,
+    size_threshold: int = 1500,
+    exclusion_keywords: list[str] | tuple[str, ...] | None = None,
+) -> dict | None:
+    if company_count >= size_threshold:
+        return {
+            "code": "large_pool",
+            "reason": f"List has at least {size_threshold:,} companies",
+        }
+
+    list_name = str(marketing_list.get("marketing_list_name") or marketing_list.get("name") or "")
+    normalized_name = list_name.lower()
+
+    for code, reason, terms in _active_exclusion_rules(exclusion_keywords):
+        if any(term in normalized_name for term in terms):
+            return {
+                "code": code,
+                "reason": reason,
+            }
+
+    if any(re.search(pattern, normalized_name) for pattern in SALESPERSON_LIST_PATTERNS):
+        return {
+            "code": "camoin_activity",
+            "reason": "Camoin salesperson-named list",
+        }
+
+    return None
+
+
+def _conversion_rate(prospect_count: int, company_count: int) -> float:
+    if company_count <= 0:
+        return 0
+    return round((prospect_count / company_count) * 100, 2)
+
+
+def _companies_per_prospect(company_count: int, prospect_count: int) -> float | None:
+    if prospect_count <= 0:
+        return None
+    return round(company_count / prospect_count, 2)
+
+
+def _empty_rollup(key: str, label: str) -> dict:
+    return {
+        key: label,
+        "list_count": 0,
+        "_account_ids": set(),
+        "_converted_account_ids": set(),
+        "conversion_rate": 0,
+        "companies_per_prospect": None,
+    }
+
+
+def _finalize_conversion_rollups(rollups: dict[str, dict]) -> list[dict]:
+    finalized = []
+    for rollup in rollups.values():
+        company_count = len(rollup["_account_ids"])
+        prospect_count = len(rollup["_converted_account_ids"])
+        finalized.append(
+            {
+                **{
+                    key: value
+                    for key, value in rollup.items()
+                    if not key.startswith("_")
+                },
+                "company_count": company_count,
+                "prospect_count": prospect_count,
+                "conversion_rate": _conversion_rate(prospect_count, company_count),
+                "companies_per_prospect": _companies_per_prospect(company_count, prospect_count),
+            }
+        )
+
+    return sorted(
+        finalized,
+        key=lambda row: (row["prospect_count"], row["conversion_rate"], row["company_count"]),
+        reverse=True,
+    )
+
+
+def _finalize_year_bucket_rollups(rollups: dict[tuple[str, str], dict], years: list[str]) -> list[dict]:
+    bucket_order = {
+        "ProspectEngage (PE)": 0,
+        "Trade Show": 1,
+        "Marketing Mission / Other": 2,
+        "ALL OTHER LEAD GEN (TS+Missions)": 3,
+    }
+    finalized = []
+
+    for (year, bucket), rollup in rollups.items():
+        company_count = len(rollup["_account_ids"])
+        prospect_count = len(rollup["_converted_account_ids"])
+        finalized.append(
+            {
+                "year": year,
+                "campaign_type": bucket,
+                "list_count": rollup["list_count"],
+                "company_count": company_count,
+                "prospect_count": prospect_count,
+                "conversion_rate": _conversion_rate(prospect_count, company_count),
+                "companies_per_prospect": _companies_per_prospect(company_count, prospect_count),
+            }
+        )
+
+    return sorted(
+        finalized,
+        key=lambda row: (
+            years.index(row["year"]) if row["year"] in years else len(years),
+            bucket_order.get(row["campaign_type"], 99),
+            row["campaign_type"],
+        ),
+    )
+
+
+def _summarize_exclusions(excluded_rows: list[dict]) -> list[dict]:
+    summary = {}
+    for row in excluded_rows:
+        exclusion = row.get("exclusion") or {}
+        code = exclusion.get("code") or "unknown"
+        reason = exclusion.get("reason") or "Excluded"
+        summary.setdefault(code, {"code": code, "reason": reason, "list_count": 0, "company_count": 0})
+        summary[code]["list_count"] += 1
+        summary[code]["company_count"] += row.get("company_count") or 0
+
+    return sorted(summary.values(), key=lambda row: (row["list_count"], row["company_count"]), reverse=True)
+
+
+def _public_conversion_row(row: dict) -> dict:
+    return {
+        key: value
+        for key, value in row.items()
+        if not key.startswith("_")
+    }
+
+
+async def _fetch_dynamics_rows(client: httpx.AsyncClient, headers: dict, url: str) -> list[dict]:
+    rows = []
+    next_url = url
+
+    while next_url:
+        response = await client.get(next_url, headers=headers)
+        if response.status_code != 200:
+            raise Exception(f"Dynamics GET error: {response.text}")
+
+        payload = response.json()
+        rows.extend(payload.get("value", []))
+        next_url = payload.get("@odata.nextLink")
+
+    return rows
+
+
+def _normalize_conversion_years(years: list[str] | tuple[str, ...] | None) -> list[str]:
+    source_years = years or MARKETING_LIST_CONVERSION_DEFAULT_YEARS
+    normalized_years = []
+    for year in source_years:
+        year_text = str(year or "").strip()
+        if re.fullmatch(r"\d{4}", year_text):
+            normalized_years.append(year_text)
+
+    return normalized_years or list(MARKETING_LIST_CONVERSION_DEFAULT_YEARS)
+
+
+def _normalize_conversion_match_mode(match_mode: str | None) -> str:
+    normalized_mode = str(match_mode or "").strip().lower()
+    if normalized_mode in {"any_time", "on_after_list_creation"}:
+        return normalized_mode
+
+    return "same_year"
+
+
+def _normalize_override_pe_clients(pe_clients: list[str] | tuple[str, ...] | None) -> set[str]:
+    return {
+        str(client_name or "").strip()
+        for client_name in pe_clients or []
+        if str(client_name or "").strip()
+    }
+
+
+def _normalize_bucket_overrides(bucket_overrides: list[str] | tuple[str, ...] | None) -> dict[str, str]:
+    allowed_buckets = {"Trade Show", "ProspectEngage (PE)", "Marketing Mission / Other"}
+    overrides = {}
+
+    for override in bucket_overrides or []:
+        override_text = str(override or "").strip()
+        separator = "=" if "=" in override_text else ":"
+        if separator not in override_text:
+            continue
+
+        key, value = (part.strip() for part in override_text.split(separator, 1))
+        if key and value in allowed_buckets:
+            overrides[key] = value
+
+    return overrides
+
+
+def _get_marketing_list_years(marketing_list_name: str, years: list[str]) -> list[str]:
+    return [year for year in years if year in str(marketing_list_name or "")]
+
+
+def _build_marketing_list_conversion_lists_url(limit: int, years: list[str]) -> str:
+    year_filter = " or ".join(f"contains(listname,'{year}')" for year in years)
+    filters = [f"({year_filter})"] if year_filter else []
+    filters.append("(createdfromcode eq 1 or createdfromcode eq 2)")
+    filter_query = quote(" and ".join(filters), safe="()',$= ")
+
+    return (
+        f"{API_URL}/lists?"
+        "$select=listid,listname,createdon,membercount,createdfromcode&"
+        f"$filter={filter_query}&"
+        "$orderby=createdon desc&"
+        f"$top={limit}"
+    )
+
+
+async def _get_conversion_marketing_lists(client: httpx.AsyncClient, headers: dict, limit: int, years: list[str]) -> list[dict]:
+    rows = await _fetch_dynamics_rows(
+        client,
+        headers,
+        _build_marketing_list_conversion_lists_url(limit, years),
+    )
+
+    return [
+        {
+            "listid": row.get("listid"),
+            "marketing_list_name": row.get("listname") or "",
+            "createdon": row.get("createdon"),
+            "member_count": row.get("membercount") or 0,
+            "list_member_type": get_formatted_value(row, "createdfromcode") or row.get("createdfromcode") or "",
+            "createdfromcode": row.get("createdfromcode"),
+            "years": _get_marketing_list_years(row.get("listname") or "", years),
+        }
+        for row in rows[:limit]
+    ]
+
+
+async def _get_listmember_rows(client: httpx.AsyncClient, headers: dict, list_ids: list[str]) -> list[dict]:
+    if not list_ids:
+        return []
+
+    rows = []
+    chunk_size = 20
+    for index in range(0, len(list_ids), chunk_size):
+        chunk = list_ids[index:index + chunk_size]
+        filter_query = " or ".join(f"_listid_value eq {list_id}" for list_id in chunk)
+        url = (
+            f"{API_URL}/listmembers?"
+            "$select=_listid_value,entitytype,_entityid_value&"
+            f"$filter={quote(filter_query, safe='()_ =')}"
+        )
+        rows.extend(await _fetch_dynamics_rows(client, headers, url))
+
+    return rows
+
+
+async def _get_contact_parent_accounts(client: httpx.AsyncClient, headers: dict, contact_ids: set[str]) -> dict[str, str]:
+    if not contact_ids:
+        return {}
+
+    parent_accounts = {}
+    contact_id_list = sorted(contact_ids)
+    chunk_size = 20
+    for index in range(0, len(contact_id_list), chunk_size):
+        chunk = contact_id_list[index:index + chunk_size]
+        filter_query = " or ".join(f"contactid eq {contact_id}" for contact_id in chunk)
+        url = (
+            f"{API_URL}/contacts?"
+            "$select=contactid,_parentcustomerid_value&"
+            f"$filter={quote(filter_query, safe='()_ =')}"
+        )
+        contacts = await _fetch_dynamics_rows(client, headers, url)
+        for contact in contacts:
+            contact_id = contact.get("contactid")
+            parent_account_id = contact.get("_parentcustomerid_value")
+            if contact_id and parent_account_id:
+                parent_accounts[contact_id] = parent_account_id
+
+    return parent_accounts
+
+
+def _prospect_year(created_on: str | None) -> str:
+    return str(created_on or "")[:4]
+
+
+async def _get_prospects_by_year_and_account(
+    client: httpx.AsyncClient,
+    headers: dict,
+    years: list[str],
+    match_mode: str = "same_year",
+) -> dict[str, dict[str, list[dict]]]:
+    min_year = min(int(year) for year in years)
+    max_year = max(int(year) for year in years)
+    start_date = f"{min_year}-01-01T00:00:00Z"
+    end_date = f"{max_year + 1}-01-01T00:00:00Z"
+    if match_mode in {"any_time", "on_after_list_creation"}:
+        filter_query = "_new_prospectaccount_value ne null"
+    else:
+        filter_query = (
+            "_new_prospectaccount_value ne null"
+            f" and createdon ge {start_date}"
+            f" and createdon lt {end_date}"
+        )
+    url = (
+        f"{API_URL}/new_prospects?"
+        "$select=new_prospectid,_new_prospectaccount_value,new_client,createdon&"
+        f"$filter={quote(filter_query, safe='_ =:-')}"
+    )
+    prospects = await _fetch_dynamics_rows(client, headers, url)
+    prospects_by_year_and_account = {year: {} for year in years}
+    prospects_by_year_and_account["__any_time__"] = {}
+
+    for prospect in prospects:
+        account_id = prospect.get("_new_prospectaccount_value")
+        year = _prospect_year(prospect.get("createdon"))
+        if not account_id:
+            continue
+
+        prospect_record = {
+            "new_prospectid": prospect.get("new_prospectid"),
+            "account_id": account_id,
+            "client_name": get_formatted_value(prospect, "new_client") or prospect.get("new_client") or "",
+            "createdon": prospect.get("createdon"),
+        }
+        prospects_by_year_and_account["__any_time__"].setdefault(account_id, []).append(prospect_record)
+        if year in prospects_by_year_and_account:
+            prospects_by_year_and_account[year].setdefault(account_id, []).append(prospect_record)
+
+    return prospects_by_year_and_account
+
+
+def _group_company_accounts_by_list(listmember_rows: list[dict], contact_parent_accounts: dict[str, str]) -> dict[str, set[str]]:
+    accounts_by_list = {}
+
+    for row in listmember_rows:
+        list_id = row.get("_listid_value")
+        entity_type = str(row.get("entitytype") or "").lower()
+        entity_id = row.get("_entityid_value")
+
+        if not list_id or not entity_id:
+            continue
+
+        if entity_type == "account":
+            account_id = entity_id
+        elif entity_type == "contact":
+            account_id = contact_parent_accounts.get(entity_id)
+        else:
+            account_id = None
+
+        if account_id:
+            accounts_by_list.setdefault(list_id, set()).add(account_id)
+
+    return accounts_by_list
+
+
+def _is_on_or_after_list_creation(prospect: dict, list_created_on: str | None) -> bool:
+    prospect_created_on = str(prospect.get("createdon") or "")
+    if not prospect_created_on:
+        return False
+    if not list_created_on:
+        return True
+
+    return prospect_created_on >= str(list_created_on)
+
+
+async def get_marketing_list_conversion_analysis(
+    limit: int = MARKETING_LIST_CONVERSION_DEFAULT_LIMIT,
+    years: list[str] | tuple[str, ...] | None = None,
+    match_mode: str | None = None,
+    pe_clients: list[str] | tuple[str, ...] | None = None,
+    bucket_overrides: list[str] | tuple[str, ...] | None = None,
+    trade_show_terms: list[str] | tuple[str, ...] | None = None,
+    exclusion_keywords: list[str] | tuple[str, ...] | None = None,
+    size_threshold: int = 1500,
+):
+    analysis_limit = max(1, min(limit, MARKETING_LIST_CONVERSION_MAX_LIMIT))
+    analysis_years = _normalize_conversion_years(years)
+    conversion_match_mode = _normalize_conversion_match_mode(match_mode)
+    override_pe_clients = _normalize_override_pe_clients(pe_clients)
+    per_list_bucket_overrides = _normalize_bucket_overrides(bucket_overrides)
+    active_size_threshold = max(1, int(size_threshold or 1500))
+    active_trade_show_terms = _active_trade_show_terms(trade_show_terms)
+    active_exclusion_rules = _active_exclusion_rules(exclusion_keywords)
+    token = await get_access_token()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "OData-Version": "4.0",
+        "Prefer": 'odata.include-annotations="OData.Community.Display.V1.FormattedValue",odata.maxpagesize=5000',
+    }
+    timeout = httpx.Timeout(MARKETING_LIST_REQUEST_TIMEOUT_SECONDS)
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            marketing_lists = await _get_conversion_marketing_lists(client, headers, analysis_limit, analysis_years)
+            list_ids = [
+                marketing_list["listid"]
+                for marketing_list in marketing_lists
+                if marketing_list.get("listid")
+            ]
+            listmember_rows = await _get_listmember_rows(client, headers, list_ids)
+            contact_ids = {
+                row.get("_entityid_value")
+                for row in listmember_rows
+                if str(row.get("entitytype") or "").lower() == "contact" and row.get("_entityid_value")
+            }
+            contact_parent_accounts, prospects_by_year_and_account = await asyncio.gather(
+                _get_contact_parent_accounts(client, headers, contact_ids),
+                _get_prospects_by_year_and_account(client, headers, analysis_years, conversion_match_mode),
+            )
+    except httpx.TimeoutException as exc:
+        raise Exception(
+            f"Dynamics request timed out after {MARKETING_LIST_REQUEST_TIMEOUT_SECONDS} seconds while loading marketing-list conversion analysis"
+        ) from exc
+
+    accounts_by_list = _group_company_accounts_by_list(listmember_rows, contact_parent_accounts)
+
+    candidate_rows = []
+    excluded_rows = []
+    for marketing_list in marketing_lists:
+        list_id = marketing_list.get("listid")
+        list_years = marketing_list.get("years") or _get_marketing_list_years(
+            marketing_list.get("marketing_list_name") or "",
+            analysis_years,
+        )
+        account_ids = accounts_by_list.get(list_id, set())
+        matching_prospects_by_account = {}
+        converted_account_ids_by_year = {year: set() for year in list_years}
+        for year in list_years:
+            prospects_by_account = (
+                prospects_by_year_and_account.get("__any_time__", {})
+                if conversion_match_mode in {"any_time", "on_after_list_creation"}
+                else prospects_by_year_and_account.get(year, {})
+            )
+            for account_id in account_ids:
+                prospects = prospects_by_account.get(account_id)
+                if conversion_match_mode == "on_after_list_creation":
+                    prospects = [
+                        prospect
+                        for prospect in prospects or []
+                        if _is_on_or_after_list_creation(prospect, marketing_list.get("createdon"))
+                    ]
+                if prospects:
+                    matching_prospects_by_account.setdefault(account_id, []).extend(prospects)
+                    converted_account_ids_by_year.setdefault(year, set()).add(account_id)
+
+        converted_prospect_accounts = {
+            account_id: matching_prospects_by_account.get(account_id, [])
+            for account_id in account_ids
+            if matching_prospects_by_account.get(account_id)
+        }
+        company_count = len(account_ids)
+        exclusion = _get_marketing_list_exclusion(
+            marketing_list,
+            company_count,
+            active_size_threshold,
+            exclusion_keywords,
+        )
+        prospect_count = len(converted_prospect_accounts)
+        prospect_records = [
+            prospect
+            for prospects in converted_prospect_accounts.values()
+            for prospect in prospects
+        ]
+        detected_client_name = (
+            _detect_client_name_from_list(marketing_list)
+            or _detect_override_client_name_from_list(marketing_list, override_pe_clients)
+        )
+        prospect_client_name = next(
+            (prospect.get("client_name") for prospect in prospect_records if prospect.get("client_name")),
+            "",
+        )
+
+        row = {
+            "listid": marketing_list.get("listid"),
+            "marketing_list_name": marketing_list.get("marketing_list_name") or marketing_list.get("name") or "",
+            "createdon": marketing_list.get("createdon"),
+            "years": list_years,
+            "client_name": detected_client_name or prospect_client_name or "Unassigned",
+            "campaign": marketing_list.get("campaign") or "Unassigned",
+            "has_pe_tag": _has_pe_tag(marketing_list),
+            "is_trade_show": _is_trade_show_list(marketing_list, active_trade_show_terms),
+            "trade_show_name": _get_trade_show_name(marketing_list, active_trade_show_terms),
+            "company_count": company_count,
+            "prospect_count": prospect_count,
+            "conversion_rate": _conversion_rate(prospect_count, company_count),
+            "companies_per_prospect": _companies_per_prospect(company_count, prospect_count),
+            "prospect_records": prospect_records[:10],
+            "_account_ids": set(account_ids),
+            "_converted_account_ids": set(converted_prospect_accounts.keys()),
+            "_converted_account_ids_by_year": converted_account_ids_by_year,
+        }
+
+        if exclusion:
+            excluded_rows.append({**row, "exclusion": exclusion})
+            continue
+
+        candidate_rows.append(row)
+
+    pe_clients = {
+        row["client_name"]
+        for row in candidate_rows
+        if row.get("client_name") and row["client_name"] != "Unassigned" and row.get("has_pe_tag")
+    } | override_pe_clients
+
+    rows = []
+    for row in candidate_rows:
+        override_bucket = (
+            per_list_bucket_overrides.get(row.get("listid") or "")
+            or per_list_bucket_overrides.get(row.get("marketing_list_name") or "")
+        )
+        rows.append(
+            {
+                **row,
+                "campaign_type": override_bucket or _classify_campaign_type(row, pe_clients),
+                "bucket_override": override_bucket or "",
+                "is_pe_client": row.get("client_name") in pe_clients,
+            }
+        )
+
+    campaign_type_rollups = {}
+    year_bucket_rollups = {}
+    client_rollups = {}
+    campaign_rollups = {}
+    trade_show_rollups = {}
+    total_account_ids = set()
+    total_converted_account_ids = set()
+
+    for row in rows:
+        total_account_ids.update(row["_account_ids"])
+        total_converted_account_ids.update(row["_converted_account_ids"])
+
+        campaign_type = row["campaign_type"]
+        campaign_type_rollups.setdefault(campaign_type, _empty_rollup("campaign_type", campaign_type))
+        campaign_type_rollups[campaign_type]["_account_ids"].update(row["_account_ids"])
+        campaign_type_rollups[campaign_type]["_converted_account_ids"].update(row["_converted_account_ids"])
+        campaign_type_rollups[campaign_type]["list_count"] += 1
+
+        for year in row.get("years") or []:
+            year_bucket_key = (year, campaign_type)
+            year_bucket_rollups.setdefault(
+                year_bucket_key,
+                {"list_count": 0, "_account_ids": set(), "_converted_account_ids": set()},
+            )
+            year_bucket_rollups[year_bucket_key]["_account_ids"].update(row["_account_ids"])
+            year_bucket_rollups[year_bucket_key]["_converted_account_ids"].update(
+                row.get("_converted_account_ids_by_year", {}).get(year, set())
+            )
+            year_bucket_rollups[year_bucket_key]["list_count"] += 1
+
+            if campaign_type in ("Trade Show", "Marketing Mission / Other"):
+                combined_key = (year, "ALL OTHER LEAD GEN (TS+Missions)")
+                year_bucket_rollups.setdefault(
+                    combined_key,
+                    {"list_count": 0, "_account_ids": set(), "_converted_account_ids": set()},
+                )
+                year_bucket_rollups[combined_key]["_account_ids"].update(row["_account_ids"])
+                year_bucket_rollups[combined_key]["_converted_account_ids"].update(
+                    row.get("_converted_account_ids_by_year", {}).get(year, set())
+                )
+                year_bucket_rollups[combined_key]["list_count"] += 1
+
+        client_name = row["client_name"] or "Unassigned"
+        client_rollups.setdefault(client_name, _empty_rollup("client_name", client_name))
+        client_rollups[client_name]["_account_ids"].update(row["_account_ids"])
+        client_rollups[client_name]["_converted_account_ids"].update(row["_converted_account_ids"])
+        client_rollups[client_name]["list_count"] += 1
+
+        campaign = row["campaign"] or "Unassigned"
+        campaign_rollups.setdefault(campaign, _empty_rollup("campaign", campaign))
+        campaign_rollups[campaign]["_account_ids"].update(row["_account_ids"])
+        campaign_rollups[campaign]["_converted_account_ids"].update(row["_converted_account_ids"])
+        campaign_rollups[campaign]["list_count"] += 1
+
+        if campaign_type == "Trade Show":
+            trade_show_name = row.get("trade_show_name") or "Unassigned Trade Show"
+            trade_show_rollups.setdefault(trade_show_name, _empty_rollup("trade_show_name", trade_show_name))
+            trade_show_rollups[trade_show_name]["_account_ids"].update(row["_account_ids"])
+            trade_show_rollups[trade_show_name]["_converted_account_ids"].update(row["_converted_account_ids"])
+            trade_show_rollups[trade_show_name]["list_count"] += 1
+
+    total_companies = len(total_account_ids)
+    total_prospects = len(total_converted_account_ids)
+
+    return {
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "limit": analysis_limit,
+        "years": analysis_years,
+        "match_mode": conversion_match_mode,
+        "list_count": len(rows),
+        "excluded_list_count": len(excluded_rows),
+        "excluded_company_count": sum(row.get("company_count") or 0 for row in excluded_rows),
+        "exclusion_rollups": _summarize_exclusions(excluded_rows),
+        "excluded_lists": [
+            _public_conversion_row(row)
+            for row in sorted(excluded_rows, key=lambda row: row["createdon"] or "", reverse=True)[:100]
+        ],
+        "pe_clients": sorted(pe_clients),
+        "override_pe_clients": sorted(override_pe_clients),
+        "bucket_overrides": per_list_bucket_overrides,
+        "company_count": total_companies,
+        "prospect_count": total_prospects,
+        "conversion_rate": _conversion_rate(total_prospects, total_companies),
+        "companies_per_prospect": _companies_per_prospect(total_companies, total_prospects),
+        "methodology": {
+            "member_scope": "Account and contact marketing lists whose list name contains the selected year. Contact members are mapped to parent account before conversion matching.",
+            "conversion_rule": "Default conversion is same-year: a company is counted when its account GUID appears in new_prospect._new_prospectaccount_value for the same year named by the marketing list. Any-time mode counts a matched prospect from any created date. On/after list creation mode counts prospects created on or after the list createdon date.",
+            "exclusion_rule": "Internal Camoin activity, source/admin pools, salesperson-named lists, and lists with at least 1,500 companies are dropped before campaign/client bucketing.",
+            "bucket_rule": "Final bucket order is excluded, then known trade show, then PE client, then Marketing Mission / Other. A client is PE when it has at least one non-excluded PE/ProspectEngage-tagged list.",
+            "override_rule": "Admins can flag PE clients and override non-excluded per-list buckets. Overrides are applied after exclusion so excluded/admin/source lists stay out of denominators.",
+            "rollup_rule": "Rollups de-duplicate companies within each bucket and use converted companies divided by distinct companies. A company can still appear in multiple buckets, so bucket totals should not be summed.",
+            "comparison_rule": "2025 is a full-year cohort and 2026 is partial-year-to-date, so compare conversion rates and companies per prospect instead of raw counts.",
+            "causation_caveat": "A member-to-prospect match is correlation, not proof that the list produced the prospect. Treat rates as directional benchmarks.",
+            "matching_caveat": "Matching relies on Dynamics GUIDs, never display names, because state/name data is inconsistent.",
+        },
+        "config": {
+            "match_mode": conversion_match_mode,
+            "available_match_modes": ["same_year", "any_time", "on_after_list_creation"],
+            "list_year_patterns": analysis_years,
+            "large_list_company_threshold": active_size_threshold,
+            "trade_show_terms": list(active_trade_show_terms),
+            "pe_client_aliases": PE_CLIENT_ALIASES,
+            "exclusion_rules": [
+                {"code": code, "reason": reason, "terms": list(terms)}
+                for code, reason, terms in active_exclusion_rules
+            ],
+            "admin_override_fields": [
+                "years",
+                "pe_clients",
+                "trade_show_terms",
+                "exclusion_keywords",
+                "size_threshold",
+                "per_list_bucket_override",
+                "match_mode",
+            ],
+        },
+        "campaign_type_rollups": _finalize_conversion_rollups(campaign_type_rollups),
+        "year_bucket_rollups": _finalize_year_bucket_rollups(year_bucket_rollups, analysis_years),
+        "client_rollups": _finalize_conversion_rollups(client_rollups),
+        "trade_show_rollups": _finalize_conversion_rollups(trade_show_rollups),
+        "campaign_rollups": _finalize_conversion_rollups(campaign_rollups),
+        "lists": [
+            _public_conversion_row(row)
+            for row in sorted(rows, key=lambda row: row["createdon"] or "", reverse=True)
+        ],
     }
 
 
@@ -1182,6 +1993,20 @@ async def get_project_creation_metrics():
         f"$filter=createdon ge {start_date}&"
         "$orderby=createdon asc"
     )
+    contracted_projects_url = (
+        f"{API_URL}/new_projects?"
+        "$select=new_projectid,new_feeforcamoin,new_contractdate&"
+        f"$filter=new_contractdate ge {start_date}&"
+        "$orderby=new_contractdate desc"
+    )
+    proposed_opportunities_url = (
+        f"{API_URL}/opportunities?"
+        "$select=opportunityid,name,new_feeforcamoin,cr73c_dateproposed&"
+        f"$filter=cr73c_dateproposed ge {start_date}&"
+        "$orderby=cr73c_dateproposed desc"
+    )
+
+    financial_rows_errors = []
 
     async with httpx.AsyncClient() as client:
         project_counts = await _count_projects_by_month_and_service_line(
@@ -1190,6 +2015,36 @@ async def get_project_creation_metrics():
             headers,
             months,
         )
+        contracted_projects_result, proposed_opportunities_result = await asyncio.gather(
+            _fetch_project_financial_rows(
+                client,
+                contracted_projects_url,
+                headers,
+                "new_projectid",
+                "new_contractdate",
+            ),
+            _fetch_project_financial_rows(
+                client,
+                proposed_opportunities_url,
+                headers,
+                "opportunityid",
+                "cr73c_dateproposed",
+                name_field="name",
+            ),
+            return_exceptions=True,
+        )
+
+    if isinstance(contracted_projects_result, Exception):
+        contracted_projects = []
+        financial_rows_errors.append(f"Unable to load contracted project fees: {contracted_projects_result}")
+    else:
+        contracted_projects = contracted_projects_result
+
+    if isinstance(proposed_opportunities_result, Exception):
+        proposed_opportunities = []
+        financial_rows_errors.append(f"Unable to load proposed opportunity fees: {proposed_opportunities_result}")
+    else:
+        proposed_opportunities = proposed_opportunities_result
 
     project_months = [
         {
@@ -1206,11 +2061,52 @@ async def get_project_creation_metrics():
         "total_projects": project_counts["total"],
         "months": project_months,
         "service_lines": project_counts["service_line_totals"],
+        "contracted_projects": contracted_projects,
+        "proposed_opportunities": proposed_opportunities,
+        "financial_rows_errors": financial_rows_errors,
     }
     _PROJECT_METRICS_CACHE["data"] = result
     _PROJECT_METRICS_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
 
     return result
+
+
+async def _fetch_project_financial_rows(
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    id_field: str,
+    date_field: str,
+    name_field: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    rows = []
+
+    while url and len(rows) < limit:
+        response = await client.get(url, headers=headers)
+
+        if response.status_code != 200:
+            raise Exception(f"Dynamics GET error: {response.text}")
+
+        payload = response.json()
+        for record in payload.get("value", []):
+            if len(rows) >= limit:
+                break
+
+            rows.append(
+                {
+                    "id": record.get(id_field),
+                    "name": record.get(name_field) if name_field else "",
+                    "fee_for_camoin": record.get("new_feeforcamoin"),
+                    "fee_for_camoin_formatted": get_formatted_value(record, "new_feeforcamoin") or "",
+                    "date": record.get(date_field),
+                    "date_formatted": get_formatted_value(record, date_field) or "",
+                }
+            )
+
+        url = payload.get("@odata.nextLink")
+
+    return rows
 
 
 async def _count_projects_by_month_and_service_line(
