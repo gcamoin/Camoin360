@@ -10,6 +10,7 @@ from .routes.economic_indicators import router as economic_indicators_router
 from .routes.marketing import router as marketing_router
 from .routes.metrics import router as metrics_router
 from .routes.organizations import router as organizations_router
+from .routes.software_subscriptions import router as software_subscriptions_router
 
 app = FastAPI()
 initialize_database()
@@ -34,6 +35,7 @@ app.include_router(economic_indicators_router)
 app.include_router(marketing_router)
 app.include_router(metrics_router)
 app.include_router(organizations_router)
+app.include_router(software_subscriptions_router)
 
 
 @app.get("/")

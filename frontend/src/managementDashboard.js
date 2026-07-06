@@ -18,6 +18,7 @@ import EmployeeProductivity from "./components/EmployeeProductivity";
 import MarketingListConversionAnalysis from "./components/MarketingListConversionAnalysis";
 import MarketingMetrics from "./components/MarketingMetrics";
 import ProductivityProjects from "./components/ProductivityProjects";
+import SoftwareInventory from "./components/SoftwareInventory";
 
 const views = {
   overview: {
@@ -60,6 +61,13 @@ const views = {
     description:
       "Project status, team productivity, and operational throughput.",
   },
+  softwareInventory: {
+    label: "Software Inventory",
+    icon: "inventory",
+    title: "Software Inventory",
+    description:
+      "Current software and data subscriptions, ownership, access, renewal timing, vendor contacts, and cost history.",
+  },
   employeeProductivity: {
     label: "Employee Productivity",
     icon: "projects",
@@ -77,6 +85,8 @@ const iconPaths = {
   expand:
     "m8.5 5 7 7-7 7 1.4 1.4 8.4-8.4-8.4-8.4L8.5 5Zm-4 0 7 7-7 7 1.4 1.4 8.4-8.4-8.4-8.4L4.5 5Z",
   finance: "M5 19V9h3v10H5Zm5 0V5h3v14h-3Zm5 0v-7h3v7h-3Z",
+  inventory:
+    "M5 4h14v16H5V4Zm2 2v12h10V6H7Zm2 2h6v2H9V8Zm0 4h6v2H9v-2Zm0 4h4v1H9v-1Z",
   overview: "M4 4h7v7H4V4Zm9 0h7v7h-7V4ZM4 13h7v7H4v-7Zm9 0h7v7h-7v-7Z",
   projects: "M5 5h14v4H5V5Zm0 6h9v4H5v-4Zm0 6h14v2H5v-2Zm11-6h3v4h-3v-4Z",
   signout: "M10 17v-2h4V9h-4V7h6v10h-6Zm-1-1-5-4 5-4v3h6v2H9v3Z",
@@ -327,6 +337,7 @@ export default function ManagementDashboard({ onLogout }) {
               {activeView === "productivityProjects" && (
                 <ProductivityProjects />
               )}
+              {activeView === "softwareInventory" && <SoftwareInventory />}
               {activeView === "employeeProductivity" && (
                 <EmployeeProductivity />
               )}

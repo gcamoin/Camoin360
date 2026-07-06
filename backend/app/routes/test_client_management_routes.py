@@ -82,6 +82,52 @@ class ClientManagementRoutesTest(unittest.TestCase):
         )
         self.assertEqual(reset_password_response.status_code, 200)
 
+        subscriptions_response = self.client.get("/software-subscriptions")
+        self.assertEqual(subscriptions_response.status_code, 200)
+        self.assertGreaterEqual(subscriptions_response.json()["count"], 4)
+
+        create_subscription_response = self.client.post(
+            "/software-subscriptions",
+            json={
+                "name": "Example Data Subscription",
+                "description": "Sample data subscription",
+                "point_of_contact": "Operations",
+                "assigned_users": "Analysts",
+                "cost_2024_2025": 1000,
+                "cost_2025_2026": 1250,
+                "cost_2026_2027": None,
+                "renewal_time_frame": "Annual - June",
+                "vendor_rep": "Vendor Rep",
+                "subscribed_since": "2025",
+                "status": "Active",
+                "notes": "Route test record",
+            },
+        )
+        self.assertEqual(create_subscription_response.status_code, 201)
+        subscription_id = create_subscription_response.json()["id"]
+
+        self.assertEqual(self.client.get(f"/software-subscriptions/{subscription_id}").status_code, 200)
+
+        update_subscription_response = self.client.patch(
+            f"/software-subscriptions/{subscription_id}",
+            json={"status": "Pending Renewal", "cost_2026_2027": 1500},
+        )
+        self.assertEqual(update_subscription_response.status_code, 200)
+        self.assertEqual(update_subscription_response.json()["status"], "Pending Renewal")
+
+        invalid_subscription_response = self.client.post(
+            "/software-subscriptions",
+            json={
+                "name": "",
+                "point_of_contact": "",
+                "renewal_time_frame": "",
+                "status": "",
+            },
+        )
+        self.assertEqual(invalid_subscription_response.status_code, 422)
+
+        self.assertEqual(self.client.delete(f"/software-subscriptions/{subscription_id}").status_code, 204)
+
         self.assertEqual(self.client.delete(f"/users/{user_id}").status_code, 204)
         self.assertEqual(self.client.delete(f"/organizations/{organization_id}").status_code, 204)
 
