@@ -15,6 +15,7 @@ import {
 } from "@mui/material";
 
 import LeadfeederVisits from "./components/LeadfeederVisits";
+import MarketingListConversionAnalysis from "./components/MarketingListConversionAnalysis";
 import MarketingLists from "./components/MarketingLists";
 import PEClients from "./components/PEClients";
 import { EmptyState } from "./components/UiPrimitives";
@@ -27,6 +28,14 @@ const tabs = {
     icon: "campaign",
     title: "Marketing",
     description: "Dynamics marketing lists and campaign audiences.",
+  },
+  marketingConversion: {
+    label: "Conversion Analysis",
+    icon: "campaign",
+    title: "Marketing-List Conversion",
+    description:
+      "Prospect conversion rates for account marketing lists, rolled up by lead-generation channel and client.",
+    parent: "marketing",
   },
   prospects: {
     label: "Prospects",
@@ -61,6 +70,7 @@ const iconPaths = {
 
 const prefetchUrls = {
   marketing: `${API_BASE_URL}/marketing-lists`,
+  marketingConversion: `${API_BASE_URL}/marketing-lists/conversion-analysis/summary`,
   leadfeeder: `${API_BASE_URL}/leadfeeder-visits`,
 };
 
@@ -315,8 +325,8 @@ export default function ProspectingDashboard({ onLogout }) {
 
         <Box component="main" sx={{ py: { xs: 3, md: 5 } }}>
           <Container
-            maxWidth={["marketing", "leadfeeder", "peClients"].includes(activeTab) ? false : "lg"}
-            sx={{ px: { xs: 2, md: ["marketing", "leadfeeder", "peClients"].includes(activeTab) ? 3 : 4 } }}
+            maxWidth={["marketing", "marketingConversion", "leadfeeder", "peClients"].includes(activeTab) ? false : "lg"}
+            sx={{ px: { xs: 2, md: ["marketing", "marketingConversion", "leadfeeder", "peClients"].includes(activeTab) ? 3 : 4 } }}
           >
             <Stack spacing={3}>
               <Box>
@@ -344,6 +354,7 @@ export default function ProspectingDashboard({ onLogout }) {
               </Box>
 
               {activeTab === "marketing" && <MarketingLists />}
+              {activeTab === "marketingConversion" && <MarketingListConversionAnalysis />}
               {activeTab === "prospects" && <EmptyProspectingPanel title="Prospects" />}
               {activeTab === "leadfeeder" && <LeadfeederVisits />}
               {activeTab === "peClients" && <PEClients />}

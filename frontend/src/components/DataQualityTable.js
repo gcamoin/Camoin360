@@ -125,12 +125,12 @@ const columns = [
   { key: "websiteurl", label: "Website", width: 190 },
   { key: "telephone1", label: "Business Phone", width: 170 },
   { key: "address1_country", label: "Country", width: 140 },
-  { key: "address1_stateorprovince", label: "State/Province", width: 170 },
+  { key: "address1_stateorprovince", label: "State/Province", width: 190 },
   { key: "address1_city", label: "City", width: 150 },
   { key: "new_employees", label: "Employee Count", width: 150 },
   { key: "new_naicstext", label: "NAICS Text", width: 190 },
   { key: "missing_fields_summary", label: "Missing Fields Summary", width: 220 },
-  { key: "data_quality_score", label: "Quality", width: 120 },
+  { key: "data_quality_score", label: "Quality", width: 140 },
 ];
 const selectionColumnWidth = 56;
 const tableMinWidth = columns.reduce((totalWidth, column) => totalWidth + column.width, selectionColumnWidth);
@@ -1070,16 +1070,18 @@ export default function DataQualityTable() {
                     key={column.key}
                     sx={{
                       ...subtleTableHeadCellSx,
+                      px: 1,
                       top: 0,
                       width: column.width,
                       zIndex: 3,
                     }}
                   >
-                    <Box sx={{ alignItems: "center", display: "flex", gap: 1, justifyContent: "space-between" }}>
+                    <Box sx={{ alignItems: "center", display: "flex", gap: 0.75, justifyContent: "space-between" }}>
                       <Typography
                         component="span"
                         sx={{
                           color: "inherit",
+                          flex: "1 1 auto",
                           fontSize: "0.875rem",
                           fontWeight: 800,
                           lineHeight: 1.15,
@@ -1099,9 +1101,11 @@ export default function DataQualityTable() {
                         sx={{
                           borderColor: "rgba(18, 59, 100, 0.26)",
                           color: "primary.main",
+                          flex: "0 0 28px",
                           fontSize: "0.7rem",
+                          height: 28,
                           lineHeight: 1,
-                          flex: "0 0 auto",
+                          ml: 0.25,
                           minWidth: 28,
                           px: 0.5,
                           py: 0.25,

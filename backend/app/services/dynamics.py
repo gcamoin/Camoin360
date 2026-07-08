@@ -79,6 +79,20 @@ TARGET_INDUSTRY_ENTITY_SET_CANDIDATES = (
     "new_targetindustry",
 )
 ACCOUNT_NAICS_FIELDS = (
+    "cr73c_naicsprefix",
+    "new_naicsprefixcode",
+    "naicscode",
+    "new_naicscode",
+)
+WEBSITE_VISIT_NAICS_LOOKUP_FIELD = "_cr73c_new_naics_value"
+NAICS_TABLE = "new_naics"
+NAICS_ENTITY_SET_CANDIDATES = (
+    "new_naicses",
+    "new_naics",
+)
+NAICS_CODE_FIELDS = (
+    "new_code",
+    "cr73c_naicsprefix",
     "new_naicsprefixcode",
     "naicscode",
     "new_naicscode",
@@ -2215,6 +2229,7 @@ async def _count_website_visits(
     counts_by_bucket = {bucket[bucket_key]: 0 for bucket in buckets}
     target_counts_by_bucket = {bucket[bucket_key]: 0 for bucket in buckets}
     landing_page_counts = {}
+    visits_with_naics = []
     visits_for_targeting = []
     total = 0
     target_total = 0
@@ -2243,6 +2258,16 @@ async def _count_website_visits(
             landing_page_counts[landing_page] = landing_page_counts.get(landing_page, 0) + 1
             total += 1
 
+            visit_naics_id = _clean_guid(visit.get(WEBSITE_VISIT_NAICS_LOOKUP_FIELD))
+            if visit_naics_id:
+                visits_with_naics.append(
+                    {
+                        "bucket_key": current_key,
+                        "naics_id": visit_naics_id,
+                    }
+                )
+                continue
+
             visitor_account_id = _get_visitor_account_id(visit)
             if visitor_account_id:
                 visits_for_targeting.append(
@@ -2253,6 +2278,19 @@ async def _count_website_visits(
                 )
 
         url = payload.get("@odata.nextLink")
+
+    if target_naics_codes and visits_with_naics:
+        naics_ids = {
+            visit["naics_id"]
+            for visit in visits_with_naics
+        }
+        visit_naics_codes = await _fetch_naics_codes(client, headers, naics_ids)
+
+        for visit in visits_with_naics:
+            naics_codes = visit_naics_codes.get(visit["naics_id"], set())
+            if _has_target_naics_match(naics_codes, target_naics_codes):
+                target_counts_by_bucket[visit["bucket_key"]] += 1
+                target_total += 1
 
     if target_naics_codes and visits_for_targeting:
         visitor_account_ids = {
@@ -2334,6 +2372,62 @@ async def _fetch_target_industry_naics_codes(
         url = payload.get("@odata.nextLink")
 
     return target_naics_codes
+
+
+async def _fetch_naics_codes(
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+    naics_ids: set[str],
+) -> dict[str, set[str]]:
+    naics_codes = {}
+    naics_id_list = sorted(naics_ids)
+    chunk_size = 50
+    entity_set_name = await _resolve_entity_set_name(
+        client,
+        headers,
+        NAICS_TABLE,
+        NAICS_ENTITY_SET_CANDIDATES,
+    )
+    code_field = await _resolve_existing_field(
+        client,
+        headers,
+        entity_set_name,
+        NAICS_CODE_FIELDS,
+        "NAICS code",
+    )
+
+    for index in range(0, len(naics_id_list), chunk_size):
+        chunk = naics_id_list[index:index + chunk_size]
+        naics_filter = " or ".join(
+            f"new_naicsid eq {naics_id}"
+            for naics_id in chunk
+        )
+        url = (
+            f"{API_URL}/{entity_set_name}?"
+            f"$select=new_naicsid,{code_field}&"
+            f"$filter={naics_filter}"
+        )
+
+        while url:
+            response = await client.get(url, headers=headers)
+
+            if response.status_code != 200:
+                raise Exception(f"Dynamics GET error: {response.text}")
+
+            payload = response.json()
+
+            for naics in payload.get("value", []):
+                naics_id = _clean_guid(naics.get("new_naicsid"))
+                if not naics_id:
+                    continue
+
+                naics_codes[naics_id] = _normalize_naics_codes(
+                    naics.get(code_field)
+                )
+
+            url = payload.get("@odata.nextLink")
+
+    return naics_codes
 
 
 async def _resolve_entity_set_name(

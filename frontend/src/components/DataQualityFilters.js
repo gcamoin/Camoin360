@@ -39,6 +39,9 @@ export default function DataQualityFilters({
     flex: { lg: "0 1 190px" },
     maxWidth: { lg: 190 },
     minWidth: { lg: 0 },
+    "& .MuiInputLabel-root": {
+      maxWidth: "calc(100% - 42px)",
+    },
   };
   const locationFilters = [
     {
@@ -50,6 +53,10 @@ export default function DataQualityFilters({
     {
       label: "State/Province",
       options: states,
+      sx: {
+        flex: { lg: "0 1 220px" },
+        maxWidth: { lg: 220 },
+      },
       value: selectedStates,
       onChange: onStateChange,
       multiple: true,
@@ -104,6 +111,7 @@ export default function DataQualityFilters({
           size="small"
           sx={{
             ...compactControlSx,
+            ...filter.sx,
           }}
           value={filter.multiple ? filter.value : filter.value === "all" ? null : filter.value}
         />

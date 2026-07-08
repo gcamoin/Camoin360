@@ -338,6 +338,43 @@ export default function ProductivityProjects() {
         </Button>
       </Stack>
 
+      <Box
+        sx={{
+          display: "grid",
+          gap: 2,
+          gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
+        }}
+      >
+        <Paper
+          elevation={0}
+          sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2.5 }}
+        >
+          <Typography color="text.secondary" variant="overline">
+            New Projects
+          </Typography>
+          <Typography color="primary.main" sx={{ fontSize: "2.35rem", fontWeight: 800, lineHeight: 1.1, mt: 0.75 }}>
+            {filteredTotalProjects.toLocaleString()}
+          </Typography>
+          <Typography color="text.secondary" sx={{ mt: 0.75 }} variant="body2">
+            Created in the selected period
+          </Typography>
+        </Paper>
+        <Paper
+          elevation={0}
+          sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2.5 }}
+        >
+          <Typography color="text.secondary" variant="overline">
+            Peak Project Month
+          </Typography>
+          <Typography color="primary.main" sx={{ fontSize: "2.35rem", fontWeight: 800, lineHeight: 1.1, mt: 0.75 }}>
+            {peakProjectMonth.month}
+          </Typography>
+          <Typography color="text.secondary" sx={{ mt: 0.75 }} variant="body2">
+            {peakProjectMonth.projects.toLocaleString()} new projects
+          </Typography>
+        </Paper>
+      </Box>
+
       <Paper elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2 }}>
         <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
           <FormControl fullWidth size="small">
@@ -384,43 +421,6 @@ export default function ProductivityProjects() {
           </FormControl>
         </Stack>
       </Paper>
-
-      <Box
-        sx={{
-          display: "grid",
-          gap: 2,
-          gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
-        }}
-      >
-        <Paper
-          elevation={0}
-          sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2.5 }}
-        >
-          <Typography color="text.secondary" variant="overline">
-            New Projects
-          </Typography>
-          <Typography color="primary.main" sx={{ fontSize: "2.35rem", fontWeight: 800, lineHeight: 1.1, mt: 0.75 }}>
-            {filteredTotalProjects.toLocaleString()}
-          </Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.75 }} variant="body2">
-            Created in the selected period
-          </Typography>
-        </Paper>
-        <Paper
-          elevation={0}
-          sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2.5 }}
-        >
-          <Typography color="text.secondary" variant="overline">
-            Peak Project Month
-          </Typography>
-          <Typography color="primary.main" sx={{ fontSize: "2.35rem", fontWeight: 800, lineHeight: 1.1, mt: 0.75 }}>
-            {peakProjectMonth.month}
-          </Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.75 }} variant="body2">
-            {peakProjectMonth.projects.toLocaleString()} new projects
-          </Typography>
-        </Paper>
-      </Box>
 
       <Paper
         elevation={0}
