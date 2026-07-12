@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from . import dynamics
@@ -11,6 +12,7 @@ from .dynamics import (
     get_marketing_lists,
     get_pe_clients,
     get_project_creation_metrics,
+    _marketing_window,
     normalize_marketing_list_record,
 )
 
@@ -243,6 +245,20 @@ class MarketingListNormalizationTest(unittest.TestCase):
         self.assertEqual(result["created_by"], "Taylor Lee")
         self.assertEqual(result["client_name"], "Contoso")
         self.assertEqual(result["campaign"], "Spring Campaign")
+
+
+class MarketingMetricsWindowTest(unittest.TestCase):
+    def test_since_2022_range_starts_at_beginning_of_history(self):
+        now = datetime(2026, 7, 12, tzinfo=timezone.utc)
+
+        window = _marketing_window("since_2022", now)
+
+        self.assertEqual(window["range"], "since_2022")
+        self.assertEqual(window["label"], "Since 2022")
+        self.assertEqual(window["bucket_grain"], "month")
+        self.assertEqual(window["start_date"], datetime(2022, 1, 1, tzinfo=timezone.utc))
+        self.assertEqual(window["buckets"][0]["month_key"], "2022-01")
+        self.assertEqual(window["buckets"][-1]["month_key"], "2026-07")
 
 
 class ProjectCreationMetricsTest(unittest.IsolatedAsyncioTestCase):

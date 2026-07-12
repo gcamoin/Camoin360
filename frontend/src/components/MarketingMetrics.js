@@ -24,6 +24,7 @@ import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } 
 const API_URL = `${API_BASE_URL}/marketing/website-visits`;
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const RANGE_OPTIONS = [
+  { label: "Since 2022", value: "since_2022" },
   { label: "Last Week", value: "last_week" },
   { label: "Last Month", value: "last_month" },
   { label: "Last 6 Months", value: "last_6_months" },
@@ -45,12 +46,12 @@ export default function MarketingMetrics() {
     bucket_grain: "month",
     landing_pages: [],
     months: [],
-    range_label: "Last Year",
+    range_label: "Since 2022",
     target_total_visitors: 0,
     total_visitors: 0,
     updated_at: "",
   });
-  const [range, setRange] = useState("last_year");
+  const [range, setRange] = useState("since_2022");
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -77,7 +78,7 @@ export default function MarketingMetrics() {
         bucket_grain: response.data?.bucket_grain || "month",
         landing_pages: response.data?.landing_pages || [],
         months: response.data?.months || [],
-        range_label: response.data?.range_label || "Last Year",
+        range_label: response.data?.range_label || "Since 2022",
         target_total_visitors: response.data?.target_total_visitors || 0,
         total_visitors: response.data?.total_visitors || 0,
         updated_at: response.data?.updated_at || "",

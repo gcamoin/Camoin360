@@ -233,10 +233,13 @@ export default function ManagementDashboard({ onLogout }) {
                           ? "common.white"
                           : "transparent",
                         fontWeight: 800,
+                        fontSize: !sidebarCollapsed && isChild ? "0.8rem" : "0.875rem",
+                        lineHeight: 1.15,
                         minWidth: 0,
-                        px: sidebarCollapsed ? 1 : isChild ? 3.5 : 2,
+                        px: sidebarCollapsed ? 1 : isChild ? 2.25 : 2,
                         py: 1.25,
-                        whiteSpace: "nowrap",
+                        textAlign: "left",
+                        whiteSpace: !sidebarCollapsed && isChild ? "normal" : "nowrap",
                         ml: { xs: 0, md: !sidebarCollapsed && isChild ? 2 : 0 },
                         width:
                           !sidebarCollapsed && isChild
@@ -244,6 +247,7 @@ export default function ManagementDashboard({ onLogout }) {
                             : { xs: "auto", md: "100%" },
                         "& .MuiButton-startIcon": {
                           m: sidebarCollapsed ? 0 : undefined,
+                          flexShrink: 0,
                         },
                         "&:hover": {
                           backgroundColor: isActive

@@ -11,7 +11,7 @@ router = APIRouter()
 
 @router.get("/marketing/website-visits")
 async def fetch_website_visit_metrics(
-    range: str = Query("last_year"),
+    range: str = Query("since_2022"),
     _user=Depends(require_user),
 ):
     try:

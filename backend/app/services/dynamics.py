@@ -109,7 +109,9 @@ _DATA_QUALITY_CACHE = {"expires_at": 0, "data": None}
 _SUMMARY_CACHE = {"expires_at": 0, "data": None}
 _MARKETING_METRICS_CACHE = {"expires_at": 0, "data": None}
 _PROJECT_METRICS_CACHE = {"expires_at": 0, "data": None}
+MARKETING_HISTORY_START_YEAR = 2022
 MARKETING_RANGE_OPTIONS = {
+    "since_2022": {"label": "Since 2022", "start_year": MARKETING_HISTORY_START_YEAR},
     "last_week": {"label": "Last Week", "days": 7},
     "last_month": {"label": "Last Month", "days": 30},
     "last_6_months": {"label": "Last 6 Months", "months": 6},
@@ -1898,12 +1900,13 @@ def _day_buckets(start_date: datetime, day_count: int) -> list[dict[str, str]]:
 
 def _marketing_window(range_key: str, now: datetime) -> dict[str, object]:
     option = MARKETING_RANGE_OPTIONS.get(range_key, MARKETING_RANGE_OPTIONS["last_year"])
+    normalized_range = range_key if range_key in MARKETING_RANGE_OPTIONS else "last_year"
 
     if "days" in option:
         day_count = int(option["days"])
         start_date = (now - timedelta(days=day_count - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
         return {
-            "range": range_key if range_key in MARKETING_RANGE_OPTIONS else "last_year",
+            "range": normalized_range,
             "label": option["label"],
             "start_date": start_date,
             "buckets": _day_buckets(start_date, day_count),
@@ -1912,10 +1915,15 @@ def _marketing_window(range_key: str, now: datetime) -> dict[str, object]:
             "bucket_grain": "day",
         }
 
-    month_count = int(option["months"])
+    if "start_year" in option:
+        start_year = int(option["start_year"])
+        month_count = max(1, ((now.year - start_year) * 12) + now.month)
+    else:
+        month_count = int(option["months"])
+
     buckets = _month_buckets(now, month_count)
     return {
-        "range": range_key if range_key in MARKETING_RANGE_OPTIONS else "last_year",
+        "range": normalized_range,
         "label": option["label"],
         "start_date": datetime(
             int(buckets[0]["year"]),
@@ -1930,7 +1938,7 @@ def _marketing_window(range_key: str, now: datetime) -> dict[str, object]:
     }
 
 
-async def get_website_visit_metrics(range_key: str = "last_year"):
+async def get_website_visit_metrics(range_key: str = "since_2022"):
     now = time.time()
     cache_key = range_key if range_key in MARKETING_RANGE_OPTIONS else "last_year"
     cached_data = _MARKETING_METRICS_CACHE["data"] or {}
