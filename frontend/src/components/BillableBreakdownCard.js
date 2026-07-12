@@ -13,12 +13,14 @@ import {
   Typography,
 } from "@mui/material";
 import {
-  Cell,
+  Bar,
+  BarChart,
+  CartesianGrid,
   Legend,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip,
+  XAxis,
+  YAxis,
 } from "recharts";
 
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
@@ -43,7 +45,7 @@ const MONTH_OPTIONS = [
 ];
 const CHART_COLORS = {
   billable: "#0d9488",
-  nonBillable: "#64748b",
+  nonBillable: "#2563eb",
 };
 
 /**
@@ -70,7 +72,7 @@ function ChartTooltip({ active, payload, totalHours }) {
     return null;
   }
 
-  const item = payload[0];
+  const item = payload.find((entry) => Number(entry.value || 0) > 0) || payload[0];
   const hours = Number(item.value || 0);
   const percentage = totalHours ? (hours / totalHours) * 100 : 0;
 
@@ -162,14 +164,9 @@ export default function BillableBreakdownCard() {
   const chartData = useMemo(
     () => [
       {
-        color: CHART_COLORS.billable,
-        name: "Billable Hours",
-        value: metrics.billable_hours,
-      },
-      {
-        color: CHART_COLORS.nonBillable,
-        name: "Non-Billable Hours",
-        value: metrics.non_billable_hours,
+        billableHours: metrics.billable_hours,
+        name: "Hours",
+        nonBillableHours: metrics.non_billable_hours,
       },
     ],
     [metrics.billable_hours, metrics.non_billable_hours]
@@ -280,26 +277,29 @@ export default function BillableBreakdownCard() {
       ) : hasData ? (
         <Box sx={{ height: 340, minWidth: 0 }}>
           <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                cx="50%"
-                cy="50%"
-                data={chartData}
-                dataKey="value"
-                innerRadius="48%"
-                label={({ name, percent }) => `${name}: ${formatPercent(percent * 100)}`}
-                labelLine={false}
-                nameKey="name"
-                outerRadius="78%"
-                paddingAngle={2}
-              >
-                {chartData.map((entry) => (
-                  <Cell key={entry.name} fill={entry.color} />
-                ))}
-              </Pie>
+            <BarChart data={chartData} margin={{ top: 20, right: 24, bottom: 8, left: 8 }}>
+              <CartesianGrid vertical={false} stroke="#f1f5f9" strokeDasharray="3 3" />
+              <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+              <YAxis allowDecimals tick={{ fontSize: 11 }} unit="h" />
               <Tooltip content={<ChartTooltip totalHours={metrics.total_hours} />} />
               <Legend />
-            </PieChart>
+              <Bar
+                dataKey="nonBillableHours"
+                fill={CHART_COLORS.nonBillable}
+                fillOpacity={0.88}
+                maxBarSize={72}
+                name="Non-Billed Hours"
+                radius={[3, 3, 0, 0]}
+              />
+              <Bar
+                dataKey="billableHours"
+                fill={CHART_COLORS.billable}
+                fillOpacity={0.88}
+                maxBarSize={72}
+                name="Billable Hours"
+                radius={[3, 3, 0, 0]}
+              />
+            </BarChart>
           </ResponsiveContainer>
         </Box>
       ) : (

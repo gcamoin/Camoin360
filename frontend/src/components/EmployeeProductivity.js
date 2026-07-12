@@ -17,6 +17,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -24,7 +25,6 @@ import {
 } from "recharts";
 
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
-import BillableBreakdownCard from "./BillableBreakdownCard";
 
 const API_URL = `${API_BASE_URL}/productivity/employee-hours`;
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
@@ -53,6 +53,10 @@ const tooltipStyle = {
     fontSize: 12,
     boxShadow: "0 4px 6px -1px rgba(0,0,0,0.08)",
   },
+};
+const CHART_COLORS = {
+  billable: "#0d9488",
+  nonBillable: "#2563eb",
 };
 
 const formatShortDate = (dateValue) =>
@@ -145,7 +149,7 @@ export default function EmployeeProductivity() {
     metrics.from && metrics.to
       ? `${formatShortDate(metrics.from)} - ${formatShortDate(metrics.to)}`
       : `Last ${metrics.weeks} weeks`;
-  const chartHeight = Math.max(300, metrics.employees.length * 36 + 72);
+  const chartHeight = metrics.employees.length > 18 ? 380 : 420;
 
   if (isLoading) {
     return (
@@ -157,8 +161,6 @@ export default function EmployeeProductivity() {
 
   return (
     <Stack spacing={2.5}>
-      <BillableBreakdownCard />
-
       {error ? <Alert severity="error">{error}</Alert> : null}
 
       <Stack
@@ -200,7 +202,7 @@ export default function EmployeeProductivity() {
         >
           <Stack spacing={0.5}>
             <Typography fontWeight={800} color="text.primary">
-              Average Weekly Hours by Employee
+              Billable vs Non-Billed Hours by Employee
             </Typography>
             <Typography color="text.secondary" variant="body2">
               Harvest hours averaged across {metrics.weeks} weeks, {dateRangeLabel}.
@@ -246,36 +248,39 @@ export default function EmployeeProductivity() {
             <CircularProgress />
           </Box>
         ) : metrics.employees.length ? (
-          <Box sx={{ maxHeight: 560, overflowY: "auto", pr: 1 }}>
-            <Box sx={{ height: chartHeight, minWidth: 520 }}>
+          <Box sx={{ pb: 1 }}>
+            <Box sx={{ height: chartHeight, minWidth: 0 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
+                  barCategoryGap="8%"
+                  barGap={0}
                   data={metrics.employees}
-                  layout="vertical"
-                  margin={{ top: 8, right: 28, bottom: 8, left: 18 }}
+                  margin={{ top: 12, right: 16, bottom: 62, left: 0 }}
                 >
-                  <CartesianGrid horizontal={false} stroke="#f1f5f9" strokeDasharray="3 3" />
+                  <CartesianGrid vertical={false} stroke="#f1f5f9" strokeDasharray="3 3" />
                   <XAxis
+                    dataKey="employee"
+                    interval={0}
+                    tick={{ fontSize: 10 }}
+                    tickFormatter={(value) => (value.length > 16 ? `${value.slice(0, 16)}...` : value)}
+                    angle={-45}
+                    textAnchor="end"
+                    height={64}
+                  />
+                  <YAxis
                     allowDecimals
-                    tick={{ fontSize: 11 }}
+                    tick={{ fontSize: 10 }}
                     type="number"
                     unit="h"
                   />
-                  <YAxis
-                    dataKey="employee"
-                    tick={{ fontSize: 11 }}
-                    tickFormatter={(value) => (value.length > 28 ? `${value.slice(0, 28)}...` : value)}
-                    type="category"
-                    width={190}
-                  />
                   <Tooltip
                     {...tooltipStyle}
-                    formatter={(value) => [
+                    formatter={(value, name) => [
                       `${Number(value).toLocaleString(undefined, {
                         maximumFractionDigits: 2,
                         minimumFractionDigits: 0,
                       })} hours/week`,
-                      "Average",
+                      name,
                     ]}
                     labelFormatter={(label) => {
                       const employee = metrics.employees.find((row) => row.employee === label);
@@ -286,12 +291,24 @@ export default function EmployeeProductivity() {
                         : label;
                     }}
                   />
+                  <Legend />
                   <Bar
-                    dataKey="average_weekly_hours"
-                    fill="#0d9488"
+                    dataKey="average_weekly_non_billable_hours"
+                    fill={CHART_COLORS.nonBillable}
                     fillOpacity={0.86}
-                    radius={[0, 3, 3, 0]}
-                    maxBarSize={24}
+                    maxBarSize={34}
+                    name="Non-Billed Hours"
+                    radius={[0, 0, 3, 3]}
+                    stackId="hours"
+                  />
+                  <Bar
+                    dataKey="average_weekly_billable_hours"
+                    fill={CHART_COLORS.billable}
+                    fillOpacity={0.86}
+                    maxBarSize={34}
+                    name="Billable Hours"
+                    radius={[3, 3, 0, 0]}
+                    stackId="hours"
                   />
                 </BarChart>
               </ResponsiveContainer>

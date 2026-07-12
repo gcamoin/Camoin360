@@ -89,20 +89,31 @@ async def get_employee_weekly_hours(year=None, month=None):
         start_date = end_date - timedelta(weeks=HARVEST_WINDOW_WEEKS) + timedelta(days=1)
 
     average_weeks = max((end_date - start_date).days + 1, 1) / 7
-    total_hours_by_employee = defaultdict(float)
+    hours_by_employee = defaultdict(lambda: {"billable": 0.0, "non_billable": 0.0})
 
     for time_entry in await _fetch_time_entries(start_date, end_date):
         employee_name = _get_user_name(time_entry)
-        total_hours_by_employee[employee_name] += float(time_entry.get("hours") or 0)
+        hours = float(time_entry.get("hours") or 0)
 
-    employees = [
-        {
-            "employee": employee_name,
-            "average_weekly_hours": round(total_hours / average_weeks, 2),
-            "total_hours": round(total_hours, 2),
-        }
-        for employee_name, total_hours in total_hours_by_employee.items()
-    ]
+        if _is_billable_time_entry(time_entry):
+            hours_by_employee[employee_name]["billable"] += hours
+        else:
+            hours_by_employee[employee_name]["non_billable"] += hours
+
+    employees = []
+    for employee_name, hours in hours_by_employee.items():
+        total_hours = hours["billable"] + hours["non_billable"]
+        employees.append(
+            {
+                "employee": employee_name,
+                "average_weekly_billable_hours": round(hours["billable"] / average_weeks, 2),
+                "average_weekly_non_billable_hours": round(hours["non_billable"] / average_weeks, 2),
+                "average_weekly_hours": round(total_hours / average_weeks, 2),
+                "billable_hours": round(hours["billable"], 2),
+                "non_billable_hours": round(hours["non_billable"], 2),
+                "total_hours": round(total_hours, 2),
+            }
+        )
     employees.sort(key=lambda employee: employee["average_weekly_hours"], reverse=True)
 
     return {
