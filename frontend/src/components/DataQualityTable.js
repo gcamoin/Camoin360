@@ -39,9 +39,10 @@ const API_URL = `${API_BASE_URL}/accounts/data-quality`;
 const ENRICHMENT_RUN_URL = `${API_BASE_URL}/accounts/enrichment-run`;
 const SEARCH_DEBOUNCE_MS = 200;
 const DEFAULT_ROWS_PER_PAGE = 25;
-const INITIAL_ACCOUNT_LIMIT = 1000;
-const ACCOUNT_LIMIT_STEP = 1000;
-const MAX_ACCOUNT_LIMIT = 5000;
+const INITIAL_ACCOUNT_LIMIT = 100000;
+const ACCOUNT_LIMIT_STEP = 100000;
+const MAX_ACCOUNT_LIMIT = 100000;
+const ACCOUNT_LOAD_TIMEOUT_MS = 5 * 60 * 1000;
 const usStateNamesByAbbreviation = {
   AL: "Alabama",
   AK: "Alaska",
@@ -531,6 +532,16 @@ export default function DataQualityTable() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState("");
+  const [facets, setFacets] = useState({
+    cities: [],
+    countries: [],
+    missing_counts: [],
+    sectors: [],
+    states: [],
+  });
+  const [filteredAccountCount, setFilteredAccountCount] = useState(0);
+  const [totalAccountCount, setTotalAccountCount] = useState(0);
+  const [syncStatus, setSyncStatus] = useState(null);
   const [loadedAccountLimit, setLoadedAccountLimit] = useState(INITIAL_ACCOUNT_LIMIT);
   const [hasMoreAccounts, setHasMoreAccounts] = useState(false);
   const [selectedSector, setSelectedSector] = useState("all");
@@ -554,97 +565,12 @@ export default function DataQualityTable() {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
 
-  const sectors = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          accounts
-            .map((account) => account.new_sector)
-            .filter((sector) => !isMissingValue(sector))
-            .map((sector) => String(sector).trim())
-        )
-      ).sort((a, b) => a.localeCompare(b)),
-    [accounts]
-  );
-  const countries = useMemo(() => getUniqueColumnOptions(accounts, "address1_country"), [accounts]);
-  const states = useMemo(
-    () => getStateProvinceOptions(accounts, selectedCountry),
-    [accounts, selectedCountry]
-  );
-  const cities = useMemo(
-    () => getCityOptions(accounts, selectedCountry, selectedStates),
-    [accounts, selectedCountry, selectedStates]
-  );
-
-  const filteredAccounts = useMemo(() => {
-    const normalizedQuery = normalizeValue(debouncedSearchQuery);
-    const normalizedColumnFilters = Object.entries(columnFilters)
-      .map(([columnKey, filterValue]) => [columnKey, normalizeValue(filterValue)])
-      .filter(([_columnKey, filterValue]) => filterValue);
-
-    return accounts.filter((account) => {
-      const matchesSector =
-        selectedSector === "all" || String(account.new_sector || "").trim() === selectedSector;
-      const matchesMissingField =
-        selectedMissingField === "all" || account.missingFieldKeys.has(selectedMissingField);
-      const matchesState = matchesSelectedValues(
-        getDisplayValue(account, "address1_stateorprovince"),
-        selectedStates
-      );
-      const matchesCountry = countryMatches(account.address1_country, selectedCountry);
-      const matchesCity = matchesSelectedValues(account.address1_city, selectedCities);
-      const matchesAttentionFilter = !showNeedsAttentionOnly || hasMissingQualityField(account);
-      const matchesColumnFilters = normalizedColumnFilters.every(([columnKey, filterValue]) =>
-        normalizeValue(getColumnFilterValue(account, columnKey)).includes(filterValue)
-      );
-
-      return (
-        matchesSector &&
-        matchesMissingField &&
-        matchesState &&
-        matchesCountry &&
-        matchesCity &&
-        matchesAttentionFilter &&
-        matchesSearch(account, normalizedQuery) &&
-        matchesColumnFilters
-      );
-    });
-  }, [
-    accounts,
-    columnFilters,
-    debouncedSearchQuery,
-    selectedCities,
-    selectedCountry,
-    selectedMissingField,
-    selectedSector,
-    selectedStates,
-    showNeedsAttentionOnly,
-  ]);
-
-  const sortedAccounts = useMemo(
-    () => sortAccounts(filteredAccounts, sortConfig),
-    [filteredAccounts, sortConfig]
-  );
-
-  const missingCounts = useMemo(() => {
-    const keyFieldMetrics = keyMissingMetricFields.map((field) => ({
-      ...field,
-      missing: filteredAccounts.filter((account) => account.missingFieldKeys.has(field.key)).length,
-    }));
-    const incompleteLocationCount = filteredAccounts.filter((account) =>
-      locationScoreFields.some((fieldKey) => account.missingFieldKeys.has(fieldKey))
-    ).length;
-
-    return [
-      ...keyFieldMetrics,
-      {
-        key: "incomplete_location",
-        label: "Incomplete Location",
-        missing: incompleteLocationCount,
-        helperText: "Missing city, state, or country",
-      },
-    ];
-  }, [filteredAccounts]);
+  const sectors = facets.sectors;
+  const countries = facets.countries;
+  const states = facets.states;
+  const cities = facets.cities;
+  const filteredAccounts = accounts;
+  const missingCounts = facets.missing_counts;
 
   const activeFilterCount = [
     selectedSector !== "all",
@@ -657,10 +583,7 @@ export default function DataQualityTable() {
     ...Object.values(columnFilters).map((filterValue) => Boolean(String(filterValue || "").trim())),
   ].filter(Boolean).length;
 
-  const paginatedAccounts = useMemo(
-    () => sortedAccounts.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
-    [page, rowsPerPage, sortedAccounts]
-  );
+  const paginatedAccounts = accounts;
   const visibleAccountIds = useMemo(
     () => paginatedAccounts.map((account) => account.selectionId),
     [paginatedAccounts]
@@ -788,43 +711,69 @@ export default function DataQualityTable() {
     setFieldsToUpdate(new Set(fieldKeys));
   }
 
-  async function refreshAccounts() {
-    invalidateApiCache(API_URL);
+  function buildAccountRequestParams({ nextPage = page, nextRowsPerPage = rowsPerPage, refresh = false } = {}) {
+    return {
+      cities: selectedCities.join("|"),
+      column_filters: JSON.stringify(columnFilters),
+      country: selectedCountry,
+      limit: loadedAccountLimit,
+      missing_field: selectedMissingField,
+      needs_attention: showNeedsAttentionOnly,
+      page: nextPage,
+      page_size: nextRowsPerPage,
+      refresh,
+      search: debouncedSearchQuery,
+      sector: selectedSector,
+      sort_direction: sortConfig.direction,
+      sort_key: sortConfig.key,
+      states: selectedStates.join("|"),
+    };
+  }
+
+  async function loadAccounts({ nextPage = page, nextRowsPerPage = rowsPerPage, refresh = false, showLoading = false } = {}) {
+    if (showLoading) {
+      setIsLoading(true);
+    }
+
+    setError("");
+
     const response = await getCached(API_URL, {
-      force: true,
+      force: refresh,
       headers: getAuthHeaders(),
-      params: { limit: loadedAccountLimit },
+      params: buildAccountRequestParams({ nextPage, nextRowsPerPage, refresh }),
+      timeout: ACCOUNT_LOAD_TIMEOUT_MS,
+      ttl: 60 * 1000,
     });
     const preparedRows = prepareAccountRows(response.data?.data || []);
 
-    dataQualityCache = preparedRows;
+    dataQualityCache = null;
     setAccounts(preparedRows);
-    setHasMoreAccounts(Boolean(response.data?.has_more) && loadedAccountLimit < MAX_ACCOUNT_LIMIT);
+    setFacets(response.data?.facets || {
+      cities: [],
+      countries: [],
+      missing_counts: [],
+      sectors: [],
+      states: [],
+    });
+    setFilteredAccountCount(response.data?.filtered_count || 0);
+    setTotalAccountCount(response.data?.total_count || 0);
+    setSyncStatus(response.data?.sync || null);
+    setHasMoreAccounts(Boolean(response.data?.has_more));
+
+    if (showLoading) {
+      setIsLoading(false);
+    }
   }
 
-  async function loadMoreAccounts() {
-    const nextLimit = Math.min(loadedAccountLimit + ACCOUNT_LIMIT_STEP, MAX_ACCOUNT_LIMIT);
-    setIsLoadingMore(true);
-    setError("");
+  async function refreshAccounts() {
+    invalidateApiCache(API_URL);
 
     try {
-      const response = await getCached(API_URL, {
-        force: true,
-        headers: getAuthHeaders(),
-        params: { limit: nextLimit },
-        timeout: 30 * 1000,
-      });
-      const preparedRows = prepareAccountRows(response.data?.data || []);
-      dataQualityCache = preparedRows;
-      setAccounts(preparedRows);
-      setLoadedAccountLimit(nextLimit);
-      setHasMoreAccounts(Boolean(response.data?.has_more) && nextLimit < MAX_ACCOUNT_LIMIT);
+      await loadAccounts({ refresh: true, showLoading: false });
     } catch (fetchError) {
       if (!handleUnauthorized(fetchError)) {
-        setError(getApiErrorMessage(fetchError, "Unable to load more account data."));
+        setError(getApiErrorMessage(fetchError, "Unable to refresh account data."));
       }
-    } finally {
-      setIsLoadingMore(false);
     }
   }
 
@@ -861,7 +810,8 @@ export default function DataQualityTable() {
   }
 
   function handleChangeRowsPerPage(event) {
-    setRowsPerPage(Number(event.target.value));
+    const nextRowsPerPage = Number(event.target.value);
+    setRowsPerPage(nextRowsPerPage);
     setPage(0);
   }
 
@@ -878,7 +828,7 @@ export default function DataQualityTable() {
 
   useEffect(() => {
     setPage(0);
-  }, [columnFilters, selectedCities, selectedCountry, selectedMissingField, selectedSector, selectedStates, showNeedsAttentionOnly]);
+  }, [columnFilters, debouncedSearchQuery, selectedCities, selectedCountry, selectedMissingField, selectedSector, selectedStates, showNeedsAttentionOnly, sortConfig]);
 
   useEffect(() => {
     const validSelectedStates = selectedStates.filter((selectedState) => states.includes(selectedState));
@@ -897,36 +847,70 @@ export default function DataQualityTable() {
   }, [cities, selectedCities]);
 
   useEffect(() => {
-    const lastPage = Math.max(0, Math.ceil(filteredAccounts.length / rowsPerPage) - 1);
+    if (syncStatus?.status !== "syncing") {
+      return undefined;
+    }
+
+    const pollTimer = window.setTimeout(() => {
+      invalidateApiCache(API_URL);
+      loadAccounts().catch((fetchError) => {
+        if (!handleUnauthorized(fetchError)) {
+          setError(getApiErrorMessage(fetchError, "Unable to refresh synced account data."));
+        }
+      });
+    }, 5000);
+
+    return () => {
+      window.clearTimeout(pollTimer);
+    };
+  }, [syncStatus]);
+
+  useEffect(() => {
+    const lastPage = Math.max(0, Math.ceil(filteredAccountCount / rowsPerPage) - 1);
 
     if (page > lastPage) {
       setPage(lastPage);
     }
-  }, [filteredAccounts.length, page, rowsPerPage]);
+  }, [filteredAccountCount, page, rowsPerPage]);
+
+  useEffect(() => {
+    setSelectedAccountIds((currentSelection) => {
+      const currentPageIds = new Set(accounts.map((account) => account.selectionId));
+      const nextSelection = new Set(
+        Array.from(currentSelection).filter((accountId) => currentPageIds.has(accountId))
+      );
+
+      return nextSelection.size === currentSelection.size ? currentSelection : nextSelection;
+    });
+  }, [accounts]);
 
   useEffect(() => {
     let isMounted = true;
 
     async function fetchAccounts() {
-      if (dataQualityCache) {
-        setAccounts(dataQualityCache);
-        setIsLoading(false);
-        return;
-      }
-
       setIsLoading(true);
       setError("");
 
       try {
         const response = await getCached(API_URL, {
           headers: getAuthHeaders(),
-          params: { limit: INITIAL_ACCOUNT_LIMIT },
+          params: buildAccountRequestParams(),
+          timeout: ACCOUNT_LOAD_TIMEOUT_MS,
+          ttl: 60 * 1000,
         });
         if (isMounted) {
           const preparedRows = prepareAccountRows(response.data?.data || []);
-          dataQualityCache = preparedRows;
           setAccounts(preparedRows);
-          setLoadedAccountLimit(response.data?.limit || INITIAL_ACCOUNT_LIMIT);
+          setFacets(response.data?.facets || {
+            cities: [],
+            countries: [],
+            missing_counts: [],
+            sectors: [],
+            states: [],
+          });
+          setFilteredAccountCount(response.data?.filtered_count || 0);
+          setTotalAccountCount(response.data?.total_count || 0);
+          setSyncStatus(response.data?.sync || null);
           setHasMoreAccounts(Boolean(response.data?.has_more));
         }
       } catch (fetchError) {
@@ -949,7 +933,7 @@ export default function DataQualityTable() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [page, rowsPerPage, columnFilters, debouncedSearchQuery, selectedCities, selectedCountry, selectedMissingField, selectedSector, selectedStates, showNeedsAttentionOnly, sortConfig]);
 
   if (isLoading) {
     return (
@@ -966,7 +950,7 @@ export default function DataQualityTable() {
   return (
     <Stack spacing={3}>
       <DataQualitySummary
-        filteredAccountCount={filteredAccounts.length}
+        filteredAccountCount={filteredAccountCount}
         missingCounts={missingCounts}
       />
 
@@ -1015,17 +999,21 @@ export default function DataQualityTable() {
         >
           <Stack alignItems={{ xs: "flex-start", sm: "center" }} direction={{ xs: "column", sm: "row" }} spacing={1.5}>
             <Typography color="text.secondary" variant="body2">
-              Showing {paginatedAccounts.length} of {filteredAccounts.length} Accounts
+              Showing {paginatedAccounts.length} of {filteredAccountCount.toLocaleString()} filtered accounts
+              {totalAccountCount ? ` from ${totalAccountCount.toLocaleString()} cached accounts` : ""}
             </Typography>
-            {hasMoreAccounts ? (
-              <Button
-                disabled={isLoadingMore}
-                onClick={loadMoreAccounts}
-                size="small"
-                variant="outlined"
-              >
-                {isLoadingMore ? "Loading more..." : `Load next ${ACCOUNT_LIMIT_STEP.toLocaleString()}`}
-              </Button>
+            {syncStatus?.status === "syncing" ? (
+              <Typography color="text.secondary" variant="body2">
+                Syncing Dynamics data...
+              </Typography>
+            ) : null}
+            {syncStatus?.last_completed_at ? (
+              <Typography color="text.secondary" variant="body2">
+                Synced {new Intl.DateTimeFormat(undefined, {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                }).format(new Date(syncStatus.last_completed_at))}
+              </Typography>
             ) : null}
           </Stack>
           <Stack direction="row" spacing={2}>
@@ -1257,7 +1245,7 @@ export default function DataQualityTable() {
         </Menu>
         <TablePagination
           component="div"
-          count={filteredAccounts.length}
+          count={filteredAccountCount}
           onPageChange={handleChangePage}
           onRowsPerPageChange={handleChangeRowsPerPage}
           page={page}

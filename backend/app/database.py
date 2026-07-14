@@ -78,6 +78,92 @@ def initialize_database():
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_software_subscriptions_contact ON software_subscriptions (point_of_contact)"
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS account_data_quality_cache (
+                accountid TEXT PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT '',
+                address1_stateorprovince TEXT NOT NULL DEFAULT '',
+                address1_country TEXT NOT NULL DEFAULT '',
+                address1_city TEXT NOT NULL DEFAULT '',
+                new_sector TEXT NOT NULL DEFAULT '',
+                new_subsector TEXT NOT NULL DEFAULT '',
+                new_naicstext TEXT NOT NULL DEFAULT '',
+                description TEXT NOT NULL DEFAULT '',
+                websiteurl TEXT NOT NULL DEFAULT '',
+                telephone1 TEXT NOT NULL DEFAULT '',
+                new_datasource TEXT NOT NULL DEFAULT '',
+                new_employees TEXT NOT NULL DEFAULT '',
+                missing_field_keys TEXT NOT NULL DEFAULT '',
+                missing_fields_summary TEXT NOT NULL DEFAULT '',
+                data_quality_score INTEGER NOT NULL DEFAULT 0,
+                has_missing_quality_field INTEGER NOT NULL DEFAULT 0,
+                search_text TEXT NOT NULL DEFAULT '',
+                synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_account_quality_name ON account_data_quality_cache (name COLLATE NOCASE)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_account_quality_sector ON account_data_quality_cache (new_sector)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_account_quality_country ON account_data_quality_cache (address1_country)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_account_quality_state ON account_data_quality_cache (address1_stateorprovince)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_account_quality_city ON account_data_quality_cache (address1_city)"
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS account_data_quality_sync (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                status TEXT NOT NULL DEFAULT 'idle',
+                last_started_at TEXT,
+                last_completed_at TEXT,
+                last_error TEXT NOT NULL DEFAULT '',
+                row_count INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO account_data_quality_sync (id, status, row_count)
+            VALUES (1, 'idle', 0)
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS marketing_metrics_cache (
+                range_key TEXT PRIMARY KEY,
+                payload TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'idle',
+                last_started_at TEXT,
+                last_completed_at TEXT,
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS employee_productivity_cache (
+                cache_key TEXT PRIMARY KEY,
+                payload TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'idle',
+                last_started_at TEXT,
+                last_completed_at TEXT,
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
         subscription_count = connection.execute(
             "SELECT COUNT(*) FROM software_subscriptions"
         ).fetchone()[0]

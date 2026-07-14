@@ -44,7 +44,61 @@ function makeAccounts(count) {
 }
 
 async function renderDataQualityTable(accounts) {
-  axios.get.mockResolvedValueOnce({ data: { data: accounts } });
+  axios.get.mockImplementation((_url, options = {}) => {
+    const params = options.params || {};
+    const page = Number(params.page || 0);
+    const pageSize = Number(params.page_size || 25);
+    const search = String(params.search || "").trim().toLowerCase();
+    const columnFilters = JSON.parse(params.column_filters || "{}");
+    const sortKey = params.sort_key || "";
+    const sortDirection = params.sort_direction || "asc";
+    let filteredAccounts = accounts;
+
+    if (search) {
+      filteredAccounts = filteredAccounts.filter((account) =>
+        Object.values(account).join(" ").toLowerCase().includes(search)
+      );
+    }
+
+    for (const [columnKey, filterValue] of Object.entries(columnFilters)) {
+      const normalizedFilter = String(filterValue || "").trim().toLowerCase();
+      if (!normalizedFilter) continue;
+      filteredAccounts = filteredAccounts.filter((account) =>
+        String(account[columnKey] || "").toLowerCase().includes(normalizedFilter)
+      );
+    }
+
+    if (sortKey) {
+      filteredAccounts = [...filteredAccounts].sort((firstAccount, secondAccount) => {
+        const firstValue = String(firstAccount[sortKey] || "").toLowerCase();
+        const secondValue = String(secondAccount[sortKey] || "").toLowerCase();
+        return firstValue.localeCompare(secondValue) * (sortDirection === "desc" ? -1 : 1);
+      });
+    }
+
+    const offset = page * pageSize;
+    const data = filteredAccounts.slice(offset, offset + pageSize);
+
+    return Promise.resolve({
+      data: {
+        count: data.length,
+        data,
+        facets: {
+          cities: Array.from(new Set(filteredAccounts.map((account) => account.address1_city))).filter(Boolean),
+          countries: Array.from(new Set(filteredAccounts.map((account) => account.address1_country))).filter(Boolean),
+          missing_counts: [],
+          sectors: Array.from(new Set(filteredAccounts.map((account) => account.new_sector))).filter(Boolean),
+          states: Array.from(new Set(filteredAccounts.map((account) => account.address1_stateorprovince))).filter(Boolean),
+        },
+        filtered_count: filteredAccounts.length,
+        has_more: offset + data.length < filteredAccounts.length,
+        page,
+        page_size: pageSize,
+        sync: { status: "idle", is_stale: false, row_count: accounts.length },
+        total_count: accounts.length,
+      },
+    });
+  });
 
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -99,7 +153,7 @@ describe("DataQualityTable pagination edge cases", () => {
   it("renders 25 rows by default and reports the filtered total", async () => {
     const view = await renderDataQualityTable(makeAccounts(30));
 
-    expect(view.container.textContent).toContain("Showing 25 of 30 Accounts");
+    expect(view.container.textContent).toContain("Showing 25 of 30 filtered accounts from 30 cached accounts");
     expect(getRowNames(view.container)).toHaveLength(25);
     expect(getRowNames(view.container)[0]).toBe("Company 1");
     expect(getRowNames(view.container)[24]).toBe("Company 25");
@@ -115,7 +169,7 @@ describe("DataQualityTable pagination edge cases", () => {
       nextPageButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(view.container.textContent).toContain("Showing 5 of 30 Accounts");
+    expect(view.container.textContent).toContain("Showing 5 of 30 filtered accounts from 30 cached accounts");
     expect(getRowNames(view.container)).toEqual([
       "Company 26",
       "Company 27",
@@ -142,7 +196,7 @@ describe("DataQualityTable pagination edge cases", () => {
       await Promise.resolve();
     });
 
-    expect(view.container.textContent).toContain("Showing 1 of 1 Accounts");
+    expect(view.container.textContent).toContain("Showing 1 of 1 filtered accounts from 30 cached accounts");
     expect(getRowNames(view.container)).toEqual(["Company 30"]);
 
     view.unmount();
@@ -165,7 +219,7 @@ describe("DataQualityTable pagination edge cases", () => {
     });
 
     expect(view.container.textContent).toContain("0 visible selected");
-    expect(view.container.textContent).toContain("25 Accounts Selected");
+    expect(view.container.textContent).toContain("0 Accounts Selected");
 
     view.unmount();
   });
@@ -289,13 +343,14 @@ describe("DataQualityTable pagination edge cases", () => {
 
     expect(getRowNames(view.container)).toEqual(["Alpha Co", "Charlie Co", "Bravo Co"]);
 
+    const stateOptionsButtonAfterSort = view.container.querySelector('button[aria-label="State/Province filter and sort options"]');
     await act(async () => {
-      stateOptionsButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      stateOptionsButtonAfterSort.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
     const sortDescendingButton = Array.from(document.body.querySelectorAll("li")).find(
-      (item) => item.textContent === "Sort descending"
+      (item) => item.textContent.includes("Sort descending")
     );
 
     await act(async () => {
@@ -326,7 +381,7 @@ describe("DataQualityTable pagination edge cases", () => {
       setInputValue(companyFilter, "contoso");
     });
 
-    expect(view.container.textContent).toContain("Showing 1 of 1 Accounts");
+    expect(view.container.textContent).toContain("Showing 1 of 1 filtered accounts from 3 cached accounts");
     expect(getRowNames(view.container)).toEqual(["Contoso Manufacturing"]);
 
     view.unmount();

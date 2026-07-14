@@ -4,10 +4,12 @@ import time
 import httpx
 import re
 import logging
+import json
 from urllib.parse import quote
 from dotenv import load_dotenv
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from ..database import get_database_connection
 from .auth import get_access_token
 from .metrics import increment_processed, log_update
 from .seamless import enrich_with_seamless
@@ -29,9 +31,10 @@ load_dotenv(BACKEND_ROOT / ".env")
 
 API_URL = os.getenv("DYNAMICS_API_URL")
 DATA_QUALITY_CACHE_TTL_SECONDS = 300
-DATA_QUALITY_ACCOUNT_LIMIT = int(os.getenv("DATA_QUALITY_ACCOUNT_LIMIT", "5000"))
+DATA_QUALITY_ACCOUNT_LIMIT = int(os.getenv("DATA_QUALITY_ACCOUNT_LIMIT", "100000"))
 SUMMARY_CACHE_TTL_SECONDS = 600
-DATA_QUALITY_REQUEST_TIMEOUT_SECONDS = 60
+DATA_QUALITY_REQUEST_TIMEOUT_SECONDS = 300
+DATA_QUALITY_SYNC_STALE_SECONDS = int(os.getenv("DATA_QUALITY_SYNC_STALE_SECONDS", "3600"))
 DUPLICATE_ACCOUNT_DEFAULT_LIMIT = 1000
 DUPLICATE_ACCOUNT_MAX_LIMIT = 1000
 MARKETING_LIST_DEFAULT_LIMIT = int(os.getenv("MARKETING_LIST_DEFAULT_LIMIT", "500"))
@@ -63,6 +66,8 @@ _WEBSITE_VISIT_CLIENT_NAVIGATION_CACHE = {"loaded": False, "value": None}
 _WEBSITE_VISIT_ACCOUNT_NAVIGATION_CACHE = {"loaded": False, "value": None}
 _DATA_QUALITY_REFRESH_TASK = None
 MARKETING_METRICS_CACHE_TTL_SECONDS = 600
+MARKETING_METRICS_REQUEST_TIMEOUT_SECONDS = 120
+MARKETING_METRICS_SYNC_STALE_SECONDS = int(os.getenv("MARKETING_METRICS_SYNC_STALE_SECONDS", "1800"))
 INTERNAL_COMPANY_ACCOUNT_ID = "08c283ff-6186-eb11-a812-0022481d279b"
 TARGET_INDUSTRIES_TABLE = "new_targetindustries"
 TARGET_INDUSTRY_CLIENT_LOOKUP_FIELD = "_new_clientid_value"
@@ -73,6 +78,65 @@ TARGET_INDUSTRY_CODE_FIELDS = (
     "naicscode",
     "new_naicscode",
 )
+DATA_QUALITY_FIELDS = (
+    ("name", "Company Name"),
+    ("new_sector", "Sector"),
+    ("new_subsector", "Subsector"),
+    ("websiteurl", "Website"),
+    ("address1_country", "Country"),
+    ("address1_stateorprovince", "State/Province"),
+    ("address1_city", "City"),
+    ("description", "Description"),
+    ("telephone1", "Business Phone"),
+    ("new_datasource", "Data Source"),
+    ("new_employees", "Employee Count"),
+    ("new_naicstext", "NAICS Text"),
+)
+DATA_QUALITY_SCORE_FIELDS = {
+    "websiteurl": 20,
+    "telephone1": 20,
+    "description": 20,
+    "new_employees": 20,
+}
+DATA_QUALITY_LOCATION_FIELDS = ("address1_city", "address1_stateorprovince", "address1_country")
+DATA_QUALITY_MISSING_METRIC_FIELDS = (
+    ("new_sector", "Missing Sector"),
+    ("new_subsector", "Missing Subsector"),
+    ("websiteurl", "Missing Website"),
+    ("telephone1", "Missing Business Phone"),
+    ("description", "Missing Description"),
+    ("new_employees", "Missing Employee Count"),
+    ("new_datasource", "Missing Data Source"),
+    ("new_naicstext", "Missing NAICS Text"),
+)
+DATA_QUALITY_FILTERABLE_COLUMNS = {
+    "name",
+    "new_sector",
+    "new_subsector",
+    "websiteurl",
+    "telephone1",
+    "address1_country",
+    "address1_stateorprovince",
+    "address1_city",
+    "new_employees",
+    "new_naicstext",
+    "missing_fields_summary",
+    "data_quality_score",
+}
+DATA_QUALITY_SORT_COLUMNS = {
+    "name": "name",
+    "new_sector": "new_sector",
+    "new_subsector": "new_subsector",
+    "websiteurl": "websiteurl",
+    "telephone1": "telephone1",
+    "address1_country": "address1_country",
+    "address1_stateorprovince": "address1_stateorprovince",
+    "address1_city": "address1_city",
+    "new_employees": "new_employees",
+    "new_naicstext": "new_naicstext",
+    "missing_fields_summary": "missing_fields_summary",
+    "data_quality_score": "data_quality_score",
+}
 TARGET_INDUSTRY_ENTITY_SET_CANDIDATES = (
     "new_targetindustries",
     "new_targetindustrieses",
@@ -180,7 +244,74 @@ async def get_accounts_missing_data():
     return response.json().get("value", [])
 
 
-async def get_accounts_data_quality(limit: int | None = None):
+def _is_missing_data_quality_value(value) -> bool:
+    return value is None or str(value).strip() == ""
+
+
+def _normalize_data_quality_value(value) -> str:
+    return str(value or "").strip().lower()
+
+
+def _normalize_data_quality_country(value) -> str:
+    normalized = _normalize_data_quality_value(value).replace(".", "").replace(" ", "")
+    aliases = {
+        "us": "unitedstates",
+        "usa": "unitedstates",
+        "unitedstatesofamerica": "unitedstates",
+        "ca": "canada",
+        "can": "canada",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _prepare_data_quality_cache_row(account: dict, synced_at: str) -> dict:
+    row = {
+        "accountid": account.get("accountid") or "",
+        "name": account.get("name") or "",
+        "address1_stateorprovince": account.get("address1_stateorprovince") or "",
+        "address1_country": account.get("address1_country") or "",
+        "address1_city": account.get("address1_city") or "",
+        "new_sector": account.get("new_sector") or "",
+        "new_subsector": account.get("new_subsector") or "",
+        "new_naicstext": account.get("new_naicstext") or "",
+        "description": account.get("description") or "",
+        "websiteurl": account.get("websiteurl") or "",
+        "telephone1": account.get("telephone1") or "",
+        "new_datasource": account.get("new_datasource") or "",
+        "new_employees": "" if account.get("new_employees") is None else str(account.get("new_employees")),
+    }
+    missing_fields = [
+        {"key": field_key, "label": field_label}
+        for field_key, field_label in DATA_QUALITY_FIELDS
+        if _is_missing_data_quality_value(row.get(field_key))
+    ]
+    missing_field_keys = [field["key"] for field in missing_fields]
+    missing_field_labels = [field["label"] for field in missing_fields]
+    field_score = sum(
+        points
+        for field_key, points in DATA_QUALITY_SCORE_FIELDS.items()
+        if not _is_missing_data_quality_value(row.get(field_key))
+    )
+    location_score = 20 if all(not _is_missing_data_quality_value(row.get(field_key)) for field_key in DATA_QUALITY_LOCATION_FIELDS) else 0
+    search_text = " ".join(
+        _normalize_data_quality_value(row.get(field_key))
+        for field_key, _field_label in DATA_QUALITY_FIELDS
+    )
+
+    row.update(
+        {
+            "missing_field_keys": ",".join(missing_field_keys),
+            "missing_fields_summary": ", ".join(missing_field_labels) if missing_field_labels else "Complete",
+            "data_quality_score": field_score + location_score,
+            "has_missing_quality_field": 1 if missing_fields else 0,
+            "search_text": search_text,
+            "synced_at": synced_at,
+        }
+    )
+    return row
+
+
+async def _fetch_accounts_data_quality_from_dynamics(limit: int | None = None):
     account_limit = max(1, min(limit or DATA_QUALITY_ACCOUNT_LIMIT, DATA_QUALITY_ACCOUNT_LIMIT))
     now = time.time()
     if (
@@ -233,6 +364,319 @@ async def get_accounts_data_quality(limit: int | None = None):
     _DATA_QUALITY_CACHE["expires_at"] = now + DATA_QUALITY_CACHE_TTL_SECONDS
 
     return accounts
+
+
+def _get_data_quality_sync_status() -> dict:
+    with get_database_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT status, last_started_at, last_completed_at, last_error, row_count
+            FROM account_data_quality_sync
+            WHERE id = 1
+            """
+        ).fetchone()
+
+    return dict(row) if row else {
+        "status": "idle",
+        "last_started_at": None,
+        "last_completed_at": None,
+        "last_error": "",
+        "row_count": 0,
+    }
+
+
+def _is_data_quality_cache_stale(sync_status: dict) -> bool:
+    completed_at = sync_status.get("last_completed_at")
+    if not completed_at:
+        return True
+
+    try:
+        completed_time = datetime.fromisoformat(str(completed_at).replace("Z", "+00:00"))
+    except ValueError:
+        return True
+
+    if completed_time.tzinfo is None:
+        completed_time = completed_time.replace(tzinfo=timezone.utc)
+
+    return (datetime.now(timezone.utc) - completed_time).total_seconds() > DATA_QUALITY_SYNC_STALE_SECONDS
+
+
+async def refresh_accounts_data_quality_cache(limit: int | None = None) -> dict:
+    account_limit = max(1, min(limit or DATA_QUALITY_ACCOUNT_LIMIT, DATA_QUALITY_ACCOUNT_LIMIT))
+    started_at = datetime.now(timezone.utc).isoformat()
+    with get_database_connection() as connection:
+        connection.execute(
+            """
+            UPDATE account_data_quality_sync
+            SET status = 'syncing',
+                last_started_at = ?,
+                last_error = ''
+            WHERE id = 1
+            """,
+            (started_at,),
+        )
+
+    try:
+        accounts = await _fetch_accounts_data_quality_from_dynamics(account_limit)
+        synced_at = datetime.now(timezone.utc).isoformat()
+        prepared_rows = [_prepare_data_quality_cache_row(account, synced_at) for account in accounts if account.get("accountid")]
+
+        with get_database_connection() as connection:
+            connection.execute("DELETE FROM account_data_quality_cache")
+            connection.executemany(
+                """
+                INSERT INTO account_data_quality_cache (
+                    accountid, name, address1_stateorprovince, address1_country, address1_city,
+                    new_sector, new_subsector, new_naicstext, description, websiteurl,
+                    telephone1, new_datasource, new_employees, missing_field_keys,
+                    missing_fields_summary, data_quality_score, has_missing_quality_field,
+                    search_text, synced_at
+                )
+                VALUES (
+                    :accountid, :name, :address1_stateorprovince, :address1_country, :address1_city,
+                    :new_sector, :new_subsector, :new_naicstext, :description, :websiteurl,
+                    :telephone1, :new_datasource, :new_employees, :missing_field_keys,
+                    :missing_fields_summary, :data_quality_score, :has_missing_quality_field,
+                    :search_text, :synced_at
+                )
+                """,
+                prepared_rows,
+            )
+            connection.execute(
+                """
+                UPDATE account_data_quality_sync
+                SET status = 'idle',
+                    last_completed_at = ?,
+                    last_error = '',
+                    row_count = ?
+                WHERE id = 1
+                """,
+                (synced_at, len(prepared_rows)),
+            )
+
+        return _get_data_quality_sync_status()
+    except Exception as exc:
+        with get_database_connection() as connection:
+            connection.execute(
+                """
+                UPDATE account_data_quality_sync
+                SET status = 'error',
+                    last_error = ?
+                WHERE id = 1
+                """,
+                (str(exc),),
+            )
+        raise
+
+
+def _build_data_quality_filters(
+    *,
+    search: str = "",
+    sector: str = "all",
+    missing_field: str = "all",
+    states: list[str] | None = None,
+    country: str = "all",
+    cities: list[str] | None = None,
+    needs_attention: bool = False,
+    column_filters: dict[str, str] | None = None,
+) -> tuple[str, list]:
+    clauses = []
+    values = []
+    states = states or []
+    cities = cities or []
+    column_filters = column_filters or {}
+
+    if sector != "all":
+        clauses.append("new_sector = ?")
+        values.append(sector)
+    if missing_field != "all":
+        clauses.append("(',' || missing_field_keys || ',') LIKE ?")
+        values.append(f"%,{missing_field},%")
+    if states:
+        clauses.append(f"address1_stateorprovince IN ({','.join('?' for _ in states)})")
+        values.extend(states)
+    if country != "all":
+        clauses.append(
+            """
+            CASE LOWER(REPLACE(REPLACE(address1_country, '.', ''), ' ', ''))
+                WHEN 'us' THEN 'unitedstates'
+                WHEN 'usa' THEN 'unitedstates'
+                WHEN 'unitedstatesofamerica' THEN 'unitedstates'
+                WHEN 'ca' THEN 'canada'
+                WHEN 'can' THEN 'canada'
+                ELSE LOWER(REPLACE(REPLACE(address1_country, '.', ''), ' ', ''))
+            END = ?
+            """
+        )
+        values.append(_normalize_data_quality_country(country))
+    if cities:
+        clauses.append(f"address1_city IN ({','.join('?' for _ in cities)})")
+        values.extend(cities)
+    if needs_attention:
+        clauses.append("has_missing_quality_field = 1")
+    if search.strip():
+        clauses.append("search_text LIKE ?")
+        values.append(f"%{_normalize_data_quality_value(search)}%")
+
+    for column_key, filter_value in column_filters.items():
+        if column_key not in DATA_QUALITY_FILTERABLE_COLUMNS or not str(filter_value or "").strip():
+            continue
+        if column_key == "data_quality_score":
+            clauses.append("CAST(data_quality_score AS TEXT) LIKE ?")
+        else:
+            clauses.append(f"LOWER({column_key}) LIKE ?")
+        values.append(f"%{_normalize_data_quality_value(filter_value)}%")
+
+    return (" WHERE " + " AND ".join(clauses)) if clauses else "", values
+
+
+def _rows_to_data_quality_accounts(rows) -> list[dict]:
+    accounts = []
+    for index, row in enumerate(rows):
+        account = dict(row)
+        account["missing_field_keys"] = [key for key in account.get("missing_field_keys", "").split(",") if key]
+        account["has_missing_quality_field"] = bool(account.get("has_missing_quality_field"))
+        account["data_quality_score"] = int(account.get("data_quality_score") or 0)
+        account["selectionId"] = account.get("accountid") or f"{account.get('name') or 'account'}-{index}"
+        accounts.append(account)
+    return accounts
+
+
+def _get_data_quality_facets(connection, where_clause: str, values: list) -> dict:
+    def distinct_values(column_name: str) -> list[str]:
+        rows = connection.execute(
+            f"""
+            SELECT DISTINCT {column_name} AS value
+            FROM account_data_quality_cache
+            {where_clause}
+              {"AND" if where_clause else "WHERE"} {column_name} != ''
+            ORDER BY {column_name} COLLATE NOCASE ASC
+            LIMIT 1000
+            """,
+            values,
+        ).fetchall()
+        return [row["value"] for row in rows]
+
+    missing_counts = []
+    for field_key, field_label in DATA_QUALITY_MISSING_METRIC_FIELDS:
+        count = connection.execute(
+            f"""
+            SELECT COUNT(*) AS count
+            FROM account_data_quality_cache
+            {where_clause}
+              {"AND" if where_clause else "WHERE"} (',' || missing_field_keys || ',') LIKE ?
+            """,
+            [*values, f"%,{field_key},%"],
+        ).fetchone()["count"]
+        missing_counts.append({"key": field_key, "label": field_label, "missing": count})
+
+    incomplete_location_count = connection.execute(
+        f"""
+        SELECT COUNT(*) AS count
+        FROM account_data_quality_cache
+        {where_clause}
+          {"AND" if where_clause else "WHERE"} (
+            (',' || missing_field_keys || ',') LIKE '%,address1_city,%'
+            OR (',' || missing_field_keys || ',') LIKE '%,address1_stateorprovince,%'
+            OR (',' || missing_field_keys || ',') LIKE '%,address1_country,%'
+          )
+        """,
+        values,
+    ).fetchone()["count"]
+    missing_counts.append(
+        {
+            "key": "incomplete_location",
+            "label": "Incomplete Location",
+            "missing": incomplete_location_count,
+            "helperText": "Missing city, state, or country",
+        }
+    )
+
+    return {
+        "sectors": distinct_values("new_sector"),
+        "countries": distinct_values("address1_country"),
+        "states": distinct_values("address1_stateorprovince"),
+        "cities": distinct_values("address1_city"),
+        "missing_counts": missing_counts,
+    }
+
+
+def get_accounts_data_quality_page(
+    *,
+    page: int = 0,
+    page_size: int = 25,
+    search: str = "",
+    sector: str = "all",
+    missing_field: str = "all",
+    states: list[str] | None = None,
+    country: str = "all",
+    cities: list[str] | None = None,
+    needs_attention: bool = False,
+    column_filters: dict[str, str] | None = None,
+    sort_key: str = "",
+    sort_direction: str = "asc",
+) -> dict:
+    page = max(0, page)
+    page_size = max(1, min(page_size, 250))
+    where_clause, values = _build_data_quality_filters(
+        search=search,
+        sector=sector,
+        missing_field=missing_field,
+        states=states,
+        country=country,
+        cities=cities,
+        needs_attention=needs_attention,
+        column_filters=column_filters,
+    )
+    sort_column = DATA_QUALITY_SORT_COLUMNS.get(sort_key or "", "name")
+    direction = "DESC" if sort_direction == "desc" else "ASC"
+    offset = page * page_size
+
+    with get_database_connection() as connection:
+        total_count = connection.execute(
+            "SELECT COUNT(*) AS count FROM account_data_quality_cache"
+        ).fetchone()["count"]
+        filtered_count = connection.execute(
+            f"SELECT COUNT(*) AS count FROM account_data_quality_cache{where_clause}",
+            values,
+        ).fetchone()["count"]
+        rows = connection.execute(
+            f"""
+            SELECT accountid, name, address1_stateorprovince, address1_country, address1_city,
+                   new_sector, new_subsector, new_naicstext, description, websiteurl,
+                   telephone1, new_datasource, new_employees, missing_field_keys,
+                   missing_fields_summary AS missingFieldsSummary,
+                   data_quality_score AS dataQualityScore,
+                   has_missing_quality_field AS hasMissingQualityField
+            FROM account_data_quality_cache
+            {where_clause}
+            ORDER BY {sort_column} COLLATE NOCASE {direction}, name COLLATE NOCASE ASC
+            LIMIT ? OFFSET ?
+            """,
+            [*values, page_size, offset],
+        ).fetchall()
+        facets = _get_data_quality_facets(connection, where_clause, values)
+
+    sync_status = _get_data_quality_sync_status()
+    return {
+        "count": len(rows),
+        "data": _rows_to_data_quality_accounts(rows),
+        "page": page,
+        "page_size": page_size,
+        "total_count": total_count,
+        "filtered_count": filtered_count,
+        "has_more": offset + len(rows) < filtered_count,
+        "facets": facets,
+        "sync": {
+            **sync_status,
+            "is_stale": _is_data_quality_cache_stale(sync_status),
+        },
+    }
+
+
+async def get_accounts_data_quality(limit: int | None = None):
+    await refresh_accounts_data_quality_cache(limit)
+    return get_accounts_data_quality_page(page_size=min(limit or DATA_QUALITY_ACCOUNT_LIMIT, 250))["data"]
 
 
 def get_cached_accounts_data_quality():
@@ -1938,7 +2382,7 @@ def _marketing_window(range_key: str, now: datetime) -> dict[str, object]:
     }
 
 
-async def get_website_visit_metrics(range_key: str = "since_2022"):
+async def _load_website_visit_metrics_from_dynamics(range_key: str = "since_2022"):
     now = time.time()
     cache_key = range_key if range_key in MARKETING_RANGE_OPTIONS else "last_year"
     cached_data = _MARKETING_METRICS_CACHE["data"] or {}
@@ -1958,7 +2402,8 @@ async def get_website_visit_metrics(range_key: str = "since_2022"):
         "$orderby=lfapp_time asc"
     )
 
-    async with httpx.AsyncClient() as client:
+    timeout = httpx.Timeout(MARKETING_METRICS_REQUEST_TIMEOUT_SECONDS)
+    async with httpx.AsyncClient(timeout=timeout) as client:
         target_naics_codes = await _fetch_target_industry_naics_codes(client, headers)
         website_visit_counts = await _count_website_visits(
             client,
@@ -1996,6 +2441,138 @@ async def get_website_visit_metrics(range_key: str = "since_2022"):
     _MARKETING_METRICS_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
 
     return result
+
+
+def _normalize_marketing_metrics_range(range_key: str) -> str:
+    return range_key if range_key in MARKETING_RANGE_OPTIONS else "last_year"
+
+
+def _marketing_metrics_empty_payload(range_key: str) -> dict:
+    current_time = datetime.now(timezone.utc)
+    window = _marketing_window(range_key, current_time)
+    return {
+        "company_id": INTERNAL_COMPANY_ACCOUNT_ID,
+        "range": window["range"],
+        "range_label": window["label"],
+        "bucket_grain": window["bucket_grain"],
+        "updated_at": "",
+        "total_visitors": 0,
+        "target_total_visitors": 0,
+        "months": [
+            {
+                "period": bucket[window["bucket_label"]],
+                "period_key": bucket[window["bucket_key"]],
+                "visitors": 0,
+                "target_visitors": 0,
+            }
+            for bucket in window["buckets"]
+        ],
+        "landing_pages": [],
+    }
+
+
+def _is_marketing_metrics_cache_stale(cache_row: dict | None) -> bool:
+    if not cache_row or not cache_row.get("last_completed_at"):
+        return True
+
+    try:
+        completed_time = datetime.fromisoformat(str(cache_row["last_completed_at"]).replace("Z", "+00:00"))
+    except ValueError:
+        return True
+
+    if completed_time.tzinfo is None:
+        completed_time = completed_time.replace(tzinfo=timezone.utc)
+
+    return (datetime.now(timezone.utc) - completed_time).total_seconds() > MARKETING_METRICS_SYNC_STALE_SECONDS
+
+
+def _get_marketing_metrics_cache_row(range_key: str) -> dict | None:
+    with get_database_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT range_key, payload, status, last_started_at, last_completed_at, last_error
+            FROM marketing_metrics_cache
+            WHERE range_key = ?
+            """,
+            (range_key,),
+        ).fetchone()
+
+    return dict(row) if row else None
+
+
+async def refresh_website_visit_metrics_cache(range_key: str = "since_2022") -> dict:
+    normalized_range = _normalize_marketing_metrics_range(range_key)
+    started_at = datetime.now(timezone.utc).isoformat()
+    with get_database_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO marketing_metrics_cache (
+                range_key, payload, status, last_started_at, last_error, updated_at
+            )
+            VALUES (?, ?, 'syncing', ?, '', CURRENT_TIMESTAMP)
+            ON CONFLICT(range_key) DO UPDATE SET
+                status = 'syncing',
+                last_started_at = excluded.last_started_at,
+                last_error = '',
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (normalized_range, json.dumps(_marketing_metrics_empty_payload(normalized_range)), started_at),
+        )
+
+    try:
+        payload = await _load_website_visit_metrics_from_dynamics(normalized_range)
+        completed_at = datetime.now(timezone.utc).isoformat()
+        with get_database_connection() as connection:
+            connection.execute(
+                """
+                UPDATE marketing_metrics_cache
+                SET payload = ?,
+                    status = 'idle',
+                    last_completed_at = ?,
+                    last_error = '',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE range_key = ?
+                """,
+                (json.dumps(payload), completed_at, normalized_range),
+            )
+        return get_website_visit_metrics(normalized_range)
+    except Exception as exc:
+        with get_database_connection() as connection:
+            connection.execute(
+                """
+                UPDATE marketing_metrics_cache
+                SET status = 'error',
+                    last_error = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE range_key = ?
+                """,
+                (str(exc), normalized_range),
+            )
+        raise
+
+
+def get_website_visit_metrics(range_key: str = "since_2022") -> dict:
+    normalized_range = _normalize_marketing_metrics_range(range_key)
+    cache_row = _get_marketing_metrics_cache_row(normalized_range)
+    if cache_row:
+        try:
+            payload = json.loads(cache_row.get("payload") or "{}")
+        except json.JSONDecodeError:
+            payload = _marketing_metrics_empty_payload(normalized_range)
+    else:
+        payload = _marketing_metrics_empty_payload(normalized_range)
+
+    sync = {
+        "status": cache_row.get("status") if cache_row else "idle",
+        "last_started_at": cache_row.get("last_started_at") if cache_row else None,
+        "last_completed_at": cache_row.get("last_completed_at") if cache_row else None,
+        "last_error": cache_row.get("last_error") if cache_row else "",
+        "is_stale": _is_marketing_metrics_cache_stale(cache_row),
+    }
+    return {
+        **payload,
+        "sync": sync,
+    }
 
 
 async def get_project_creation_metrics():

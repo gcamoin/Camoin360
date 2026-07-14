@@ -101,7 +101,8 @@ export default function LandingPage({ onLogout }) {
   function prefetchView(viewKey) {
     prefetch(prefetchUrls[viewKey], {
       headers: getAuthHeaders(),
-      params: viewKey === "dataQuality" ? { limit: 1000 } : undefined,
+      params: viewKey === "dataQuality" ? { limit: 100000 } : undefined,
+      timeout: viewKey === "dataQuality" ? 5 * 60 * 1000 : undefined,
       ttl: viewKey === "summaryAnalytics" ? 10 * 60 * 1000 : 5 * 60 * 1000,
     });
   }

@@ -54,9 +54,10 @@ export default function MarketingMetrics() {
   const [range, setRange] = useState("since_2022");
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(null);
   const [error, setError] = useState("");
 
-  const fetchMetrics = useCallback(async ({ silent = false } = {}) => {
+  const fetchMetrics = useCallback(async ({ refresh = false, silent = false } = {}) => {
     if (!isMountedRef.current) return;
 
     if (silent) {
@@ -69,7 +70,7 @@ export default function MarketingMetrics() {
     try {
       const response = await axios.get(API_URL, {
         headers: getAuthHeaders(),
-        params: { range },
+        params: { range, refresh },
       });
 
       if (!isMountedRef.current) return;
@@ -83,6 +84,7 @@ export default function MarketingMetrics() {
         total_visitors: response.data?.total_visitors || 0,
         updated_at: response.data?.updated_at || "",
       });
+      setSyncStatus(response.data?.sync || null);
     } catch (fetchError) {
       if (handleUnauthorized(fetchError)) {
         return;
@@ -113,6 +115,20 @@ export default function MarketingMetrics() {
     };
   }, [fetchMetrics]);
 
+  useEffect(() => {
+    if (syncStatus?.status !== "syncing") {
+      return undefined;
+    }
+
+    const pollTimer = window.setTimeout(() => {
+      fetchMetrics({ silent: true });
+    }, 5000);
+
+    return () => {
+      window.clearTimeout(pollTimer);
+    };
+  }, [fetchMetrics, syncStatus]);
+
   const peakMonth = useMemo(
     () =>
       metrics.months.reduce(
@@ -127,6 +143,10 @@ export default function MarketingMetrics() {
         timeStyle: "short",
       }).format(new Date(metrics.updated_at))}`
     : "";
+  const statusLabel =
+    syncStatus?.status === "syncing"
+      ? "Syncing Dynamics data..."
+      : updatedLabel || "Website visit metrics";
   const visitorsChartTitle =
     metrics.bucket_grain === "day" ? "Website Visitors by Day" : "Website Visitors by Month";
   const targetVisitorsChartTitle =
@@ -177,16 +197,16 @@ export default function MarketingMetrics() {
         </Stack>
         <Stack alignItems={{ xs: "flex-start", sm: "flex-end" }} spacing={0.75}>
           <Typography color="text.secondary" fontSize="0.75rem">
-            {updatedLabel || "Website visit metrics"}
+            {statusLabel}
           </Typography>
           <Button
             disabled={isRefreshing}
-            onClick={() => fetchMetrics({ silent: true })}
+            onClick={() => fetchMetrics({ refresh: true, silent: true })}
             size="small"
             variant="outlined"
             sx={{ borderRadius: 1, fontSize: "0.75rem", fontWeight: 700 }}
           >
-            {isRefreshing ? "Refreshing" : "Refresh"}
+            {isRefreshing || syncStatus?.status === "syncing" ? "Refreshing" : "Refresh"}
           </Button>
         </Stack>
       </Stack>

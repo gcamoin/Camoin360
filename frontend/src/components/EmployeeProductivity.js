@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import {
   Alert,
@@ -45,6 +45,12 @@ const MONTH_OPTIONS = [
   { label: "November", value: 11 },
   { label: "December", value: 12 },
 ];
+const ALL_EMPLOYEES_VALUE = "all";
+const BILLING_OPTIONS = [
+  { label: "All Billing", value: "all" },
+  { label: "Billable", value: "billable" },
+  { label: "Non-Billed", value: "non_billable" },
+];
 
 const tooltipStyle = {
   contentStyle: {
@@ -75,11 +81,14 @@ export default function EmployeeProductivity() {
   });
   const [selectedYear, setSelectedYear] = useState(CURRENT_YEAR);
   const [selectedMonth, setSelectedMonth] = useState("");
+  const [selectedEmployee, setSelectedEmployee] = useState(ALL_EMPLOYEES_VALUE);
+  const [selectedBilling, setSelectedBilling] = useState("all");
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(null);
   const [error, setError] = useState("");
 
-  const fetchMetrics = useCallback(async ({ silent = false } = {}) => {
+  const fetchMetrics = useCallback(async ({ refresh = false, silent = false } = {}) => {
     if (!isMountedRef.current) return;
 
     if (silent) {
@@ -93,6 +102,9 @@ export default function EmployeeProductivity() {
       const params = { year: selectedYear };
       if (selectedMonth) {
         params.month = selectedMonth;
+      }
+      if (refresh) {
+        params.refresh = true;
       }
 
       const response = await axios.get(API_URL, {
@@ -109,6 +121,7 @@ export default function EmployeeProductivity() {
         weeks: response.data?.weeks || 12,
         updated_at: response.data?.updated_at || "",
       });
+      setSyncStatus(response.data?.sync || null);
     } catch (fetchError) {
       if (handleUnauthorized(fetchError)) {
         return;
@@ -139,17 +152,62 @@ export default function EmployeeProductivity() {
     };
   }, [fetchMetrics]);
 
+  useEffect(() => {
+    if (syncStatus?.status !== "syncing") {
+      return undefined;
+    }
+
+    const pollTimer = window.setTimeout(() => {
+      fetchMetrics({ silent: true });
+    }, 5000);
+
+    return () => {
+      window.clearTimeout(pollTimer);
+    };
+  }, [fetchMetrics, syncStatus]);
+
   const updatedLabel = metrics.updated_at
     ? `Updated ${new Intl.DateTimeFormat(undefined, {
         dateStyle: "medium",
         timeStyle: "short",
       }).format(new Date(metrics.updated_at))}`
     : "";
+  const statusLabel =
+    syncStatus?.status === "syncing"
+      ? "Syncing Harvest data..."
+      : updatedLabel || "Employee productivity metrics";
   const dateRangeLabel =
     metrics.from && metrics.to
       ? `${formatShortDate(metrics.from)} - ${formatShortDate(metrics.to)}`
       : `Last ${metrics.weeks} weeks`;
-  const chartHeight = metrics.employees.length > 18 ? 380 : 420;
+  const employeeOptions = useMemo(
+    () =>
+      metrics.employees
+        .map((employee) => employee.employee)
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b)),
+    [metrics.employees]
+  );
+  useEffect(() => {
+    if (selectedEmployee !== ALL_EMPLOYEES_VALUE && !employeeOptions.includes(selectedEmployee)) {
+      setSelectedEmployee(ALL_EMPLOYEES_VALUE);
+    }
+  }, [employeeOptions, selectedEmployee]);
+  const filteredEmployees = useMemo(
+    () =>
+      metrics.employees.filter((employee) => {
+        const matchesEmployee =
+          selectedEmployee === ALL_EMPLOYEES_VALUE || employee.employee === selectedEmployee;
+        const matchesBilling =
+          selectedBilling === "all" ||
+          (selectedBilling === "billable" && Number(employee.average_weekly_billable_hours || 0) > 0) ||
+          (selectedBilling === "non_billable" && Number(employee.average_weekly_non_billable_hours || 0) > 0);
+
+        return matchesEmployee && matchesBilling;
+      }),
+    [metrics.employees, selectedBilling, selectedEmployee]
+  );
+  const chartHeight = filteredEmployees.length > 18 ? 380 : 420;
 
   if (isLoading) {
     return (
@@ -170,18 +228,93 @@ export default function EmployeeProductivity() {
         spacing={1.5}
       >
         <Typography color="text.secondary" fontSize="0.75rem">
-          {updatedLabel || "Employee productivity metrics"}
+          {statusLabel}
         </Typography>
         <Button
-          disabled={isRefreshing}
-          onClick={() => fetchMetrics({ silent: true })}
+          disabled={isRefreshing || syncStatus?.status === "syncing"}
+          onClick={() => fetchMetrics({ refresh: true, silent: true })}
           size="small"
           variant="outlined"
           sx={{ alignSelf: { xs: "flex-start", sm: "auto" }, borderRadius: 1, fontSize: "0.75rem", fontWeight: 700 }}
         >
-          {isRefreshing ? "Refreshing" : "Refresh"}
+          {isRefreshing || syncStatus?.status === "syncing" ? "Refreshing" : "Refresh"}
         </Button>
       </Stack>
+
+      <Paper
+        elevation={0}
+        sx={{
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: 2,
+          p: 2,
+          backgroundColor: "common.white",
+        }}
+      >
+        <Stack direction={{ xs: "column", md: "row" }} spacing={1.25} flexWrap="wrap" useFlexGap>
+          <FormControl size="small" sx={{ minWidth: 132 }}>
+            <InputLabel id="weekly-hours-year-label">Year</InputLabel>
+            <Select
+              label="Year"
+              labelId="weekly-hours-year-label"
+              onChange={(event) => setSelectedYear(Number(event.target.value))}
+              value={selectedYear}
+            >
+              {YEAR_OPTIONS.map((year) => (
+                <MenuItem key={year} value={year}>
+                  {year}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <FormControl size="small" sx={{ minWidth: 156 }}>
+            <InputLabel id="weekly-hours-month-label">Month</InputLabel>
+            <Select
+              label="Month"
+              labelId="weekly-hours-month-label"
+              onChange={(event) => setSelectedMonth(event.target.value)}
+              value={selectedMonth}
+            >
+              {MONTH_OPTIONS.map((month) => (
+                <MenuItem key={month.label} value={month.value}>
+                  {month.label}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <FormControl size="small" sx={{ minWidth: 196 }}>
+            <InputLabel id="weekly-hours-employee-label">Employee</InputLabel>
+            <Select
+              label="Employee"
+              labelId="weekly-hours-employee-label"
+              onChange={(event) => setSelectedEmployee(event.target.value)}
+              value={selectedEmployee}
+            >
+              <MenuItem value={ALL_EMPLOYEES_VALUE}>All Employees</MenuItem>
+              {employeeOptions.map((employee) => (
+                <MenuItem key={employee} value={employee}>
+                  {employee}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <FormControl size="small" sx={{ minWidth: 148 }}>
+            <InputLabel id="weekly-hours-billing-label">Billed</InputLabel>
+            <Select
+              label="Billed"
+              labelId="weekly-hours-billing-label"
+              onChange={(event) => setSelectedBilling(event.target.value)}
+              value={selectedBilling}
+            >
+              {BILLING_OPTIONS.map((option) => (
+                <MenuItem key={option.value} value={option.value}>
+                  {option.label}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </Stack>
+      </Paper>
 
       <Paper
         elevation={0}
@@ -208,53 +341,20 @@ export default function EmployeeProductivity() {
               Harvest hours averaged across {metrics.weeks} weeks, {dateRangeLabel}.
             </Typography>
           </Stack>
-
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}>
-            <FormControl size="small" sx={{ minWidth: 132 }}>
-              <InputLabel id="weekly-hours-year-label">Year</InputLabel>
-              <Select
-                label="Year"
-                labelId="weekly-hours-year-label"
-                onChange={(event) => setSelectedYear(Number(event.target.value))}
-                value={selectedYear}
-              >
-                {YEAR_OPTIONS.map((year) => (
-                  <MenuItem key={year} value={year}>
-                    {year}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <FormControl size="small" sx={{ minWidth: 156 }}>
-              <InputLabel id="weekly-hours-month-label">Month</InputLabel>
-              <Select
-                label="Month"
-                labelId="weekly-hours-month-label"
-                onChange={(event) => setSelectedMonth(event.target.value)}
-                value={selectedMonth}
-              >
-                {MONTH_OPTIONS.map((month) => (
-                  <MenuItem key={month.label} value={month.value}>
-                    {month.label}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          </Stack>
         </Stack>
 
         {isRefreshing ? (
           <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
             <CircularProgress />
           </Box>
-        ) : metrics.employees.length ? (
+        ) : filteredEmployees.length ? (
           <Box sx={{ pb: 1 }}>
             <Box sx={{ height: chartHeight, minWidth: 0 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
                   barCategoryGap="8%"
                   barGap={0}
-                  data={metrics.employees}
+                  data={filteredEmployees}
                   margin={{ top: 12, right: 16, bottom: 62, left: 0 }}
                 >
                   <CartesianGrid vertical={false} stroke="#f1f5f9" strokeDasharray="3 3" />
@@ -283,7 +383,7 @@ export default function EmployeeProductivity() {
                       name,
                     ]}
                     labelFormatter={(label) => {
-                      const employee = metrics.employees.find((row) => row.employee === label);
+                      const employee = filteredEmployees.find((row) => row.employee === label);
                       return employee
                         ? `${label} - ${employee.total_hours.toLocaleString(undefined, {
                             maximumFractionDigits: 2,
@@ -292,31 +392,35 @@ export default function EmployeeProductivity() {
                     }}
                   />
                   <Legend />
-                  <Bar
-                    dataKey="average_weekly_non_billable_hours"
-                    fill={CHART_COLORS.nonBillable}
-                    fillOpacity={0.86}
-                    maxBarSize={34}
-                    name="Non-Billed Hours"
-                    radius={[0, 0, 3, 3]}
-                    stackId="hours"
-                  />
-                  <Bar
-                    dataKey="average_weekly_billable_hours"
-                    fill={CHART_COLORS.billable}
-                    fillOpacity={0.86}
-                    maxBarSize={34}
-                    name="Billable Hours"
-                    radius={[3, 3, 0, 0]}
-                    stackId="hours"
-                  />
+                  {selectedBilling !== "billable" && (
+                    <Bar
+                      dataKey="average_weekly_non_billable_hours"
+                      fill={CHART_COLORS.nonBillable}
+                      fillOpacity={0.86}
+                      maxBarSize={34}
+                      name="Non-Billed Hours"
+                      radius={[0, 0, 3, 3]}
+                      stackId="hours"
+                    />
+                  )}
+                  {selectedBilling !== "non_billable" && (
+                    <Bar
+                      dataKey="average_weekly_billable_hours"
+                      fill={CHART_COLORS.billable}
+                      fillOpacity={0.86}
+                      maxBarSize={34}
+                      name="Billable Hours"
+                      radius={[3, 3, 0, 0]}
+                      stackId="hours"
+                    />
+                  )}
                 </BarChart>
               </ResponsiveContainer>
             </Box>
           </Box>
         ) : (
           <Typography color="text.secondary" variant="body2">
-            No Harvest time entries found for this period.
+            No Harvest time entries match these filters.
           </Typography>
         )}
       </Paper>

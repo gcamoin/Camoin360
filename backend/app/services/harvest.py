@@ -1,11 +1,13 @@
 import os
+import json
 from calendar import monthrange
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
+from ..database import get_database_connection
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -17,6 +19,7 @@ HARVEST_ACCESS_TOKEN = os.getenv("HARVEST_ACCESS_TOKEN")
 HARVEST_ACCOUNT_ID = os.getenv("HARVEST_ACCOUNT_ID")
 HARVEST_API_BASE = os.getenv("HARVEST_API_BASE", "https://api.harvestapp.com/v2").rstrip("/")
 HARVEST_WINDOW_WEEKS = 12
+EMPLOYEE_PRODUCTIVITY_SYNC_STALE_SECONDS = int(os.getenv("EMPLOYEE_PRODUCTIVITY_SYNC_STALE_SECONDS", "1800"))
 
 
 def _get_harvest_headers():
@@ -77,7 +80,7 @@ async def _fetch_time_entries(start_date, end_date):
     return time_entries
 
 
-async def get_employee_weekly_hours(year=None, month=None):
+async def _load_employee_weekly_hours_from_harvest(year=None, month=None):
     if year and month:
         start_date = date(year, month, 1)
         end_date = date(year, month, monthrange(year, month)[1])
@@ -123,6 +126,133 @@ async def get_employee_weekly_hours(year=None, month=None):
         "weeks": round(average_weeks, 2),
         "updated_at": datetime.utcnow().isoformat(),
     }
+
+
+def _employee_productivity_cache_key(year=None, month=None) -> str:
+    return f"{year or 'rolling'}:{month or 'all'}"
+
+
+def _employee_productivity_empty_payload(year=None, month=None) -> dict:
+    if year and month:
+        start_date = date(year, month, 1)
+        end_date = date(year, month, monthrange(year, month)[1])
+    elif year:
+        start_date = date(year, 1, 1)
+        end_date = date(year, 12, 31)
+    else:
+        end_date = date.today()
+        start_date = end_date - timedelta(weeks=HARVEST_WINDOW_WEEKS) + timedelta(days=1)
+
+    return {
+        "employees": [],
+        "from": start_date.isoformat(),
+        "to": end_date.isoformat(),
+        "weeks": round(max((end_date - start_date).days + 1, 1) / 7, 2),
+        "updated_at": "",
+    }
+
+
+def _get_employee_productivity_cache_row(cache_key: str) -> dict | None:
+    with get_database_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT cache_key, payload, status, last_started_at, last_completed_at, last_error
+            FROM employee_productivity_cache
+            WHERE cache_key = ?
+            """,
+            (cache_key,),
+        ).fetchone()
+
+    return dict(row) if row else None
+
+
+def _is_employee_productivity_cache_stale(cache_row: dict | None) -> bool:
+    if not cache_row or not cache_row.get("last_completed_at"):
+        return True
+
+    try:
+        completed_time = datetime.fromisoformat(str(cache_row["last_completed_at"]).replace("Z", "+00:00"))
+    except ValueError:
+        return True
+
+    if completed_time.tzinfo is None:
+        completed_time = completed_time.replace(tzinfo=timezone.utc)
+
+    return (datetime.now(timezone.utc) - completed_time).total_seconds() > EMPLOYEE_PRODUCTIVITY_SYNC_STALE_SECONDS
+
+
+def get_employee_weekly_hours(year=None, month=None):
+    cache_key = _employee_productivity_cache_key(year, month)
+    cache_row = _get_employee_productivity_cache_row(cache_key)
+    if cache_row:
+        try:
+            payload = json.loads(cache_row.get("payload") or "{}")
+        except json.JSONDecodeError:
+            payload = _employee_productivity_empty_payload(year, month)
+    else:
+        payload = _employee_productivity_empty_payload(year, month)
+
+    return {
+        **payload,
+        "sync": {
+            "status": cache_row.get("status") if cache_row else "idle",
+            "last_started_at": cache_row.get("last_started_at") if cache_row else None,
+            "last_completed_at": cache_row.get("last_completed_at") if cache_row else None,
+            "last_error": cache_row.get("last_error") if cache_row else "",
+            "is_stale": _is_employee_productivity_cache_stale(cache_row),
+        },
+    }
+
+
+async def refresh_employee_weekly_hours_cache(year=None, month=None) -> dict:
+    cache_key = _employee_productivity_cache_key(year, month)
+    started_at = datetime.now(timezone.utc).isoformat()
+    with get_database_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO employee_productivity_cache (
+                cache_key, payload, status, last_started_at, last_error, updated_at
+            )
+            VALUES (?, ?, 'syncing', ?, '', CURRENT_TIMESTAMP)
+            ON CONFLICT(cache_key) DO UPDATE SET
+                status = 'syncing',
+                last_started_at = excluded.last_started_at,
+                last_error = '',
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (cache_key, json.dumps(_employee_productivity_empty_payload(year, month)), started_at),
+        )
+
+    try:
+        payload = await _load_employee_weekly_hours_from_harvest(year=year, month=month)
+        completed_at = datetime.now(timezone.utc).isoformat()
+        with get_database_connection() as connection:
+            connection.execute(
+                """
+                UPDATE employee_productivity_cache
+                SET payload = ?,
+                    status = 'idle',
+                    last_completed_at = ?,
+                    last_error = '',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE cache_key = ?
+                """,
+                (json.dumps(payload), completed_at, cache_key),
+            )
+        return get_employee_weekly_hours(year=year, month=month)
+    except Exception as exc:
+        with get_database_connection() as connection:
+            connection.execute(
+                """
+                UPDATE employee_productivity_cache
+                SET status = 'error',
+                    last_error = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE cache_key = ?
+                """,
+                (str(exc), cache_key),
+            )
+        raise
 
 
 async def get_billable_breakdown(year, month=None):

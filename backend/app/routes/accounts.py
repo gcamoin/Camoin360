@@ -1,10 +1,11 @@
 import hmac
+import json
 import os
 from uuid import UUID
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from .auth import require_user
@@ -15,6 +16,7 @@ from ..services.dynamics import (
     get_account_sector_counts,
     get_accounts_missing_data,
     get_accounts_data_quality,
+    get_accounts_data_quality_page,
     get_accounts_needing_enrichment,
     get_duplicate_account_records,
     delete_account,
@@ -25,6 +27,7 @@ from ..services.dynamics import (
     get_pe_clients,
     create_pe_client,
     create_pe_client_user,
+    refresh_accounts_data_quality_cache,
     invalidate_account_read_caches,
     enrich_one_account,
     enrich_account,
@@ -115,28 +118,57 @@ async def fetch_accounts():
 
 @router.get("/accounts/data-quality")
 async def fetch_accounts_data_quality(
-    limit: int = Query(default=1000, ge=100, le=5000),
+    background_tasks: BackgroundTasks,
+    page: int = Query(default=0, ge=0),
+    page_size: int = Query(default=25, ge=1, le=250),
+    search: str = Query(default=""),
+    sector: str = Query(default="all"),
+    missing_field: str = Query(default="all"),
+    states: str = Query(default=""),
+    country: str = Query(default="all"),
+    cities: str = Query(default=""),
+    needs_attention: bool = Query(default=False),
+    column_filters: str = Query(default="{}"),
+    sort_key: str = Query(default=""),
+    sort_direction: str = Query(default="asc", pattern="^(asc|desc)$"),
+    refresh: bool = Query(default=False),
+    limit: int = Query(default=100000, ge=100, le=100000),
     _user=Depends(require_user),
 ):
     try:
-        accounts = await read_cache.get(
-            f"data-quality:{limit}",
-            lambda: get_accounts_data_quality(limit),
-            ttl_seconds=DATA_QUALITY_TTL_SECONDS,
-            stale_seconds=STALE_GRACE_SECONDS,
+        try:
+            parsed_column_filters = json.loads(column_filters or "{}")
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="column_filters must be valid JSON",
+            ) from exc
+
+        result = get_accounts_data_quality_page(
+            page=page,
+            page_size=page_size,
+            search=search,
+            sector=sector,
+            missing_field=missing_field,
+            states=[value for value in states.split("|") if value],
+            country=country,
+            cities=[value for value in cities.split("|") if value],
+            needs_attention=needs_attention,
+            column_filters=parsed_column_filters if isinstance(parsed_column_filters, dict) else {},
+            sort_key=sort_key,
+            sort_direction=sort_direction,
         )
+        if result["sync"]["status"] != "syncing" and (refresh or result["sync"]["is_stale"] or result["total_count"] == 0):
+            background_tasks.add_task(refresh_accounts_data_quality_cache, limit)
     except Exception as exc:
+        if isinstance(exc, HTTPException):
+            raise
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Unable to load Dynamics account data: {exc}",
         ) from exc
 
-    return {
-        "count": len(accounts),
-        "limit": limit,
-        "has_more": len(accounts) >= limit,
-        "data": accounts
-    }
+    return result
 
 
 async def get_duplicate_account_response(limit: int):
