@@ -39,6 +39,8 @@ const EMPTY_FORM = {
   description: "",
   point_of_contact: "",
   assigned_users: "",
+  current_monthly_cost: "",
+  original_cost_2026_2027: "",
   cost_2024_2025: "",
   cost_2025_2026: "",
   cost_2026_2027: "",
@@ -54,9 +56,7 @@ const columns = [
   { key: "description", label: "Description", minWidth: 300 },
   { key: "point_of_contact", label: "Camoin Point of Contact", minWidth: 190 },
   { key: "assigned_users", label: "Access / Assigned Users", minWidth: 230 },
-  { key: "cost_2024_2025", label: "2024-2025 Cost", align: "right", minWidth: 150 },
-  { key: "cost_2025_2026", label: "2025-2026 Cost", align: "right", minWidth: 150 },
-  { key: "cost_2026_2027", label: "2026-2027 Cost", align: "right", minWidth: 150 },
+  { key: "current_monthly_cost", label: "Current Monthly Cost", align: "right", minWidth: 180 },
   { key: "renewal_time_frame", label: "Renewal Time Frame", minWidth: 180 },
   { key: "vendor_rep", label: "Vendor Rep", minWidth: 190 },
   { key: "subscribed_since", label: "Subscribed Since", minWidth: 150 },
@@ -68,9 +68,10 @@ const detailFields = [
   ["Description", "description"],
   ["Camoin Point of Contact", "point_of_contact"],
   ["Access / Assigned Users", "assigned_users"],
-  ["2024-2025 Cost", "cost_2024_2025", "currency"],
-  ["2025-2026 Cost", "cost_2025_2026", "currency"],
-  ["2026-2027 Cost", "cost_2026_2027", "currency"],
+  ["Current Monthly Cost", "current_monthly_cost", "currency"],
+  ["2024-2025 Yearly Cost", "cost_2024_2025", "currency"],
+  ["2025-2026 Yearly Cost", "cost_2025_2026", "currency"],
+  ["2026-2027 Yearly Cost", "cost_2026_2027", "currency"],
   ["Renewal Time Frame", "renewal_time_frame"],
   ["Vendor Rep", "vendor_rep"],
   ["Subscribed Since", "subscribed_since"],
@@ -135,8 +136,24 @@ function formatCurrency(value) {
   }).format(Number(value));
 }
 
-function getCostTotal(rows, key) {
-  return rows.reduce((sum, row) => sum + Number(row[key] || 0), 0);
+function roundCurrencyValue(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function getCurrentMonthlyCost(row) {
+  if (row?.current_monthly_cost !== null && row?.current_monthly_cost !== undefined && row?.current_monthly_cost !== "") {
+    return Number(row.current_monthly_cost);
+  }
+
+  if (row?.cost_2026_2027 !== null && row?.cost_2026_2027 !== undefined && row?.cost_2026_2027 !== "") {
+    return roundCurrencyValue(Number(row.cost_2026_2027) / 12);
+  }
+
+  return null;
+}
+
+function getCurrentMonthlyCostTotal(rows) {
+  return rows.reduce((sum, row) => sum + Number(getCurrentMonthlyCost(row) || 0), 0);
 }
 
 function getRenewalMonth(renewalTimeFrame) {
@@ -177,9 +194,12 @@ function toFormState(row) {
     description: row.description || "",
     point_of_contact: row.point_of_contact || "",
     assigned_users: row.assigned_users || "",
+    current_monthly_cost:
+      getCurrentMonthlyCost(row) === null ? "" : String(getCurrentMonthlyCost(row)),
+    original_cost_2026_2027: row.cost_2026_2027 ?? "",
     cost_2024_2025: row.cost_2024_2025 ?? "",
     cost_2025_2026: row.cost_2025_2026 ?? "",
-    cost_2026_2027: row.cost_2026_2027 ?? "",
+    cost_2026_2027: "",
     renewal_time_frame: row.renewal_time_frame || "",
     vendor_rep: row.vendor_rep || "",
     subscribed_since: row.subscribed_since || "",
@@ -189,11 +209,31 @@ function toFormState(row) {
 }
 
 function toRequestPayload(form) {
+  const {
+    current_monthly_cost: currentMonthlyCostInput,
+    original_cost_2026_2027: originalCurrentYearlyCost,
+    ...payload
+  } = form;
+  const currentMonthlyCost =
+    currentMonthlyCostInput === "" ? null : Number(currentMonthlyCostInput);
+  const originalMonthlyCost =
+    originalCurrentYearlyCost === ""
+      ? null
+      : String(roundCurrencyValue(Number(originalCurrentYearlyCost) / 12));
+  const currentYearlyCost =
+    form.cost_2026_2027 === ""
+      ? currentMonthlyCost === null
+        ? null
+        : currentMonthlyCostInput === originalMonthlyCost
+          ? Number(originalCurrentYearlyCost)
+          : roundCurrencyValue(currentMonthlyCost * 12)
+      : Number(form.cost_2026_2027);
+
   return {
-    ...form,
+    ...payload,
     cost_2024_2025: form.cost_2024_2025 === "" ? null : Number(form.cost_2024_2025),
     cost_2025_2026: form.cost_2025_2026 === "" ? null : Number(form.cost_2025_2026),
-    cost_2026_2027: form.cost_2026_2027 === "" ? null : Number(form.cost_2026_2027),
+    cost_2026_2027: currentYearlyCost,
   };
 }
 
@@ -206,10 +246,15 @@ function validateForm(form) {
     }
   }
 
-  for (const field of ["cost_2024_2025", "cost_2025_2026", "cost_2026_2027"]) {
+  for (const field of ["current_monthly_cost", "cost_2024_2025", "cost_2025_2026", "cost_2026_2027"]) {
     if (form[field] !== "" && Number(form[field]) < 0) {
       errors[field] = "Cost must be zero or greater.";
     }
+  }
+
+  if (form.current_monthly_cost !== "" && form.cost_2026_2027 !== "") {
+    errors.current_monthly_cost = "Enter either monthly or yearly current cost.";
+    errors.cost_2026_2027 = "Enter either yearly or monthly current cost.";
   }
 
   return errors;
@@ -332,9 +377,25 @@ function SubscriptionFormDialog({
               value={form.subscribed_since}
             />
             <TextField
+              error={Boolean(formErrors.current_monthly_cost)}
+              helperText={formErrors.current_monthly_cost || "Enter this or current yearly cost."}
+              label="Current Monthly Cost"
+              onChange={(event) => onChange("current_monthly_cost", event.target.value)}
+              type="number"
+              value={form.current_monthly_cost}
+            />
+            <TextField
+              error={Boolean(formErrors.cost_2026_2027)}
+              helperText={formErrors.cost_2026_2027 || "Used to calculate monthly cost when monthly is blank."}
+              label="Current Yearly Cost"
+              onChange={(event) => onChange("cost_2026_2027", event.target.value)}
+              type="number"
+              value={form.cost_2026_2027}
+            />
+            <TextField
               error={Boolean(formErrors.cost_2024_2025)}
               helperText={formErrors.cost_2024_2025}
-              label="2024-2025 Cost"
+              label="2024-2025 Yearly Cost"
               onChange={(event) => onChange("cost_2024_2025", event.target.value)}
               type="number"
               value={form.cost_2024_2025}
@@ -342,18 +403,10 @@ function SubscriptionFormDialog({
             <TextField
               error={Boolean(formErrors.cost_2025_2026)}
               helperText={formErrors.cost_2025_2026}
-              label="2025-2026 Cost"
+              label="2025-2026 Yearly Cost"
               onChange={(event) => onChange("cost_2025_2026", event.target.value)}
               type="number"
               value={form.cost_2025_2026}
-            />
-            <TextField
-              error={Boolean(formErrors.cost_2026_2027)}
-              helperText={formErrors.cost_2026_2027}
-              label="2026-2027 Cost"
-              onChange={(event) => onChange("cost_2026_2027", event.target.value)}
-              type="number"
-              value={form.cost_2026_2027}
             />
           </Box>
           <TextField
@@ -500,7 +553,16 @@ export default function SoftwareInventory() {
 
   function updateFormField(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
-    setFormErrors((current) => ({ ...current, [field]: "" }));
+    setFormErrors((current) => {
+      const next = { ...current, [field]: "" };
+      if (field === "current_monthly_cost") {
+        next.cost_2026_2027 = "";
+      }
+      if (field === "cost_2026_2027") {
+        next.current_monthly_cost = "";
+      }
+      return next;
+    });
   }
 
   async function saveSubscription() {
@@ -595,9 +657,9 @@ export default function SoftwareInventory() {
           value={activeCount.toLocaleString()}
         />
         <SummaryCard
-          helper="Across populated 2025-2026 cost fields"
-          label="Total 2025-2026 Cost"
-          value={formatCurrency(getCostTotal(subscriptions, "cost_2025_2026"))}
+          helper="Across current subscriptions"
+          label="Total Monthly Cost"
+          value={formatCurrency(getCurrentMonthlyCostTotal(subscriptions))}
         />
         <SummaryCard
           helper="Pending renewal or due within 90 days"
@@ -706,7 +768,7 @@ export default function SoftwareInventory() {
         </Stack>
 
         <TableContainer sx={{ overflowX: "auto" }}>
-          <Table stickyHeader sx={{ minWidth: 2300 }}>
+          <Table stickyHeader sx={{ minWidth: 1800 }}>
             <TableHead>
               <TableRow>
                 {columns.map((column) => (
@@ -748,9 +810,9 @@ export default function SoftwareInventory() {
                     >
                       {column.key === "status" ? (
                         <StatusChip status={row.status} />
-                      ) : column.key.startsWith("cost") ? (
+                      ) : column.key === "current_monthly_cost" ? (
                         <Typography color="text.primary" variant="body2">
-                          {formatCurrency(row[column.key])}
+                          {formatCurrency(getCurrentMonthlyCost(row))}
                         </Typography>
                       ) : (
                         <Typography
@@ -837,7 +899,11 @@ export default function SoftwareInventory() {
                   </Typography>
                   <Typography color="text.primary" sx={{ whiteSpace: "pre-wrap" }} variant="body2">
                     {format === "currency"
-                      ? formatCurrency(selectedSubscription[key])
+                      ? formatCurrency(
+                          key === "current_monthly_cost"
+                            ? getCurrentMonthlyCost(selectedSubscription)
+                            : selectedSubscription[key]
+                        )
                       : selectedSubscription[key] || "-"}
                   </Typography>
                 </Box>
