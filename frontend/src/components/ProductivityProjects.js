@@ -33,6 +33,7 @@ import {
 } from "recharts";
 
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
+import AiChatBox from "./AiChatBox";
 
 const API_URL = `${API_BASE_URL}/productivity/projects`;
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
@@ -286,6 +287,34 @@ export default function ProductivityProjects() {
     () => buildMonthlyFeeData(filteredMonths, metrics.proposed_opportunities),
     [filteredMonths, metrics.proposed_opportunities]
   );
+  const aiContext = useMemo(
+    () => ({
+      contracted_project_fee_by_month: contractedProjectFeeData,
+      filters: timeFilters,
+      months: filteredMonths,
+      proposed_opportunity_fee_by_month: proposedOpportunityFeeData,
+      service_lines: metrics.service_lines,
+      summary: {
+        peak_project_month: peakProjectMonth,
+        total_projects: filteredTotalProjects,
+        top_service_line: topServiceLine,
+        lowest_service_line: lowestServiceLine,
+      },
+      updated_at: metrics.updated_at,
+    }),
+    [
+      contractedProjectFeeData,
+      filteredMonths,
+      filteredTotalProjects,
+      lowestServiceLine,
+      metrics.service_lines,
+      metrics.updated_at,
+      peakProjectMonth,
+      proposedOpportunityFeeData,
+      timeFilters,
+      topServiceLine,
+    ]
+  );
 
   function updateTimeFilter(key, value) {
     setTimeFilters((currentFilters) => ({
@@ -337,6 +366,12 @@ export default function ProductivityProjects() {
           {isRefreshing ? "Refreshing" : "Refresh"}
         </Button>
       </Stack>
+
+      <AiChatBox
+        context={aiContext}
+        placeholder="Ask about service lines, project volume, contracts, or proposals..."
+        section="Service Lines and Projects"
+      />
 
       <Box
         sx={{

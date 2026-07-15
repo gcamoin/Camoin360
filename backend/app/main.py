@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .database import initialize_database
 from .routes.accounts import router as accounts_router
+from .routes.ai import router as ai_router
 from .routes.auth import router as auth_router
 from .routes.client_users import router as client_users_router
 from .routes.employee_productivity import router as employee_productivity_router
@@ -28,6 +29,7 @@ app.add_middleware(
 )
 
 app.include_router(accounts_router)
+app.include_router(ai_router)
 app.include_router(auth_router)
 app.include_router(client_users_router)
 app.include_router(employee_productivity_router)

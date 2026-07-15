@@ -18,6 +18,7 @@ import {
 } from "recharts";
 import { Alert, Box, Button, CircularProgress, Paper, Stack, Typography } from "@mui/material";
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
+import AiChatBox from "./AiChatBox";
 
 const API_URL = `${API_BASE_URL}/economic-indicators`;
 const REFRESH_INTERVAL_MS = 30 * 60 * 1000;
@@ -257,6 +258,21 @@ export default function EconomicIndicators() {
   const gdp = useMemo(() => filterByRange(series.gdp, years), [series.gdp, years]);
   const treasury = useMemo(() => filterByRange(series.treasury, years), [series.treasury, years]);
   const housing = useMemo(() => filterByRange(series.housing, years), [series.housing, years]);
+  const aiContext = useMemo(
+    () => ({
+      cpi_table: cpiTable,
+      range,
+      series: {
+        gdp,
+        housing,
+        sentiment,
+        treasury,
+      },
+      sources,
+      updated_at: updatedAt,
+    }),
+    [cpiTable, gdp, housing, range, sentiment, sources, treasury, updatedAt]
+  );
 
   const xInterval = (len) => Math.max(0, Math.floor(len / 6) - 1);
   const updatedLabel = updatedAt
@@ -329,6 +345,12 @@ export default function EconomicIndicators() {
           </Button>
         </Stack>
       </Stack>
+
+      <AiChatBox
+        context={aiContext}
+        placeholder="Ask about economic trends, CPI, GDP, yields, or housing..."
+        section="Economic Indicators"
+      />
 
       {/* 2×2 chart grid */}
       <Box
