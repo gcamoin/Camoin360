@@ -164,6 +164,20 @@ def initialize_database():
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS service_line_marketing_cache (
+                cache_key TEXT PRIMARY KEY,
+                payload TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'idle',
+                last_started_at TEXT,
+                last_completed_at TEXT,
+                last_error TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
         subscription_count = connection.execute(
             "SELECT COUNT(*) FROM software_subscriptions"
         ).fetchone()[0]

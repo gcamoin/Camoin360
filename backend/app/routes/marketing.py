@@ -9,6 +9,10 @@ from ..services.dynamics import (
     refresh_website_visit_metrics_cache,
 )
 from ..services.harvest import get_employee_weekly_hours, refresh_employee_weekly_hours_cache
+from ..services.service_line_metrics import (
+    get_service_line_marketing_metrics,
+    refresh_service_line_marketing_metrics_cache,
+)
 
 router = APIRouter()
 
@@ -30,6 +34,25 @@ async def fetch_website_visit_metrics(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Unable to load website visit metrics from Dynamics: {exc}",
+        ) from exc
+
+
+@router.get("/marketing/service-line-metrics")
+async def fetch_service_line_marketing_metrics(
+    background_tasks: BackgroundTasks,
+    refresh: bool = Query(False),
+    _user=Depends(require_user),
+):
+    try:
+        result = get_service_line_marketing_metrics()
+        if result["sync"]["status"] != "syncing" and (refresh or result["sync"]["is_stale"]):
+            background_tasks.add_task(refresh_service_line_marketing_metrics_cache)
+            result["sync"] = {**result["sync"], "status": "syncing"}
+        return result
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to load service line marketing metrics: {exc}",
         ) from exc
 
 
