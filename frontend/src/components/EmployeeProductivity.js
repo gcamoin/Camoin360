@@ -65,6 +65,25 @@ const CHART_COLORS = {
   nonBillable: "#2563eb",
 };
 
+const formatPercent = (value) =>
+  `${Number(value || 0).toLocaleString(undefined, {
+    maximumFractionDigits: 1,
+    minimumFractionDigits: 1,
+  })}%`;
+
+const getUtilizationRate = (employee) => {
+  if (employee.utilization_rate !== undefined && employee.utilization_rate !== null) {
+    return Number(employee.utilization_rate || 0);
+  }
+
+  const totalHours = Number(employee.total_hours || 0);
+  if (!totalHours) {
+    return 0;
+  }
+
+  return (Number(employee.billable_hours || 0) / totalHours) * 100;
+};
+
 const formatShortDate = (dateValue) =>
   new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(
     new Date(`${dateValue}T00:00:00`)
@@ -207,7 +226,18 @@ export default function EmployeeProductivity() {
       }),
     [metrics.employees, selectedBilling, selectedEmployee]
   );
+  const utilizationRows = useMemo(
+    () =>
+      [...filteredEmployees]
+        .map((employee) => ({
+          ...employee,
+          utilization_rate: getUtilizationRate(employee),
+        }))
+        .sort((a, b) => b.utilization_rate - a.utilization_rate),
+    [filteredEmployees]
+  );
   const chartHeight = filteredEmployees.length > 18 ? 380 : 420;
+  const utilizationChartHeight = utilizationRows.length > 18 ? 380 : 420;
 
   if (isLoading) {
     return (
@@ -417,6 +447,82 @@ export default function EmployeeProductivity() {
                 </BarChart>
               </ResponsiveContainer>
             </Box>
+          </Box>
+        ) : (
+          <Typography color="text.secondary" variant="body2">
+            No Harvest time entries match these filters.
+          </Typography>
+        )}
+      </Paper>
+
+      <Paper
+        elevation={0}
+        sx={{
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: 2,
+          p: { xs: 2, md: 2.5 },
+          backgroundColor: "common.white",
+        }}
+      >
+        <Stack spacing={0.5} sx={{ mb: 2 }}>
+          <Typography fontWeight={800} color="text.primary">
+            Utilization Rate by Employee
+          </Typography>
+          <Typography color="text.secondary" variant="body2">
+            Billable hours divided by total logged Harvest hours for {dateRangeLabel}.
+          </Typography>
+        </Stack>
+
+        {isRefreshing ? (
+          <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
+            <CircularProgress />
+          </Box>
+        ) : utilizationRows.length ? (
+          <Box sx={{ height: utilizationChartHeight, minWidth: 0 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={utilizationRows} margin={{ top: 12, right: 16, bottom: 62, left: 0 }}>
+                <CartesianGrid vertical={false} stroke="#f1f5f9" strokeDasharray="3 3" />
+                <XAxis
+                  dataKey="employee"
+                  interval={0}
+                  tick={{ fontSize: 10 }}
+                  tickFormatter={(value) => (value.length > 16 ? `${value.slice(0, 16)}...` : value)}
+                  angle={-45}
+                  textAnchor="end"
+                  height={64}
+                />
+                <YAxis
+                  allowDecimals
+                  domain={[0, 100]}
+                  tick={{ fontSize: 10 }}
+                  tickFormatter={(value) => `${value}%`}
+                  type="number"
+                />
+                <Tooltip
+                  {...tooltipStyle}
+                  formatter={(value) => [formatPercent(value), "Utilization"]}
+                  labelFormatter={(label) => {
+                    const employee = utilizationRows.find((row) => row.employee === label);
+                    return employee
+                      ? `${label} - ${employee.billable_hours.toLocaleString(undefined, {
+                          maximumFractionDigits: 2,
+                        })} billable of ${employee.total_hours.toLocaleString(undefined, {
+                          maximumFractionDigits: 2,
+                        })} total hours`
+                      : label;
+                  }}
+                />
+                <Bar
+                  dataKey="utilization_rate"
+                  fill={CHART_COLORS.billable}
+                  fillOpacity={0.86}
+                  maxBarSize={42}
+                  name="Utilization"
+                  radius={[3, 3, 0, 0]}
+                />
+              </BarChart>
+            </ResponsiveContainer>
           </Box>
         ) : (
           <Typography color="text.secondary" variant="body2">

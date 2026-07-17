@@ -1,6 +1,6 @@
 # Dynamics Enrichment Service
 
-This repo has a FastAPI backend and a React frontend for the Sophie enrichment dashboard.
+This repo has a FastAPI backend and a React frontend for the Sophie Maintenance dashboard.
 
 ## Backend Files
 

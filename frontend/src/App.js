@@ -10,6 +10,7 @@ import {
 } from "./auth";
 import LandingPage from "./landingPage";
 import Login from "./login";
+import ConsultingDashboard from "./consultingDashboard";
 import ManagementDashboard from "./managementDashboard";
 import ProspectingDashboard from "./prospectingDashboard";
 import SignUp from "./signup";
@@ -53,6 +54,10 @@ export default function App() {
 
     if (dashboardView === "prospecting") {
       return <ProspectingDashboard onLogout={handleLogout} />;
+    }
+
+    if (dashboardView === "consulting") {
+      return <ConsultingDashboard onLogout={handleLogout} />;
     }
 
     return <LandingPage onLogout={handleLogout} />;

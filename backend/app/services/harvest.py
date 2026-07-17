@@ -106,6 +106,7 @@ async def _load_employee_weekly_hours_from_harvest(year=None, month=None):
     employees = []
     for employee_name, hours in hours_by_employee.items():
         total_hours = hours["billable"] + hours["non_billable"]
+        utilization_rate = (hours["billable"] / total_hours) * 100 if total_hours else 0
         employees.append(
             {
                 "employee": employee_name,
@@ -115,6 +116,7 @@ async def _load_employee_weekly_hours_from_harvest(year=None, month=None):
                 "billable_hours": round(hours["billable"], 2),
                 "non_billable_hours": round(hours["non_billable"], 2),
                 "total_hours": round(total_hours, 2),
+                "utilization_rate": round(utilization_rate, 2),
             }
         )
     employees.sort(key=lambda employee: employee["average_weekly_hours"], reverse=True)

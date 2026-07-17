@@ -18,8 +18,9 @@ import {
 import { getApiErrorMessage, getPreferredDashboardView } from "./auth";
 
 const dashboardOptions = [
-  { value: "main", label: "Enrichment Operations" },
-  { value: "prospecting", label: "Dynamics Prospecting" },
+  { value: "main", label: "Sophie Maintenance" },
+  { value: "prospecting", label: "Prospecting" },
+  { value: "consulting", label: "Consulting" },
   { value: "management", label: "Management" },
 ];
 
@@ -82,7 +83,7 @@ export default function Login({ onLogin, onShowSignup }) {
                   letterSpacing: "0.12em",
                 }}
               >
-                Enrichment Dashboard
+                Sophie Maintenance
               </Typography>
               <Typography
                 component="h1"

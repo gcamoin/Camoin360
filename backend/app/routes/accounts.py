@@ -25,6 +25,7 @@ from ..services.dynamics import (
     get_marketing_list_members,
     get_leadfeeder_visits,
     get_pe_clients,
+    get_pe_qualified_leads,
     create_pe_client,
     create_pe_client_user,
     refresh_accounts_data_quality_cache,
@@ -307,6 +308,22 @@ async def fetch_pe_clients(
         ) from exc
 
     return {"count": len(clients), "limit": limit, "data": clients}
+
+
+@router.get("/pe-qualified-leads")
+async def fetch_pe_qualified_leads(
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    month: int | None = Query(default=None, ge=1, le=12),
+    limit: int = Query(default=1000, ge=1, le=5000),
+    _user=Depends(require_user),
+):
+    try:
+        return await get_pe_qualified_leads(year=year, month=month, limit=limit)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to load Prospect Engage qualified leads: {exc}",
+        ) from exc
 
 
 @router.post("/pe-clients", status_code=status.HTTP_201_CREATED)

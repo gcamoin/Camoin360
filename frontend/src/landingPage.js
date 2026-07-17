@@ -24,7 +24,7 @@ const views = {
     label: "Seamless",
     icon: "sync",
     route: "/dashboard",
-    title: "Enrichment Operations",
+    title: "Sophie Maintenance",
     description:
       "Live view of weekly Seamless credit consumption and enrichment throughput across the Dynamics pipeline.",
   },
@@ -186,7 +186,7 @@ export default function LandingPage({ onLogout }) {
                       Camoin 360
                     </Typography>
                     <Typography sx={{ color: "rgba(255,255,255,0.72)", mt: 0.75 }} variant="body2">
-                      Enrichment operations
+                      Sophie Maintenance
                     </Typography>
                   </Box>
                 )}

@@ -312,7 +312,7 @@ export default function MetricsDashboard() {
       }
 
       console.error("Failed to fetch metrics", error);
-      setLoadError("Unable to load enrichment dashboard metrics.");
+      setLoadError("Unable to load Sophie Maintenance metrics.");
       return null;
     } finally {
       if (showLoading) {
@@ -479,7 +479,7 @@ export default function MetricsDashboard() {
         }}
       >
         <CircularProgress />
-        <Typography color="text.secondary">Loading enrichment dashboard metrics...</Typography>
+        <Typography color="text.secondary">Loading Sophie Maintenance metrics...</Typography>
       </Paper>
     );
   }

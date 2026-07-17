@@ -54,6 +54,9 @@ LEADFEEDER_VISIT_REQUEST_TIMEOUT_SECONDS = 60
 PE_CLIENT_DEFAULT_LIMIT = 1000
 PE_CLIENT_MAX_LIMIT = 5000
 PE_CLIENT_REQUEST_TIMEOUT_SECONDS = 60
+PE_QUALIFIED_LEAD_DEFAULT_LIMIT = 1000
+PE_QUALIFIED_LEAD_MAX_LIMIT = 5000
+PE_QUALIFIED_LEAD_STATUS_LABEL = "Pending-Sent to Client"
 MARKETING_LIST_ACCOUNT_WEBSITE_VISIT_RELATIONSHIP_CANDIDATES = (
     "cr73c_lfapp_websitevisit",
 )
@@ -2668,6 +2671,95 @@ async def get_project_creation_metrics():
     _PROJECT_METRICS_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
 
     return result
+
+
+def _month_date_window(year: int, month: int | None = None) -> tuple[str, str]:
+    start = datetime(year, month or 1, 1, tzinfo=timezone.utc)
+    if month == 12:
+        end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+    elif month:
+        end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
+    else:
+        end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+
+    return (
+        start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+
+
+def _matches_pe_qualified_status(record: dict) -> bool:
+    target = PE_QUALIFIED_LEAD_STATUS_LABEL.casefold()
+    for key, value in record.items():
+        if not key.endswith("@OData.Community.Display.V1.FormattedValue"):
+            continue
+
+        if str(value or "").strip().casefold() == target:
+            return True
+
+    return any(str(value or "").strip().casefold() == target for value in record.values())
+
+
+def _get_prospect_client_name(record: dict) -> str:
+    return (
+        get_lookup_display_value(record, "_new_client_value")
+        or get_lookup_display_value(record, "new_Client")
+        or get_lookup_display_value(record, "new_client")
+        or str(record.get("new_Client") or record.get("new_client") or "").strip()
+    )
+
+
+async def get_pe_qualified_leads(year: int | None = None, month: int | None = None, limit: int = PE_QUALIFIED_LEAD_DEFAULT_LIMIT):
+    token = await get_access_token()
+    target_year = year or datetime.now(timezone.utc).year
+    start_date, end_date = _month_date_window(target_year, month)
+    filter_query = f"createdon ge {start_date} and createdon lt {end_date}"
+    url = (
+        f"{API_URL}/new_prospects?"
+        f"$filter={quote(filter_query, safe='_ =:-')}&"
+        "$orderby=createdon desc"
+    )
+    headers = _dynamics_read_headers(token)
+    rows = []
+
+    async with httpx.AsyncClient(timeout=PE_CLIENT_REQUEST_TIMEOUT_SECONDS) as client:
+        next_url = url
+        while next_url and len(rows) < limit:
+            response = await client.get(next_url, headers=headers)
+            if response.status_code != 200:
+                raise Exception(f"Dynamics GET error: {response.text}")
+
+            payload = response.json()
+            for record in payload.get("value", []):
+                if len(rows) >= limit:
+                    break
+
+                if not _matches_pe_qualified_status(record):
+                    continue
+
+                rows.append(
+                    {
+                        "id": record.get("new_prospectid"),
+                        "prospect_name": record.get("new_prospectname") or "",
+                        "client_name": _get_prospect_client_name(record),
+                        "status": PE_QUALIFIED_LEAD_STATUS_LABEL,
+                        "createdon": record.get("createdon"),
+                        "createdon_formatted": get_formatted_value(record, "createdon") or "",
+                    }
+                )
+
+            next_url = payload.get("@odata.nextLink")
+
+    return {
+        "count": len(rows),
+        "data": rows,
+        "from": start_date,
+        "limit": limit,
+        "status": PE_QUALIFIED_LEAD_STATUS_LABEL,
+        "to": end_date,
+        "year": target_year,
+        "month": month,
+    }
 
 
 async def _fetch_project_financial_rows(

@@ -80,7 +80,7 @@ export default function SignUp({ onSignup, onShowLogin }) {
                                     letterSpacing: "0.12em",
                                 }}
                             >
-                                Enrichment Dashboard
+                                Sophie Maintenance
                             </Typography>
                             <Typography
                                 component="h1"

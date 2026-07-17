@@ -16,6 +16,7 @@ import EconomicIndicators from "./components/EconomicIndicators";
 import { EmptyState } from "./components/UiPrimitives";
 import EmployeeProductivity from "./components/EmployeeProductivity";
 import MarketingMetrics from "./components/MarketingMetrics";
+import PEQualifiedLeads from "./components/PEQualifiedLeads";
 import ProductivityProjects from "./components/ProductivityProjects";
 import SoftwareInventory from "./components/SoftwareInventory";
 
@@ -67,11 +68,19 @@ const views = {
     description: "Employee-level productivity metrics and workload trends.",
     parent: "productivityProjects",
   },
+  pe: {
+    label: "PE",
+    icon: "clients",
+    title: "PE",
+    description: "Prospect Engage qualified leads sent to clients.",
+    parent: "employeeProductivity",
+  },
 };
 
 const iconPaths = {
   campaign:
     "M4 10v4h3l5 4V6l-5 4H4Zm10.5 4.8 1.4 1.4A6 6 0 0 0 18 12a6 6 0 0 0-2.1-4.2l-1.4 1.4A4 4 0 0 1 16 12a4 4 0 0 1-1.5 2.8Z",
+  clients: "M7 11a4 4 0 1 1 8 0 4 4 0 0 1-8 0Zm-4 9c.7-3.1 3.9-5 8-5s7.3 1.9 8 5H3Zm14.5-7a3 3 0 1 0 0-6 4.8 4.8 0 0 1 0 6Zm.6 2.1c1.7.6 2.9 1.8 3.4 3.9h-3.2a7 7 0 0 0-1.9-3.5c.6-.2 1.1-.3 1.7-.4Z",
   collapse:
     "M15.5 5 8.5 12l7 7-1.4 1.4L5.7 12l8.4-8.4L15.5 5Zm4 0-7 7 7 7-1.4 1.4L9.7 12l8.4-8.4L19.5 5Z",
   expand:
@@ -327,6 +336,7 @@ export default function ManagementDashboard({ onLogout }) {
 
               {activeView === "economicIndicators" && <EconomicIndicators />}
               {activeView === "marketingMetrics" && <MarketingMetrics />}
+              {activeView === "pe" && <PEQualifiedLeads />}
               {activeView === "productivityProjects" && (
                 <ProductivityProjects />
               )}

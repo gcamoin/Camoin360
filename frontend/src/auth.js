@@ -10,7 +10,7 @@ export const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || getDefaultApiB
 const AUTH_STORAGE_KEY = "sophie:authToken";
 const DASHBOARD_STORAGE_KEY = "sophie:dashboardView";
 const UNAUTHORIZED_EVENT = "sophie:auth-unauthorized";
-const DASHBOARD_VIEWS = new Set(["main", "management", "prospecting"]);
+const DASHBOARD_VIEWS = new Set(["main", "management", "prospecting", "consulting"]);
 
 function decodeTokenPayload(token) {
   try {

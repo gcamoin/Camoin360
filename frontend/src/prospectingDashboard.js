@@ -202,7 +202,7 @@ export default function ProspectingDashboard({ onLogout }) {
                     Camoin 360
                   </Typography>
                   <Typography sx={{ color: "rgba(255,255,255,0.72)", mt: 0.75 }} variant="body2">
-                    Dynamics Dashboard
+                    Prospecting
                   </Typography>
                 </Box>
               )}
