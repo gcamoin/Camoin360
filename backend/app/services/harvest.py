@@ -183,6 +183,21 @@ def _is_employee_productivity_cache_stale(cache_row: dict | None) -> bool:
     return (datetime.now(timezone.utc) - completed_time).total_seconds() > EMPLOYEE_PRODUCTIVITY_SYNC_STALE_SECONDS
 
 
+def _is_employee_productivity_sync_active(cache_row: dict | None) -> bool:
+    if not cache_row or cache_row.get("status") != "syncing" or not cache_row.get("last_started_at"):
+        return False
+
+    try:
+        started_time = datetime.fromisoformat(str(cache_row["last_started_at"]).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+
+    if started_time.tzinfo is None:
+        started_time = started_time.replace(tzinfo=timezone.utc)
+
+    return (datetime.now(timezone.utc) - started_time).total_seconds() <= EMPLOYEE_PRODUCTIVITY_SYNC_STALE_SECONDS
+
+
 def get_employee_weekly_hours(year=None, month=None):
     cache_key = _employee_productivity_cache_key(year, month)
     cache_row = _get_employee_productivity_cache_row(cache_key)
@@ -194,10 +209,14 @@ def get_employee_weekly_hours(year=None, month=None):
     else:
         payload = _employee_productivity_empty_payload(year, month)
 
+    sync_status = cache_row.get("status") if cache_row else "idle"
+    if sync_status == "syncing" and not _is_employee_productivity_sync_active(cache_row):
+        sync_status = "idle"
+
     return {
         **payload,
         "sync": {
-            "status": cache_row.get("status") if cache_row else "idle",
+            "status": sync_status,
             "last_started_at": cache_row.get("last_started_at") if cache_row else None,
             "last_completed_at": cache_row.get("last_completed_at") if cache_row else None,
             "last_error": cache_row.get("last_error") if cache_row else "",

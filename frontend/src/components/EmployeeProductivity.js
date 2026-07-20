@@ -91,6 +91,8 @@ const formatShortDate = (dateValue) =>
 
 export default function EmployeeProductivity() {
   const isMountedRef = useRef(true);
+  const activeFetchKeyRef = useRef("");
+  const latestRequestIdRef = useRef(0);
   const [metrics, setMetrics] = useState({
     employees: [],
     from: "",
@@ -107,15 +109,26 @@ export default function EmployeeProductivity() {
   const [syncStatus, setSyncStatus] = useState(null);
   const [error, setError] = useState("");
 
-  const fetchMetrics = useCallback(async ({ refresh = false, silent = false } = {}) => {
+  const fetchMetrics = useCallback(async ({ refresh = false, background = false } = {}) => {
     if (!isMountedRef.current) return;
 
-    if (silent) {
-      setIsRefreshing(true);
-    } else {
-      setIsLoading(true);
+    const requestKey = `${selectedYear}:${selectedMonth || "all"}:${refresh ? "refresh" : "read"}`;
+    if (activeFetchKeyRef.current === requestKey) {
+      return;
     }
-    setError("");
+
+    activeFetchKeyRef.current = requestKey;
+    const requestId = latestRequestIdRef.current + 1;
+    latestRequestIdRef.current = requestId;
+
+    if (refresh) {
+      setIsRefreshing(true);
+    } else if (!background) {
+      setIsLoading(true);
+      setError("");
+    } else {
+      setError("");
+    }
 
     try {
       const params = { year: selectedYear };
@@ -131,7 +144,7 @@ export default function EmployeeProductivity() {
         params,
       });
 
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || requestId !== latestRequestIdRef.current) return;
 
       setMetrics({
         employees: response.data?.employees || [],
@@ -146,11 +159,15 @@ export default function EmployeeProductivity() {
         return;
       }
 
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || requestId !== latestRequestIdRef.current) return;
 
       setError(getApiErrorMessage(fetchError, "Unable to load employee productivity metrics."));
     } finally {
-      if (!isMountedRef.current) return;
+      if (activeFetchKeyRef.current === requestKey) {
+        activeFetchKeyRef.current = "";
+      }
+
+      if (!isMountedRef.current || requestId !== latestRequestIdRef.current) return;
 
       setIsLoading(false);
       setIsRefreshing(false);
@@ -162,7 +179,7 @@ export default function EmployeeProductivity() {
     fetchMetrics();
 
     const intervalId = setInterval(() => {
-      fetchMetrics({ silent: true });
+      fetchMetrics({ background: true });
     }, REFRESH_INTERVAL_MS);
 
     return () => {
@@ -177,13 +194,13 @@ export default function EmployeeProductivity() {
     }
 
     const pollTimer = window.setTimeout(() => {
-      fetchMetrics({ silent: true });
+      fetchMetrics({ background: true });
     }, 5000);
 
     return () => {
       window.clearTimeout(pollTimer);
     };
-  }, [fetchMetrics, syncStatus]);
+  }, [fetchMetrics, syncStatus?.last_completed_at, syncStatus?.last_error, syncStatus?.last_started_at, syncStatus?.status]);
 
   const updatedLabel = metrics.updated_at
     ? `Updated ${new Intl.DateTimeFormat(undefined, {
@@ -262,7 +279,7 @@ export default function EmployeeProductivity() {
         </Typography>
         <Button
           disabled={isRefreshing || syncStatus?.status === "syncing"}
-          onClick={() => fetchMetrics({ refresh: true, silent: true })}
+          onClick={() => fetchMetrics({ refresh: true })}
           size="small"
           variant="outlined"
           sx={{ alignSelf: { xs: "flex-start", sm: "auto" }, borderRadius: 1, fontSize: "0.75rem", fontWeight: 700 }}
@@ -373,11 +390,7 @@ export default function EmployeeProductivity() {
           </Stack>
         </Stack>
 
-        {isRefreshing ? (
-          <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
-            <CircularProgress />
-          </Box>
-        ) : filteredEmployees.length ? (
+        {filteredEmployees.length ? (
           <Box sx={{ pb: 1 }}>
             <Box sx={{ height: chartHeight, minWidth: 0 }}>
               <ResponsiveContainer width="100%" height="100%">
@@ -474,11 +487,7 @@ export default function EmployeeProductivity() {
           </Typography>
         </Stack>
 
-        {isRefreshing ? (
-          <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
-            <CircularProgress />
-          </Box>
-        ) : utilizationRows.length ? (
+        {utilizationRows.length ? (
           <Box sx={{ height: utilizationChartHeight, minWidth: 0 }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={utilizationRows} margin={{ top: 12, right: 16, bottom: 62, left: 0 }}>
