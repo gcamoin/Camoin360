@@ -71,7 +71,11 @@ const tooltipStyle = {
   },
 };
 
-export default function MarketingMetrics() {
+export function MarketingOverview() {
+  return <MarketingMetrics showOverview showServiceLines={false} />;
+}
+
+export default function MarketingMetrics({ showOverview = false, showServiceLines = true } = {}) {
   const isMountedRef = useRef(true);
   const [metrics, setMetrics] = useState({
     bucket_grain: "month",
@@ -83,7 +87,7 @@ export default function MarketingMetrics() {
     updated_at: "",
   });
   const [range, setRange] = useState("since_2022");
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(showOverview);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
   const [error, setError] = useState("");
@@ -133,6 +137,10 @@ export default function MarketingMetrics() {
   }, [range]);
 
   useEffect(() => {
+    if (!showOverview) {
+      return undefined;
+    }
+
     isMountedRef.current = true;
     fetchMetrics();
 
@@ -144,9 +152,13 @@ export default function MarketingMetrics() {
       isMountedRef.current = false;
       clearInterval(intervalId);
     };
-  }, [fetchMetrics]);
+  }, [fetchMetrics, showOverview]);
 
   useEffect(() => {
+    if (!showOverview) {
+      return undefined;
+    }
+
     if (syncStatus?.status !== "syncing") {
       return undefined;
     }
@@ -158,10 +170,10 @@ export default function MarketingMetrics() {
     return () => {
       window.clearTimeout(pollTimer);
     };
-  }, [fetchMetrics, syncStatus]);
+  }, [fetchMetrics, showOverview, syncStatus]);
 
   const [serviceLineMetrics, setServiceLineMetrics] = useState({ service_lines: [], updated_at: "" });
-  const [isServiceLineLoading, setIsServiceLineLoading] = useState(true);
+  const [isServiceLineLoading, setIsServiceLineLoading] = useState(showServiceLines);
   const [isServiceLineRefreshing, setIsServiceLineRefreshing] = useState(false);
   const [serviceLineSyncStatus, setServiceLineSyncStatus] = useState(null);
   const [serviceLineError, setServiceLineError] = useState("");
@@ -209,6 +221,11 @@ export default function MarketingMetrics() {
   }, []);
 
   useEffect(() => {
+    if (!showServiceLines) {
+      return undefined;
+    }
+
+    isMountedRef.current = true;
     fetchServiceLineMetrics();
 
     const intervalId = setInterval(() => {
@@ -216,11 +233,16 @@ export default function MarketingMetrics() {
     }, REFRESH_INTERVAL_MS);
 
     return () => {
+      isMountedRef.current = false;
       clearInterval(intervalId);
     };
-  }, [fetchServiceLineMetrics]);
+  }, [fetchServiceLineMetrics, showServiceLines]);
 
   useEffect(() => {
+    if (!showServiceLines) {
+      return undefined;
+    }
+
     if (serviceLineSyncStatus?.status !== "syncing") {
       return undefined;
     }
@@ -232,7 +254,7 @@ export default function MarketingMetrics() {
     return () => {
       window.clearTimeout(pollTimer);
     };
-  }, [fetchServiceLineMetrics, serviceLineSyncStatus]);
+  }, [fetchServiceLineMetrics, serviceLineSyncStatus, showServiceLines]);
 
   const availableYears = useMemo(() => {
     const years = new Set();
@@ -281,16 +303,16 @@ export default function MarketingMetrics() {
     : "";
   const statusLabel =
     syncStatus?.status === "syncing"
-      ? "Syncing Dynamics data..."
+      ? "Syncing GA4 and Dynamics data..."
       : updatedLabel || "Website visit metrics";
   const visitorsChartTitle =
-    metrics.bucket_grain === "day" ? "Website Visitors by Day" : "Website Visitors by Month";
+    metrics.bucket_grain === "day" ? "GA4 Website Sessions by Day" : "GA4 Website Sessions by Month";
   const targetVisitorsChartTitle =
     metrics.bucket_grain === "day"
-      ? "Target Industry Visitors by Day"
-      : "Target Industry Visitors by Month";
+      ? "Target Industry Leadfeeder Visits by Day"
+      : "Target Industry Leadfeeder Visits by Month";
 
-  if (isLoading) {
+  if (showOverview && isLoading) {
     return (
       <Box sx={{ display: "flex", justifyContent: "center", py: 8 }}>
         <CircularProgress />
@@ -300,52 +322,54 @@ export default function MarketingMetrics() {
 
   return (
     <Stack spacing={2.5}>
-      {error ? <Alert severity="error">{error}</Alert> : null}
+      {showOverview ? (
+        <>
+          {error ? <Alert severity="error">{error}</Alert> : null}
 
-      <Stack
-        direction={{ xs: "column", sm: "row" }}
-        justifyContent="space-between"
-        alignItems={{ xs: "stretch", sm: "center" }}
-        spacing={1.5}
-      >
-        <Stack direction="row" flexWrap="wrap" gap={0.75}>
-          {RANGE_OPTIONS.map((option) => {
-            const isActive = range === option.value;
-            return (
-              <Button
-                key={option.value}
-                onClick={() => setRange(option.value)}
-                size="small"
-                variant={isActive ? "contained" : "outlined"}
-                disableElevation
-                sx={{
-                  borderRadius: 1,
-                  fontSize: "0.75rem",
-                  fontWeight: 700,
-                  minWidth: 0,
-                  ...(!isActive && { borderColor: "divider", color: "text.secondary" }),
-                }}
-              >
-                {option.label}
-              </Button>
-            );
-          })}
-        </Stack>
-        <Stack alignItems={{ xs: "flex-start", sm: "flex-end" }} spacing={0.75}>
-          <Typography color="text.secondary" fontSize="0.75rem">
-            {statusLabel}
-          </Typography>
-          <Button
-            disabled={isRefreshing}
-            onClick={() => fetchMetrics({ refresh: true, silent: true })}
-            size="small"
-            variant="outlined"
-            sx={{ borderRadius: 1, fontSize: "0.75rem", fontWeight: 700 }}
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            justifyContent="space-between"
+            alignItems={{ xs: "stretch", sm: "center" }}
+            spacing={1.5}
           >
-            {isRefreshing || syncStatus?.status === "syncing" ? "Refreshing" : "Refresh"}
-          </Button>
-        </Stack>
-      </Stack>
+            <Stack direction="row" flexWrap="wrap" gap={0.75}>
+              {RANGE_OPTIONS.map((option) => {
+                const isActive = range === option.value;
+                return (
+                  <Button
+                    key={option.value}
+                    onClick={() => setRange(option.value)}
+                    size="small"
+                    variant={isActive ? "contained" : "outlined"}
+                    disableElevation
+                    sx={{
+                      borderRadius: 1,
+                      fontSize: "0.75rem",
+                      fontWeight: 700,
+                      minWidth: 0,
+                      ...(!isActive && { borderColor: "divider", color: "text.secondary" }),
+                    }}
+                  >
+                    {option.label}
+                  </Button>
+                );
+              })}
+            </Stack>
+            <Stack alignItems={{ xs: "flex-start", sm: "flex-end" }} spacing={0.75}>
+              <Typography color="text.secondary" fontSize="0.75rem">
+                {statusLabel}
+              </Typography>
+              <Button
+                disabled={isRefreshing}
+                onClick={() => fetchMetrics({ refresh: true, silent: true })}
+                size="small"
+                variant="outlined"
+                sx={{ borderRadius: 1, fontSize: "0.75rem", fontWeight: 700 }}
+              >
+                {isRefreshing || syncStatus?.status === "syncing" ? "Refreshing" : "Refresh"}
+              </Button>
+            </Stack>
+          </Stack>
 
       <Box
         sx={{
@@ -365,7 +389,7 @@ export default function MarketingMetrics() {
             {metrics.total_visitors.toLocaleString()}
           </Typography>
           <Typography color="text.secondary" sx={{ mt: 0.75 }} variant="body2">
-            Total website visitor records
+            Total GA4 website sessions
           </Typography>
         </Paper>
         <Paper
@@ -379,7 +403,7 @@ export default function MarketingMetrics() {
             {peakMonth.month}
           </Typography>
           <Typography color="text.secondary" sx={{ mt: 0.75 }} variant="body2">
-            {peakMonth.visitors.toLocaleString()} visitor records
+            {peakMonth.visitors.toLocaleString()} GA4 sessions
           </Typography>
         </Paper>
       </Box>
@@ -406,7 +430,7 @@ export default function MarketingMetrics() {
               {visitorsChartTitle}
             </Typography>
             <Typography color="text.secondary" variant="body2">
-              Visitors recorded for Camoin Associates in the selected time frame.
+              Total site traffic from Google Analytics 4 in the selected time frame.
             </Typography>
           </Stack>
           <Box sx={{ height: 320, minWidth: 0 }}>
@@ -415,7 +439,7 @@ export default function MarketingMetrics() {
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                 <XAxis dataKey="period" tick={{ fontSize: 11 }} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                <Tooltip {...tooltipStyle} formatter={(value) => [value.toLocaleString(), "Visitors"]} />
+                <Tooltip {...tooltipStyle} formatter={(value) => [value.toLocaleString(), "GA4 sessions"]} />
                 <Bar dataKey="visitors" fill="#0d9488" fillOpacity={0.86} radius={[3, 3, 0, 0]} maxBarSize={42} />
               </BarChart>
             </ResponsiveContainer>
@@ -437,7 +461,7 @@ export default function MarketingMetrics() {
               {targetVisitorsChartTitle}
             </Typography>
             <Typography color="text.secondary" variant="body2">
-              Visitors whose account NAICS matches Camoin Associates target industries.
+              Leadfeeder visits whose account NAICS matches Camoin Associates target industries.
             </Typography>
           </Stack>
           <Box sx={{ height: 320, minWidth: 0 }}>
@@ -448,7 +472,7 @@ export default function MarketingMetrics() {
                 <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
                 <Tooltip
                   {...tooltipStyle}
-                  formatter={(value) => [value.toLocaleString(), "Target visitors"]}
+                  formatter={(value) => [value.toLocaleString(), "Target Leadfeeder visits"]}
                 />
                 <Bar
                   dataKey="target_visitors"
@@ -461,11 +485,14 @@ export default function MarketingMetrics() {
             </ResponsiveContainer>
           </Box>
           <Typography color="text.secondary" sx={{ mt: 1.5 }} variant="body2">
-            {metrics.target_total_visitors.toLocaleString()} target-industry visitor records
+            {metrics.target_total_visitors.toLocaleString()} target-industry Leadfeeder visit records
           </Typography>
         </Paper>
       </Box>
+        </>
+      ) : null}
 
+      {showServiceLines ? (
       <Stack spacing={2.5} sx={{ pt: 1 }}>
         {serviceLineError ? <Alert severity="error">{serviceLineError}</Alert> : null}
 
@@ -609,6 +636,7 @@ export default function MarketingMetrics() {
           </Box>
         )}
       </Stack>
+      ) : null}
     </Stack>
   );
 }

@@ -9,6 +9,8 @@ from urllib.parse import quote
 from dotenv import load_dotenv
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from google.analytics.data_v1beta import BetaAnalyticsDataClient
+from google.analytics.data_v1beta.types import DateRange, Dimension, Metric, RunReportRequest
 from ..database import get_database_connection
 from .auth import get_access_token
 from .metrics import increment_processed, log_update
@@ -71,6 +73,7 @@ _DATA_QUALITY_REFRESH_TASK = None
 MARKETING_METRICS_CACHE_TTL_SECONDS = 600
 MARKETING_METRICS_REQUEST_TIMEOUT_SECONDS = 120
 MARKETING_METRICS_SYNC_STALE_SECONDS = int(os.getenv("MARKETING_METRICS_SYNC_STALE_SECONDS", "1800"))
+GA4_PROPERTY_ID = os.getenv("GA4_PROPERTY_ID")
 INTERNAL_COMPANY_ACCOUNT_ID = "08c283ff-6186-eb11-a812-0022481d279b"
 TARGET_INDUSTRIES_TABLE = "new_targetindustries"
 TARGET_INDUSTRY_CLIENT_LOOKUP_FIELD = "_new_clientid_value"
@@ -2385,6 +2388,48 @@ def _marketing_window(range_key: str, now: datetime) -> dict[str, object]:
     }
 
 
+def _run_ga4_total_site_traffic_report(window: dict[str, object]):
+    if not GA4_PROPERTY_ID:
+        raise RuntimeError("Missing GA4_PROPERTY_ID. Set it in the project .env file or process environment.")
+
+    bucket_grain = window["bucket_grain"]
+    dimension_name = "date" if bucket_grain == "day" else "yearMonth"
+    start_date = window["start_date"].strftime("%Y-%m-%d")
+
+    client = BetaAnalyticsDataClient()
+    request = RunReportRequest(
+        property=f"properties/{GA4_PROPERTY_ID}",
+        dimensions=[Dimension(name=dimension_name)],
+        metrics=[Metric(name="sessions")],
+        date_ranges=[DateRange(start_date=start_date, end_date="today")],
+        limit=100000,
+    )
+    return client.run_report(request)
+
+
+async def _fetch_ga4_total_site_traffic(window: dict[str, object]) -> dict[str, int]:
+    response = await asyncio.to_thread(_run_ga4_total_site_traffic_report, window)
+    return _build_ga4_total_site_traffic_counts(window, response)
+
+
+def _build_ga4_total_site_traffic_counts(window: dict[str, object], response) -> dict[str, int]:
+    bucket_key = window["bucket_key"]
+    bucket_grain = window["bucket_grain"]
+    counts_by_bucket = {bucket[bucket_key]: 0 for bucket in window["buckets"]}
+
+    for row in response.rows:
+        raw_period = row.dimension_values[0].value
+        if bucket_grain == "day":
+            period_key = f"{raw_period[:4]}-{raw_period[4:6]}-{raw_period[6:8]}"
+        else:
+            period_key = f"{raw_period[:4]}-{raw_period[4:6]}"
+
+        if period_key in counts_by_bucket:
+            counts_by_bucket[period_key] += int(row.metric_values[0].value)
+
+    return counts_by_bucket
+
+
 async def _load_website_visit_metrics_from_dynamics(range_key: str = "since_2022"):
     now = time.time()
     cache_key = range_key if range_key in MARKETING_RANGE_OPTIONS else "last_year"
@@ -2407,8 +2452,11 @@ async def _load_website_visit_metrics_from_dynamics(range_key: str = "since_2022
 
     timeout = httpx.Timeout(MARKETING_METRICS_REQUEST_TIMEOUT_SECONDS)
     async with httpx.AsyncClient(timeout=timeout) as client:
-        target_naics_codes = await _fetch_target_industry_naics_codes(client, headers)
-        website_visit_counts = await _count_website_visits(
+        ga4_site_traffic, target_naics_codes = await asyncio.gather(
+            _fetch_ga4_total_site_traffic(window),
+            _fetch_target_industry_naics_codes(client, headers),
+        )
+        leadfeeder_visit_counts = await _count_website_visits(
             client,
             website_visits_url,
             headers,
@@ -2422,8 +2470,8 @@ async def _load_website_visit_metrics_from_dynamics(range_key: str = "since_2022
         {
             "period": bucket[window["bucket_label"]],
             "period_key": bucket[window["bucket_key"]],
-            "visitors": website_visit_counts["counts_by_bucket"][bucket[window["bucket_key"]]],
-            "target_visitors": website_visit_counts["target_counts_by_bucket"][bucket[window["bucket_key"]]],
+            "visitors": ga4_site_traffic[bucket[window["bucket_key"]]],
+            "target_visitors": leadfeeder_visit_counts["target_counts_by_bucket"][bucket[window["bucket_key"]]],
         }
         for bucket in buckets
     ]
@@ -2433,11 +2481,13 @@ async def _load_website_visit_metrics_from_dynamics(range_key: str = "since_2022
         "range": window["range"],
         "range_label": window["label"],
         "bucket_grain": window["bucket_grain"],
+        "visitors_source": "Google Analytics 4 sessions",
+        "target_visitors_source": "Leadfeeder target-industry visit records",
         "updated_at": current_time.isoformat(),
-        "total_visitors": website_visit_counts["total"],
-        "target_total_visitors": website_visit_counts["target_total"],
+        "total_visitors": sum(ga4_site_traffic.values()),
+        "target_total_visitors": leadfeeder_visit_counts["target_total"],
         "months": visit_buckets,
-        "landing_pages": website_visit_counts["landing_pages"],
+        "landing_pages": leadfeeder_visit_counts["landing_pages"],
     }
     cached_data[cache_key] = result
     _MARKETING_METRICS_CACHE["data"] = cached_data
@@ -2458,6 +2508,8 @@ def _marketing_metrics_empty_payload(range_key: str) -> dict:
         "range": window["range"],
         "range_label": window["label"],
         "bucket_grain": window["bucket_grain"],
+        "visitors_source": "Google Analytics 4 sessions",
+        "target_visitors_source": "Leadfeeder target-industry visit records",
         "updated_at": "",
         "total_visitors": 0,
         "target_total_visitors": 0,
@@ -2487,6 +2539,10 @@ def _is_marketing_metrics_cache_stale(cache_row: dict | None) -> bool:
         completed_time = completed_time.replace(tzinfo=timezone.utc)
 
     return (datetime.now(timezone.utc) - completed_time).total_seconds() > MARKETING_METRICS_SYNC_STALE_SECONDS
+
+
+def _marketing_metrics_payload_uses_ga4_site_traffic(payload: dict) -> bool:
+    return payload.get("visitors_source") == "Google Analytics 4 sessions"
 
 
 def _get_marketing_metrics_cache_row(range_key: str) -> dict | None:
@@ -2565,12 +2621,13 @@ def get_website_visit_metrics(range_key: str = "since_2022") -> dict:
     else:
         payload = _marketing_metrics_empty_payload(normalized_range)
 
+    uses_current_site_traffic_source = _marketing_metrics_payload_uses_ga4_site_traffic(payload)
     sync = {
         "status": cache_row.get("status") if cache_row else "idle",
         "last_started_at": cache_row.get("last_started_at") if cache_row else None,
         "last_completed_at": cache_row.get("last_completed_at") if cache_row else None,
         "last_error": cache_row.get("last_error") if cache_row else "",
-        "is_stale": _is_marketing_metrics_cache_stale(cache_row),
+        "is_stale": _is_marketing_metrics_cache_stale(cache_row) or not uses_current_site_traffic_source,
     }
     return {
         **payload,

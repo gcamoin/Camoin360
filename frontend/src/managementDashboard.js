@@ -15,7 +15,7 @@ import {
 import EconomicIndicators from "./components/EconomicIndicators";
 import { EmptyState } from "./components/UiPrimitives";
 import EmployeeProductivity from "./components/EmployeeProductivity";
-import MarketingMetrics from "./components/MarketingMetrics";
+import MarketingMetrics, { MarketingOverview } from "./components/MarketingMetrics";
 import PEQualifiedLeads from "./components/PEQualifiedLeads";
 import ProductivityProjects from "./components/ProductivityProjects";
 import SoftwareInventory from "./components/SoftwareInventory";
@@ -41,8 +41,14 @@ const views = {
     description:
       "Financial performance data and trends across portfolio companies.",
   },
+  marketing: {
+    label: "Marketing",
+    icon: "campaign",
+    title: "Marketing",
+    description: "Website visitor trends and target industry engagement.",
+  },
   marketingMetrics: {
-    label: "Marketing Metrics",
+    label: "Marketing - Service Lines",
     icon: "campaign",
     title: "Marketing Metrics",
     description: "Marketing performance and campaign metrics across accounts.",
@@ -335,6 +341,7 @@ export default function ManagementDashboard({ onLogout }) {
               </Box>
 
               {activeView === "economicIndicators" && <EconomicIndicators />}
+              {activeView === "marketing" && <MarketingOverview />}
               {activeView === "marketingMetrics" && <MarketingMetrics />}
               {activeView === "pe" && <PEQualifiedLeads />}
               {activeView === "productivityProjects" && (

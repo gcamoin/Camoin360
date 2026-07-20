@@ -261,6 +261,47 @@ class MarketingMetricsWindowTest(unittest.TestCase):
         self.assertEqual(window["buckets"][-1]["month_key"], "2026-07")
 
 
+class MarketingMetricsGa4TrafficTest(unittest.TestCase):
+    def test_build_ga4_total_site_traffic_counts_maps_monthly_sessions_to_buckets(self):
+        now = datetime(2026, 7, 12, tzinfo=timezone.utc)
+        window = _marketing_window("last_6_months", now)
+
+        response = MagicMock()
+        response.rows = [
+            MagicMock(
+                dimension_values=[MagicMock(value="202605")],
+                metric_values=[MagicMock(value="7654")],
+            ),
+            MagicMock(
+                dimension_values=[MagicMock(value="202606")],
+                metric_values=[MagicMock(value="8000")],
+            ),
+        ]
+
+        result = dynamics._build_ga4_total_site_traffic_counts(window, response)
+
+        self.assertEqual(result["2026-05"], 7654)
+        self.assertEqual(result["2026-06"], 8000)
+        self.assertEqual(result["2026-07"], 0)
+
+    def test_build_ga4_total_site_traffic_counts_maps_daily_sessions_to_buckets(self):
+        now = datetime(2026, 7, 12, tzinfo=timezone.utc)
+        window = _marketing_window("last_week", now)
+
+        response = MagicMock()
+        response.rows = [
+            MagicMock(
+                dimension_values=[MagicMock(value="20260710")],
+                metric_values=[MagicMock(value="123")],
+            ),
+        ]
+
+        result = dynamics._build_ga4_total_site_traffic_counts(window, response)
+
+        self.assertEqual(result["2026-07-10"], 123)
+        self.assertEqual(result["2026-07-12"], 0)
+
+
 class ProjectCreationMetricsTest(unittest.IsolatedAsyncioTestCase):
     async def test_includes_project_and_opportunity_fee_tables(self):
         async def get_response(url, headers):

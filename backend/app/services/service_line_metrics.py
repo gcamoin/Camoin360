@@ -25,6 +25,26 @@ CACHE_KEY = "default"
 SERVICE_LINE_DEFINITIONS = [
     {"key": "prospect_engage", "label": "ProspectEngage", "pattern": re.compile(r"prospect-?engage", re.IGNORECASE)},
     {
+        "key": "prospecting",
+        "label": "Prospecting",
+        "pattern": re.compile(r"^/services/[^?#]*prospecting", re.IGNORECASE),
+    },
+    {
+        "key": "impact_analysis",
+        "label": "Impact Analysis",
+        "pattern": re.compile(r"^/services/[^?#]*impact-analysis", re.IGNORECASE),
+    },
+    {
+        "key": "real_estate",
+        "label": "Real Estate",
+        "pattern": re.compile(r"^/services/[^?#]*real-estate", re.IGNORECASE),
+    },
+    {
+        "key": "strategic_planning",
+        "label": "Strategic Planning",
+        "pattern": re.compile(r"^/services/[^?#]*strategic-planning", re.IGNORECASE),
+    },
+    {
         "key": "entrepreneurship",
         "label": "Entrepreneurship",
         "pattern": re.compile(r"^/services/entrepreneurship-innovation"),
@@ -38,11 +58,6 @@ SERVICE_LINE_DEFINITIONS = [
         "key": "industry_analytics",
         "label": "Industry Analytics",
         "pattern": re.compile(r"^/services/industry-analytics"),
-    },
-    {
-        "key": "industry_workforce_analytics",
-        "label": "Industry & Workforce Analytics",
-        "pattern": re.compile(r"^/services/industry-workforce-analytics"),
     },
 ]
 
@@ -177,6 +192,36 @@ def _empty_service_line_marketing_payload() -> dict:
     }
 
 
+def _service_line_keys_are_current(payload: dict) -> bool:
+    payload_keys = {line.get("key") for line in payload.get("service_lines", [])}
+    configured_keys = {definition["key"] for definition in SERVICE_LINE_DEFINITIONS}
+    return payload_keys == configured_keys
+
+
+def _ensure_current_service_lines(payload: dict) -> dict:
+    existing_lines_by_key = {
+        line.get("key"): line
+        for line in payload.get("service_lines", [])
+    }
+
+    if _service_line_keys_are_current(payload):
+        return payload
+
+    service_lines = []
+    for definition in SERVICE_LINE_DEFINITIONS:
+        service_lines.append(
+            existing_lines_by_key.get(
+                definition["key"],
+                {"key": definition["key"], "label": definition["label"], "months": []},
+            )
+        )
+
+    return {
+        **payload,
+        "service_lines": service_lines,
+    }
+
+
 def _get_service_line_marketing_cache_row() -> dict | None:
     with get_database_connection() as connection:
         row = connection.execute(
@@ -222,12 +267,15 @@ def get_service_line_marketing_metrics() -> dict:
     else:
         payload = _empty_service_line_marketing_payload()
 
+    has_current_service_lines = _service_line_keys_are_current(payload)
+    payload = _ensure_current_service_lines(payload)
+
     sync = {
         "status": cache_row.get("status") if cache_row else "idle",
         "last_started_at": cache_row.get("last_started_at") if cache_row else None,
         "last_completed_at": cache_row.get("last_completed_at") if cache_row else None,
         "last_error": cache_row.get("last_error") if cache_row else "",
-        "is_stale": _is_service_line_marketing_cache_stale(cache_row),
+        "is_stale": _is_service_line_marketing_cache_stale(cache_row) or not has_current_service_lines,
     }
     return {
         **payload,
