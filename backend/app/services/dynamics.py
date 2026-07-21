@@ -16,6 +16,7 @@ from .auth import get_access_token
 from .metrics import increment_processed, log_update
 from .seamless import enrich_with_seamless
 from .usage import can_make_request, increment_usage, load_usage, WEEKLY_LIMIT
+from .locations import normalize_country_group, normalize_state_province
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,7 @@ DATA_QUALITY_SORT_COLUMNS = {
     "missing_fields_summary": "missing_fields_summary",
     "data_quality_score": "data_quality_score",
 }
+MISSING_STATE_PROVINCE_FILTER_VALUE = "__missing_state_province__"
 TARGET_INDUSTRY_ENTITY_SET_CANDIDATES = (
     "new_targetindustries",
     "new_targetindustrieses",
@@ -187,23 +189,6 @@ MARKETING_RANGE_OPTIONS = {
     "last_6_months": {"label": "Last 6 Months", "months": 6},
     "last_year": {"label": "Last Year", "months": 12},
 }
-
-STATE_ABBREVIATIONS = {
-    "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
-    "California": "CA", "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE",
-    "Florida": "FL", "Georgia": "GA", "Hawaii": "HI", "Idaho": "ID",
-    "Illinois": "IL", "Indiana": "IN", "Iowa": "IA", "Kansas": "KS",
-    "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME", "Maryland": "MD",
-    "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN", "Mississippi": "MS",
-    "Missouri": "MO", "Montana": "MT", "Nebraska": "NE", "Nevada": "NV",
-    "New Hampshire": "NH", "New Jersey": "NJ", "New Mexico": "NM", "New York": "NY",
-    "North Carolina": "NC", "North Dakota": "ND", "Ohio": "OH", "Oklahoma": "OK",
-    "Oregon": "OR", "Pennsylvania": "PA", "Rhode Island": "RI",
-    "South Carolina": "SC", "South Dakota": "SD", "Tennessee": "TN", "Texas": "TX",
-    "Utah": "UT", "Vermont": "VT", "Virginia": "VA", "Washington": "WA",
-    "West Virginia": "WV", "Wisconsin": "WI", "Wyoming": "WY"
-}
-
 
 async def get_account(account_id: str, select_fields: str = "name,websiteurl"):
     token = await get_access_token()
@@ -499,8 +484,14 @@ def _build_data_quality_filters(
         clauses.append("(',' || missing_field_keys || ',') LIKE ?")
         values.append(f"%,{missing_field},%")
     if states:
-        clauses.append(f"address1_stateorprovince IN ({','.join('?' for _ in states)})")
-        values.extend(states)
+        state_values = [state for state in states if state != MISSING_STATE_PROVINCE_FILTER_VALUE]
+        state_clauses = []
+        if state_values:
+            state_clauses.append(f"address1_stateorprovince IN ({','.join('?' for _ in state_values)})")
+            values.extend(state_values)
+        if MISSING_STATE_PROVINCE_FILTER_VALUE in states:
+            state_clauses.append("(address1_stateorprovince IS NULL OR TRIM(address1_stateorprovince) = '')")
+        clauses.append(f"({' OR '.join(state_clauses)})")
     if country != "all":
         clauses.append(
             """
@@ -563,6 +554,65 @@ def _get_data_quality_facets(connection, where_clause: str, values: list) -> dic
         ).fetchall()
         return [row["value"] for row in rows]
 
+    state_rows = connection.execute(
+        f"""
+        SELECT address1_stateorprovince AS state, address1_country AS country
+        FROM account_data_quality_cache
+        {where_clause}
+        """,
+        values,
+    ).fetchall()
+    state_options_by_key = {}
+    has_missing_state = False
+
+    for row in state_rows:
+        raw_state = row["state"]
+        if not str(raw_state or "").strip():
+            has_missing_state = True
+            continue
+
+        country_group = normalize_country_group(row["country"])
+        normalized_state = normalize_state_province(raw_state)
+        if normalized_state and country_group in {"us", "canada"}:
+            option_key = f"{country_group}:{normalized_state}"
+            option = state_options_by_key.setdefault(
+                option_key,
+                {
+                    "value": normalized_state,
+                    "country_group": country_group,
+                    "status": "recognized",
+                    "raw_values": [],
+                },
+            )
+            if raw_state not in option["raw_values"]:
+                option["raw_values"].append(raw_state)
+            continue
+
+        option_key = f"unrecognized:{str(raw_state).strip()}"
+        option = state_options_by_key.setdefault(
+            option_key,
+            {
+                "value": str(raw_state).strip(),
+                "country_group": None,
+                "status": "unrecognized",
+                "raw_values": [],
+            },
+        )
+        if raw_state not in option["raw_values"]:
+            option["raw_values"].append(raw_state)
+
+    state_options = list(state_options_by_key.values())
+    state_options.sort(key=lambda option: (option["status"], option["country_group"] or "", option["value"]))
+    if has_missing_state:
+        state_options.append(
+            {
+                "value": "",
+                "country_group": None,
+                "status": "missing",
+                "raw_values": [""],
+            }
+        )
+
     missing_counts = []
     for field_key, field_label in DATA_QUALITY_MISSING_METRIC_FIELDS:
         count = connection.execute(
@@ -602,6 +652,7 @@ def _get_data_quality_facets(connection, where_clause: str, values: list) -> dic
         "sectors": distinct_values("new_sector"),
         "countries": distinct_values("address1_country"),
         "states": distinct_values("address1_stateorprovince"),
+        "state_options": state_options,
         "cities": distinct_values("address1_city"),
         "missing_counts": missing_counts,
     }
@@ -3846,7 +3897,7 @@ async def enrich_account(account_id: str, fields_to_update: list[str] | None = N
     print(f"📍 Raw state: {state}")
     if should_update_field("address1_stateorprovince", requested_fields) and state:
         state_clean = state.strip()
-        state_abbr = STATE_ABBREVIATIONS.get(state_clean.title(), state_clean)
+        state_abbr = normalize_state_province(state_clean) or state_clean
         print(f"📍 Converted state: {state_abbr}")
         if not account.get("address1_stateorprovince"):
             updates["address1_stateorprovince"] = state_abbr

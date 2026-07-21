@@ -111,6 +111,29 @@ const canadaProvinceNamesByAbbreviation = {
   SK: "Saskatchewan",
   YT: "Yukon",
 };
+export const STATE_GROUP_UNITED_STATES = "__state_group_united_states__";
+export const STATE_GROUP_CANADA = "__state_group_canada__";
+export const STATE_OPTION_MISSING = "__state_option_missing__";
+export const STATE_OPTION_UNRECOGNIZED = "__state_option_unrecognized__";
+const BACKEND_MISSING_STATE_PROVINCE_FILTER_VALUE = "__missing_state_province__";
+const stateProvinceGroupLabels = {
+  [STATE_GROUP_UNITED_STATES]: "United States (all states)",
+  [STATE_GROUP_CANADA]: "Canada (all provinces/territories)",
+  [STATE_OPTION_MISSING]: "Missing State/Province",
+  [STATE_OPTION_UNRECOGNIZED]: "Unrecognized State/Province",
+};
+const usStateAbbreviationsByName = Object.fromEntries(
+  Object.entries(usStateNamesByAbbreviation).map(([abbreviation, name]) => [
+    normalizeValue(name),
+    abbreviation,
+  ])
+);
+const canadaProvinceAbbreviationsByName = Object.fromEntries(
+  Object.entries(canadaProvinceNamesByAbbreviation).map(([abbreviation, name]) => [
+    normalizeValue(name),
+    abbreviation,
+  ])
+);
 
 let dataQualityCache = null;
 
@@ -235,7 +258,7 @@ export function getStateProvinceDisplayValue(value, country) {
     return value;
   }
 
-  const lookupKey = toLookupKey(value);
+  const lookupKey = getCanonicalStateProvinceValue(value) || toLookupKey(value);
   const countryGroup = getCountryGroup(country);
 
   if (countryGroup === "us") {
@@ -247,6 +270,79 @@ export function getStateProvinceDisplayValue(value, country) {
   }
 
   return usStateNamesByAbbreviation[lookupKey] || canadaProvinceNamesByAbbreviation[lookupKey] || value;
+}
+
+export function getCanonicalStateProvinceValue(value) {
+  if (isMissingValue(value)) {
+    return "";
+  }
+
+  const lookupKey = toLookupKey(value);
+  const normalizedName = normalizeValue(value);
+
+  return (
+    usStateNamesByAbbreviation[lookupKey] && lookupKey
+  ) || (
+    canadaProvinceNamesByAbbreviation[lookupKey] && lookupKey
+  ) || usStateAbbreviationsByName[normalizedName] || canadaProvinceAbbreviationsByName[normalizedName] || "";
+}
+
+function getStateProvinceCountryGroup(value) {
+  if (value === STATE_GROUP_UNITED_STATES) {
+    return "us";
+  }
+
+  if (value === STATE_GROUP_CANADA) {
+    return "canada";
+  }
+
+  if (value === STATE_OPTION_MISSING || value === STATE_OPTION_UNRECOGNIZED) {
+    return "";
+  }
+
+  const lookupKey = getCanonicalStateProvinceValue(value);
+
+  if (usStateNamesByAbbreviation[lookupKey]) {
+    return "us";
+  }
+
+  if (canadaProvinceNamesByAbbreviation[lookupKey]) {
+    return "canada";
+  }
+
+  return "";
+}
+
+export function getStateProvinceOptionLabel(value) {
+  if (stateProvinceGroupLabels[value]) {
+    return stateProvinceGroupLabels[value];
+  }
+
+  const canonicalValue = getCanonicalStateProvinceValue(value);
+
+  return getStateProvinceDisplayValue(canonicalValue || value);
+}
+
+export function getStateProvinceOptionGroup(value) {
+  if (value === STATE_OPTION_MISSING) {
+    return "Missing";
+  }
+
+  if (value === STATE_OPTION_UNRECOGNIZED) {
+    return "Needs cleanup";
+  }
+
+  const countryGroup = getStateProvinceCountryGroup(value);
+
+  if (countryGroup === "us") {
+    return "United States";
+  }
+
+  if (countryGroup === "canada") {
+    return "Canada";
+  }
+
+  return "Other";
 }
 
 function getDisplayValue(account, columnKey) {
@@ -289,16 +385,254 @@ export function getStateProvinceOptions(accounts, selectedCountry) {
   return getUniqueColumnOptions(optionSource, "address1_stateorprovince");
 }
 
+export function getStateProvinceFilterOptions(stateValues, selectedCountry, stateOptionRecords = []) {
+  const selectedCountryGroup = selectedCountry === "all" ? "all" : getCountryGroup(selectedCountry);
+  if (stateOptionRecords.length) {
+    const groupedOptions = {
+      us: new Set(),
+      canada: new Set(),
+    };
+    let hasMissing = false;
+    let hasUnrecognized = false;
+
+    stateOptionRecords.forEach((option) => {
+      if (option.status === "missing") {
+        hasMissing = true;
+        return;
+      }
+
+      if (option.status === "unrecognized") {
+        hasUnrecognized = true;
+        return;
+      }
+
+      if (selectedCountryGroup !== "all" && option.country_group !== selectedCountryGroup) {
+        return;
+      }
+
+      if (option.country_group === "us") {
+        groupedOptions.us.add(option.value);
+      } else if (option.country_group === "canada") {
+        groupedOptions.canada.add(option.value);
+      }
+    });
+
+    const sortByLabel = (firstValue, secondValue) =>
+      getStateProvinceOptionLabel(firstValue).localeCompare(getStateProvinceOptionLabel(secondValue));
+    const options = [];
+    const usOptions = Array.from(groupedOptions.us).sort(sortByLabel);
+    const canadaOptions = Array.from(groupedOptions.canada).sort(sortByLabel);
+
+    if (usOptions.length) {
+      options.push(STATE_GROUP_UNITED_STATES, ...usOptions);
+    }
+
+    if (canadaOptions.length) {
+      options.push(STATE_GROUP_CANADA, ...canadaOptions);
+    }
+
+    if (hasMissing) {
+      options.push(STATE_OPTION_MISSING);
+    }
+
+    if (hasUnrecognized) {
+      options.push(STATE_OPTION_UNRECOGNIZED);
+    }
+
+    return options;
+  }
+
+  const normalizedOptions = Array.from(
+    new Set(
+      (stateValues || [])
+        .map((value) => getCanonicalStateProvinceValue(value) || String(value || "").trim())
+        .filter((value) => !isMissingValue(value))
+    )
+  );
+  const groupedOptions = {
+    us: [],
+    canada: [],
+    other: [],
+  };
+
+  normalizedOptions.forEach((value) => {
+    const stateCountryGroup = getStateProvinceCountryGroup(value);
+
+    if (selectedCountryGroup !== "all" && stateCountryGroup && stateCountryGroup !== selectedCountryGroup) {
+      return;
+    }
+
+    if (stateCountryGroup === "us") {
+      groupedOptions.us.push(value);
+    } else if (stateCountryGroup === "canada") {
+      groupedOptions.canada.push(value);
+    } else if (selectedCountryGroup === "all") {
+      groupedOptions.other.push(value);
+    }
+  });
+
+  const sortByLabel = (firstValue, secondValue) =>
+    getStateProvinceOptionLabel(firstValue).localeCompare(getStateProvinceOptionLabel(secondValue));
+  const options = [];
+
+  if (groupedOptions.us.length) {
+    options.push(STATE_GROUP_UNITED_STATES, ...groupedOptions.us.sort(sortByLabel));
+  }
+
+  if (groupedOptions.canada.length) {
+    options.push(STATE_GROUP_CANADA, ...groupedOptions.canada.sort(sortByLabel));
+  }
+
+  if (groupedOptions.other.length) {
+    options.push(STATE_OPTION_UNRECOGNIZED);
+  }
+
+  if ((stateValues || []).some((value) => isMissingValue(value))) {
+    options.push(STATE_OPTION_MISSING);
+  }
+
+  return options;
+}
+
+export function expandSelectedStateProvinceValues(selectedStates, stateOptions) {
+  const availableStates = (stateOptions || []).filter(
+    (option) => option !== STATE_GROUP_UNITED_STATES && option !== STATE_GROUP_CANADA
+  );
+  const expandedStates = new Set();
+
+  selectedStates.forEach((selectedState) => {
+    if (selectedState === STATE_GROUP_UNITED_STATES || selectedState === STATE_GROUP_CANADA) {
+      const selectedGroup = getStateProvinceCountryGroup(selectedState);
+      availableStates
+        .filter((state) => getStateProvinceCountryGroup(state) === selectedGroup)
+        .forEach((state) => expandedStates.add(state));
+      return;
+    }
+
+    expandedStates.add(getCanonicalStateProvinceValue(selectedState) || selectedState);
+  });
+
+  return Array.from(expandedStates);
+}
+
+export function getStateProvinceRequestValues(selectedStates, stateValues, stateOptionRecords = []) {
+  if (stateOptionRecords.length) {
+    const requestValues = new Set();
+    const addRawValues = (option) => {
+      (option.raw_values || []).forEach((rawValue) => {
+        if (String(rawValue || "").trim()) {
+          requestValues.add(String(rawValue).trim());
+        }
+      });
+    };
+
+    selectedStates.forEach((selectedState) => {
+      if (selectedState === STATE_OPTION_MISSING) {
+        requestValues.add(BACKEND_MISSING_STATE_PROVINCE_FILTER_VALUE);
+        return;
+      }
+
+      if (selectedState === STATE_OPTION_UNRECOGNIZED) {
+        stateOptionRecords
+          .filter((option) => option.status === "unrecognized")
+          .forEach(addRawValues);
+        return;
+      }
+
+      if (selectedState === STATE_GROUP_UNITED_STATES || selectedState === STATE_GROUP_CANADA) {
+        const selectedGroup = getStateProvinceCountryGroup(selectedState);
+        stateOptionRecords
+          .filter((option) => option.status === "recognized" && option.country_group === selectedGroup)
+          .forEach(addRawValues);
+        return;
+      }
+
+      stateOptionRecords
+        .filter((option) => option.status === "recognized" && option.value === selectedState)
+        .forEach(addRawValues);
+      requestValues.add(selectedState);
+    });
+
+    return Array.from(requestValues).filter(Boolean);
+  }
+
+  const stateOptions = getStateProvinceFilterOptions(stateValues, "all");
+  const expandedSelectedStates = expandSelectedStateProvinceValues(selectedStates, stateOptions);
+  const requestValues = new Set();
+
+  (stateValues || []).forEach((stateValue) => {
+    const canonicalValue = getCanonicalStateProvinceValue(stateValue) || String(stateValue || "").trim();
+
+    if (expandedSelectedStates.includes(canonicalValue)) {
+      requestValues.add(String(stateValue || "").trim());
+    }
+  });
+
+  expandedSelectedStates.forEach((selectedState) => {
+    requestValues.add(selectedState);
+  });
+
+  return Array.from(requestValues).filter(Boolean);
+}
+
+export function getStateProvinceSelectionSummary(selectedStates, stateOptions) {
+  if (!selectedStates.length) {
+    return "";
+  }
+
+  const getGroupCounts = (groupValue) => {
+    const groupKey = getStateProvinceCountryGroup(groupValue);
+    const availableCount = stateOptions.filter((option) =>
+      option !== STATE_GROUP_UNITED_STATES &&
+      option !== STATE_GROUP_CANADA &&
+      getStateProvinceCountryGroup(option) === groupKey
+    ).length;
+    const selectedCount = selectedStates.includes(groupValue)
+      ? availableCount
+      : selectedStates.filter((option) => getStateProvinceCountryGroup(option) === groupKey).length;
+
+    return { availableCount, selectedCount };
+  };
+
+  const summaries = [];
+  const usCounts = getGroupCounts(STATE_GROUP_UNITED_STATES);
+  const canadaCounts = getGroupCounts(STATE_GROUP_CANADA);
+
+  if (usCounts.selectedCount > 0) {
+    summaries.push(
+      usCounts.selectedCount === usCounts.availableCount
+        ? "United States: all locations"
+        : `United States: ${usCounts.selectedCount} of ${usCounts.availableCount} locations`
+    );
+  }
+
+  if (canadaCounts.selectedCount > 0) {
+    summaries.push(
+      canadaCounts.selectedCount === canadaCounts.availableCount
+        ? "Canada: all locations"
+        : `Canada: ${canadaCounts.selectedCount} of ${canadaCounts.availableCount} locations`
+    );
+  }
+
+  return summaries.join("; ");
+}
+
 export function getCityOptions(accounts, selectedCountry, selectedStates) {
   if (!selectedStates.length) {
     return [];
   }
 
+  const stateOptions = getStateProvinceFilterOptions(
+    accounts.map((account) => account.address1_stateorprovince),
+    selectedCountry
+  );
+  const expandedSelectedStates = expandSelectedStateProvinceValues(selectedStates, stateOptions);
+
   const optionSource = accounts.filter((account) => {
     const matchesCountry = countryMatches(account.address1_country, selectedCountry);
-    const accountState = String(getDisplayValue(account, "address1_stateorprovince") || "").trim();
+    const accountState = getCanonicalStateProvinceValue(account.address1_stateorprovince);
 
-    return matchesCountry && selectedStates.includes(accountState);
+    return matchesCountry && expandedSelectedStates.includes(accountState);
   });
 
   return getUniqueColumnOptions(optionSource, "address1_city");
@@ -538,6 +872,7 @@ export default function DataQualityTable() {
     missing_counts: [],
     sectors: [],
     states: [],
+    state_options: [],
   });
   const [filteredAccountCount, setFilteredAccountCount] = useState(0);
   const [totalAccountCount, setTotalAccountCount] = useState(0);
@@ -568,6 +903,15 @@ export default function DataQualityTable() {
   const sectors = facets.sectors;
   const countries = facets.countries;
   const states = facets.states;
+  const stateOptionRecords = facets.state_options || [];
+  const stateOptions = useMemo(
+    () => getStateProvinceFilterOptions(states, selectedCountry, stateOptionRecords),
+    [selectedCountry, stateOptionRecords, states]
+  );
+  const stateSelectionSummary = useMemo(
+    () => getStateProvinceSelectionSummary(selectedStates, stateOptions),
+    [selectedStates, stateOptions]
+  );
   const cities = facets.cities;
   const filteredAccounts = accounts;
   const missingCounts = facets.missing_counts;
@@ -712,6 +1056,8 @@ export default function DataQualityTable() {
   }
 
   function buildAccountRequestParams({ nextPage = page, nextRowsPerPage = rowsPerPage, refresh = false } = {}) {
+    const requestStates = getStateProvinceRequestValues(selectedStates, states, stateOptionRecords);
+
     return {
       cities: selectedCities.join("|"),
       column_filters: JSON.stringify(columnFilters),
@@ -726,7 +1072,7 @@ export default function DataQualityTable() {
       sector: selectedSector,
       sort_direction: sortConfig.direction,
       sort_key: sortConfig.key,
-      states: selectedStates.join("|"),
+      states: requestStates.join("|"),
     };
   }
 
@@ -749,12 +1095,13 @@ export default function DataQualityTable() {
     dataQualityCache = null;
     setAccounts(preparedRows);
     setFacets(response.data?.facets || {
-      cities: [],
-      countries: [],
-      missing_counts: [],
-      sectors: [],
-      states: [],
-    });
+          cities: [],
+          countries: [],
+          missing_counts: [],
+          sectors: [],
+          states: [],
+          state_options: [],
+        });
     setFilteredAccountCount(response.data?.filtered_count || 0);
     setTotalAccountCount(response.data?.total_count || 0);
     setSyncStatus(response.data?.sync || null);
@@ -831,12 +1178,12 @@ export default function DataQualityTable() {
   }, [columnFilters, debouncedSearchQuery, selectedCities, selectedCountry, selectedMissingField, selectedSector, selectedStates, showNeedsAttentionOnly, sortConfig]);
 
   useEffect(() => {
-    const validSelectedStates = selectedStates.filter((selectedState) => states.includes(selectedState));
+    const validSelectedStates = selectedStates.filter((selectedState) => stateOptions.includes(selectedState));
 
     if (validSelectedStates.length !== selectedStates.length) {
       setSelectedStates(validSelectedStates);
     }
-  }, [selectedStates, states]);
+  }, [selectedStates, stateOptions]);
 
   useEffect(() => {
     const validSelectedCities = selectedCities.filter((selectedCity) => cities.includes(selectedCity));
@@ -906,8 +1253,9 @@ export default function DataQualityTable() {
             countries: [],
             missing_counts: [],
             sectors: [],
-            states: [],
-          });
+                states: [],
+                state_options: [],
+              });
           setFilteredAccountCount(response.data?.filtered_count || 0);
           setTotalAccountCount(response.data?.total_count || 0);
           setSyncStatus(response.data?.sync || null);
@@ -983,7 +1331,10 @@ export default function DataQualityTable() {
           selectedSector={selectedSector}
           selectedStates={selectedStates}
           showNeedsAttentionOnly={showNeedsAttentionOnly}
-          states={states}
+          stateOptionGroupBy={getStateProvinceOptionGroup}
+          stateOptionHelperText={stateSelectionSummary}
+          stateOptionLabel={getStateProvinceOptionLabel}
+          states={stateOptions}
         />
         <Box
           sx={{

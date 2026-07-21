@@ -6,11 +6,15 @@ class SoftwareSubscription:
     id: int
     name: str
     description: str
+    category: str
+    department: str
     point_of_contact: str
     assigned_users: str
     cost_2024_2025: float | None
     cost_2025_2026: float | None
     cost_2026_2027: float | None
+    billing_frequency: str
+    renewal_date: str
     renewal_time_frame: str
     vendor_rep: str
     subscribed_since: str

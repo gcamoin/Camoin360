@@ -57,11 +57,15 @@ def initialize_database():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
+                category TEXT NOT NULL DEFAULT '',
+                department TEXT NOT NULL DEFAULT '',
                 point_of_contact TEXT NOT NULL,
                 assigned_users TEXT NOT NULL DEFAULT '',
                 cost_2024_2025 REAL,
                 cost_2025_2026 REAL,
                 cost_2026_2027 REAL,
+                billing_frequency TEXT NOT NULL DEFAULT '',
+                renewal_date TEXT NOT NULL DEFAULT '',
                 renewal_time_frame TEXT NOT NULL,
                 vendor_rep TEXT NOT NULL DEFAULT '',
                 subscribed_since TEXT NOT NULL DEFAULT '',
@@ -71,6 +75,42 @@ def initialize_database():
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
+        )
+        software_subscription_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(software_subscriptions)").fetchall()
+        }
+        if "category" not in software_subscription_columns:
+            connection.execute(
+                "ALTER TABLE software_subscriptions ADD COLUMN category TEXT NOT NULL DEFAULT ''"
+            )
+        if "department" not in software_subscription_columns:
+            connection.execute(
+                "ALTER TABLE software_subscriptions ADD COLUMN department TEXT NOT NULL DEFAULT ''"
+            )
+        if "billing_frequency" not in software_subscription_columns:
+            connection.execute(
+                "ALTER TABLE software_subscriptions ADD COLUMN billing_frequency TEXT NOT NULL DEFAULT ''"
+            )
+        if "renewal_date" not in software_subscription_columns:
+            connection.execute(
+                "ALTER TABLE software_subscriptions ADD COLUMN renewal_date TEXT NOT NULL DEFAULT ''"
+            )
+        connection.executemany(
+            """
+            UPDATE software_subscriptions
+            SET category = ?,
+                department = CASE WHEN department = '' THEN ? ELSE department END,
+                billing_frequency = CASE WHEN billing_frequency = '' THEN ? ELSE billing_frequency END,
+                renewal_date = CASE WHEN renewal_date = '' THEN ? ELSE renewal_date END
+            WHERE name = ?
+            """,
+            [
+                ("GIS / Mapping", "Operations", "Annual", "2026-07-01", "ArcGIS Online"),
+                ("Labor Market Data", "Research", "Annual", "2026-09-01", "Lightcast Analyst"),
+                ("Sales Intelligence", "Marketing", "Annual", "2027-03-01", "ZoomInfo"),
+                ("Design Tools", "Marketing", "Annual", "2026-12-01", "Canva Teams"),
+            ],
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_software_subscriptions_status ON software_subscriptions (status)"
@@ -185,21 +225,26 @@ def initialize_database():
             connection.executemany(
                 """
                 INSERT INTO software_subscriptions (
-                    name, description, point_of_contact, assigned_users,
+                    name, description, category, department, point_of_contact, assigned_users,
                     cost_2024_2025, cost_2025_2026, cost_2026_2027,
-                    renewal_time_frame, vendor_rep, subscribed_since, status, notes
+                    billing_frequency, renewal_date, renewal_time_frame,
+                    vendor_rep, subscribed_since, status, notes
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
                         "ArcGIS Online",
                         "Cloud mapping and spatial analysis platform used for project maps and data visualization.",
+                        "GIS / Mapping",
+                        "Operations",
                         "Operations",
                         "Planning and analyst team",
                         2800,
                         3100,
                         3300,
+                        "Annual",
+                        "2026-07-01",
                         "Annual - July",
                         "Esri Customer Success",
                         "2018",
@@ -209,11 +254,15 @@ def initialize_database():
                     (
                         "Lightcast Analyst",
                         "Labor market and economic data subscription for workforce and industry analysis.",
+                        "Labor Market Data",
+                        "Research",
                         "Research",
                         "Research team",
                         14500,
                         15250,
                         None,
+                        "Annual",
+                        "2026-09-01",
                         "Annual - September",
                         "Account Manager TBD",
                         "2020",
@@ -223,11 +272,15 @@ def initialize_database():
                     (
                         "ZoomInfo",
                         "Business contact and company intelligence used for prospecting and market research.",
+                        "Sales Intelligence",
+                        "Marketing",
                         "Marketing",
                         "Marketing and business development",
                         12000,
                         12600,
                         13200,
+                        "Annual",
+                        "2027-03-01",
                         "Annual - March",
                         "",
                         "2022",
@@ -237,11 +290,15 @@ def initialize_database():
                     (
                         "Canva Teams",
                         "Design collaboration workspace for branded reports, presentations, and marketing assets.",
+                        "Design Tools",
+                        "Marketing",
                         "Marketing",
                         "Marketing and project managers",
                         1500,
                         1800,
                         2100,
+                        "Annual",
+                        "2026-12-01",
                         "Annual - December",
                         "Canva Support",
                         "2021",

@@ -91,11 +91,15 @@ class ClientManagementRoutesTest(unittest.TestCase):
             json={
                 "name": "Example Data Subscription",
                 "description": "Sample data subscription",
+                "category": "Market Data",
+                "department": "Research",
                 "point_of_contact": "Operations",
                 "assigned_users": "Analysts",
                 "cost_2024_2025": 1000,
                 "cost_2025_2026": 1250,
                 "cost_2026_2027": None,
+                "billing_frequency": "Annual",
+                "renewal_date": "2026-06-01",
                 "renewal_time_frame": "Annual - June",
                 "vendor_rep": "Vendor Rep",
                 "subscribed_since": "2025",
@@ -114,6 +118,8 @@ class ClientManagementRoutesTest(unittest.TestCase):
         )
         self.assertEqual(update_subscription_response.status_code, 200)
         self.assertEqual(update_subscription_response.json()["status"], "Pending Renewal")
+        self.assertEqual(update_subscription_response.json()["category"], "Market Data")
+        self.assertEqual(update_subscription_response.json()["department"], "Research")
 
         invalid_subscription_response = self.client.post(
             "/software-subscriptions",

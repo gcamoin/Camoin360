@@ -3,9 +3,10 @@ from ..models.software_subscription import SoftwareSubscription
 
 
 SOFTWARE_SUBSCRIPTION_COLUMNS = """
-    id, name, description, point_of_contact, assigned_users,
+    id, name, description, category, department, point_of_contact, assigned_users,
     cost_2024_2025, cost_2025_2026, cost_2026_2027,
-    renewal_time_frame, vendor_rep, subscribed_since, status, notes,
+    billing_frequency, renewal_date, renewal_time_frame,
+    vendor_rep, subscribed_since, status, notes,
     created_at, updated_at
 """
 
@@ -49,20 +50,25 @@ def create_software_subscription(subscription_details: dict):
         cursor = connection.execute(
             """
             INSERT INTO software_subscriptions (
-                name, description, point_of_contact, assigned_users,
+                name, description, category, department, point_of_contact, assigned_users,
                 cost_2024_2025, cost_2025_2026, cost_2026_2027,
-                renewal_time_frame, vendor_rep, subscribed_since, status, notes
+                billing_frequency, renewal_date, renewal_time_frame,
+                vendor_rep, subscribed_since, status, notes
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 subscription_details["name"],
                 subscription_details.get("description") or "",
+                subscription_details.get("category") or "",
+                subscription_details.get("department") or "",
                 subscription_details["point_of_contact"],
                 subscription_details.get("assigned_users") or "",
                 subscription_details.get("cost_2024_2025"),
                 subscription_details.get("cost_2025_2026"),
                 subscription_details.get("cost_2026_2027"),
+                subscription_details.get("billing_frequency") or "",
+                subscription_details.get("renewal_date") or "",
                 subscription_details["renewal_time_frame"],
                 subscription_details.get("vendor_rep") or "",
                 subscription_details.get("subscribed_since") or "",
@@ -87,11 +93,15 @@ def update_software_subscription(subscription_id: int, subscription_details: dic
             UPDATE software_subscriptions
             SET name = ?,
                 description = ?,
+                category = ?,
+                department = ?,
                 point_of_contact = ?,
                 assigned_users = ?,
                 cost_2024_2025 = ?,
                 cost_2025_2026 = ?,
                 cost_2026_2027 = ?,
+                billing_frequency = ?,
+                renewal_date = ?,
                 renewal_time_frame = ?,
                 vendor_rep = ?,
                 subscribed_since = ?,
@@ -105,6 +115,12 @@ def update_software_subscription(subscription_id: int, subscription_details: dic
                 subscription_details["description"]
                 if "description" in subscription_details
                 else existing.description,
+                subscription_details.get("category") or ""
+                if "category" in subscription_details
+                else existing.category,
+                subscription_details.get("department") or ""
+                if "department" in subscription_details
+                else existing.department,
                 subscription_details.get("point_of_contact") or existing.point_of_contact,
                 subscription_details["assigned_users"]
                 if "assigned_users" in subscription_details
@@ -118,6 +134,12 @@ def update_software_subscription(subscription_id: int, subscription_details: dic
                 subscription_details["cost_2026_2027"]
                 if "cost_2026_2027" in subscription_details
                 else existing.cost_2026_2027,
+                subscription_details.get("billing_frequency") or ""
+                if "billing_frequency" in subscription_details
+                else existing.billing_frequency,
+                subscription_details.get("renewal_date") or ""
+                if "renewal_date" in subscription_details
+                else existing.renewal_date,
                 subscription_details.get("renewal_time_frame") or existing.renewal_time_frame,
                 subscription_details["vendor_rep"]
                 if "vendor_rep" in subscription_details

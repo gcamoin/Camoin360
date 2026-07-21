@@ -7,11 +7,15 @@ STATUS_VALUES = {"Active", "Pending Renewal", "Needs Review", "Cancelled"}
 class SoftwareSubscriptionCreate(BaseModel):
     name: str = Field(min_length=1, max_length=180)
     description: str = Field(default="", max_length=1000)
+    category: str = Field(default="", max_length=120)
+    department: str = Field(default="", max_length=120)
     point_of_contact: str = Field(min_length=1, max_length=120)
     assigned_users: str = Field(default="", max_length=500)
     cost_2024_2025: float | None = Field(default=None, ge=0)
     cost_2025_2026: float | None = Field(default=None, ge=0)
     cost_2026_2027: float | None = Field(default=None, ge=0)
+    billing_frequency: str = Field(default="", max_length=80)
+    renewal_date: str = Field(default="", max_length=40)
     renewal_time_frame: str = Field(min_length=1, max_length=120)
     vendor_rep: str = Field(default="", max_length=180)
     subscribed_since: str = Field(default="", max_length=80)
@@ -21,8 +25,12 @@ class SoftwareSubscriptionCreate(BaseModel):
     @field_validator(
         "name",
         "description",
+        "category",
+        "department",
         "point_of_contact",
         "assigned_users",
+        "billing_frequency",
+        "renewal_date",
         "renewal_time_frame",
         "vendor_rep",
         "subscribed_since",
@@ -45,11 +53,15 @@ class SoftwareSubscriptionCreate(BaseModel):
 class SoftwareSubscriptionUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=180)
     description: str | None = Field(default=None, max_length=1000)
+    category: str | None = Field(default=None, max_length=120)
+    department: str | None = Field(default=None, max_length=120)
     point_of_contact: str | None = Field(default=None, min_length=1, max_length=120)
     assigned_users: str | None = Field(default=None, max_length=500)
     cost_2024_2025: float | None = Field(default=None, ge=0)
     cost_2025_2026: float | None = Field(default=None, ge=0)
     cost_2026_2027: float | None = Field(default=None, ge=0)
+    billing_frequency: str | None = Field(default=None, max_length=80)
+    renewal_date: str | None = Field(default=None, max_length=40)
     renewal_time_frame: str | None = Field(default=None, min_length=1, max_length=120)
     vendor_rep: str | None = Field(default=None, max_length=180)
     subscribed_since: str | None = Field(default=None, max_length=80)
@@ -59,8 +71,12 @@ class SoftwareSubscriptionUpdate(BaseModel):
     @field_validator(
         "name",
         "description",
+        "category",
+        "department",
         "point_of_contact",
         "assigned_users",
+        "billing_frequency",
+        "renewal_date",
         "renewal_time_frame",
         "vendor_rep",
         "subscribed_since",
@@ -86,11 +102,15 @@ class SoftwareSubscriptionResponse(BaseModel):
     id: int
     name: str
     description: str
+    category: str
+    department: str
     point_of_contact: str
     assigned_users: str
     cost_2024_2025: float | None = None
     cost_2025_2026: float | None = None
     cost_2026_2027: float | None = None
+    billing_frequency: str
+    renewal_date: str
     renewal_time_frame: str
     vendor_rep: str
     subscribed_since: str

@@ -32,6 +32,9 @@ export default function DataQualityFilters({
   selectedMissingField,
   selectedSector,
   selectedStates,
+  stateOptionGroupBy,
+  stateOptionHelperText,
+  stateOptionLabel,
   showNeedsAttentionOnly,
   states,
 }) {
@@ -60,6 +63,9 @@ export default function DataQualityFilters({
       value: selectedStates,
       onChange: onStateChange,
       multiple: true,
+      getOptionLabel: stateOptionLabel,
+      groupBy: stateOptionGroupBy,
+      helperText: stateOptionHelperText,
     },
     {
       label: "City",
@@ -97,12 +103,16 @@ export default function DataQualityFilters({
         <Autocomplete
           key={filter.label}
           disabled={filter.disabled}
+          getOptionLabel={filter.getOptionLabel}
+          groupBy={filter.groupBy}
+          isOptionEqualToValue={(option, value) => option === value}
           multiple={filter.multiple}
           onChange={(_event, nextValue) => filter.onChange(filter.multiple ? nextValue : nextValue || "all")}
           options={filter.options}
           renderInput={(params) => (
             <TextField
               {...params}
+              helperText={filter.helperText}
               label={filter.label}
               placeholder={filter.disabled ? "Select state first" : ""}
               size="small"
