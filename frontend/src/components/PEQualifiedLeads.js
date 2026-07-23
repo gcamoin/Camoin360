@@ -26,7 +26,14 @@ import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } 
 
 const API_URL = `${API_BASE_URL}/pe-qualified-leads`;
 const CURRENT_YEAR = new Date().getFullYear();
-const YEAR_OPTIONS = Array.from({ length: 6 }, (_, index) => CURRENT_YEAR - index);
+const ALL_TIME_YEAR_VALUE = "all_time";
+const YEAR_OPTIONS = [
+  { label: "All Time", value: ALL_TIME_YEAR_VALUE },
+  ...Array.from({ length: 6 }, (_, index) => {
+    const year = CURRENT_YEAR - index;
+    return { label: String(year), value: year };
+  }),
+];
 const MONTH_OPTIONS = [
   { label: "All Months", value: "" },
   { label: "January", value: 1 },
@@ -54,9 +61,10 @@ const tooltipStyle = {
 
 export default function PEQualifiedLeads() {
   const isMountedRef = useRef(true);
-  const [selectedYear, setSelectedYear] = useState(CURRENT_YEAR);
+  const [selectedYear, setSelectedYear] = useState(ALL_TIME_YEAR_VALUE);
   const [selectedMonth, setSelectedMonth] = useState("");
   const [leads, setLeads] = useState([]);
+  const [rollups, setRollups] = useState([]);
   const [statusLabel, setStatusLabel] = useState("Pending-Sent to Client");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -68,8 +76,11 @@ export default function PEQualifiedLeads() {
     setError("");
 
     try {
-      const params = { year: selectedYear };
-      if (selectedMonth) {
+      const params = {};
+      if (selectedYear !== ALL_TIME_YEAR_VALUE) {
+        params.year = selectedYear;
+      }
+      if (selectedYear !== ALL_TIME_YEAR_VALUE && selectedMonth) {
         params.month = selectedMonth;
       }
 
@@ -81,6 +92,7 @@ export default function PEQualifiedLeads() {
       if (!isMountedRef.current) return;
 
       setLeads(response.data?.data || []);
+      setRollups(response.data?.rollups || []);
       setStatusLabel(response.data?.status || "Pending-Sent to Client");
     } catch (fetchError) {
       if (handleUnauthorized(fetchError)) {
@@ -91,6 +103,7 @@ export default function PEQualifiedLeads() {
 
       setError(getApiErrorMessage(fetchError, "Unable to load Prospect Engage qualified leads."));
       setLeads([]);
+      setRollups([]);
     } finally {
       if (!isMountedRef.current) return;
 
@@ -107,11 +120,25 @@ export default function PEQualifiedLeads() {
     };
   }, [fetchLeads]);
 
+  useEffect(() => {
+    if (selectedYear === ALL_TIME_YEAR_VALUE && selectedMonth) {
+      setSelectedMonth("");
+    }
+  }, [selectedMonth, selectedYear]);
+
   const periodLabel = useMemo(() => {
+    if (selectedYear === ALL_TIME_YEAR_VALUE) {
+      return "all time";
+    }
+
     const month = MONTH_OPTIONS.find((option) => option.value === selectedMonth);
     return selectedMonth ? `${month?.label || ""} ${selectedYear}` : selectedYear;
   }, [selectedMonth, selectedYear]);
   const leadsByClient = useMemo(() => {
+    if (rollups.length) {
+      return rollups;
+    }
+
     const counts = new Map();
 
     for (const lead of leads) {
@@ -122,7 +149,7 @@ export default function PEQualifiedLeads() {
     return Array.from(counts.entries())
       .map(([client_name, qualified_leads]) => ({ client_name, qualified_leads }))
       .sort((a, b) => b.qualified_leads - a.qualified_leads || a.client_name.localeCompare(b.client_name));
-  }, [leads]);
+  }, [leads, rollups]);
   const chartHeight = leadsByClient.length > 18 ? 420 : 360;
 
   return (
@@ -145,12 +172,12 @@ export default function PEQualifiedLeads() {
             <Select
               label="Year"
               labelId="pe-leads-year-label"
-              onChange={(event) => setSelectedYear(Number(event.target.value))}
+              onChange={(event) => setSelectedYear(event.target.value)}
               value={selectedYear}
             >
               {YEAR_OPTIONS.map((year) => (
-                <MenuItem key={year} value={year}>
-                  {year}
+                <MenuItem key={year.value} value={year.value}>
+                  {year.label}
                 </MenuItem>
               ))}
             </Select>
@@ -160,6 +187,7 @@ export default function PEQualifiedLeads() {
             <Select
               label="Month"
               labelId="pe-leads-month-label"
+              disabled={selectedYear === ALL_TIME_YEAR_VALUE}
               onChange={(event) => setSelectedMonth(event.target.value)}
               value={selectedMonth}
             >

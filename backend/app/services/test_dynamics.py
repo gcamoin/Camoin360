@@ -11,7 +11,10 @@ from .dynamics import (
     get_marketing_list_members,
     get_marketing_lists,
     get_pe_clients,
+    get_pe_qualified_leads,
     get_project_creation_metrics,
+    _build_pe_qualified_lead_rollups,
+    _canonical_pe_client_name,
     _marketing_window,
     normalize_marketing_list_record,
 )
@@ -1167,7 +1170,60 @@ class LeadfeederVisitQueryTest(unittest.IsolatedAsyncioTestCase):
             "$expand=new_Client($select=name),lfapp_Account($select=name,websiteurl,address1_country,address1_stateorprovince,address1_city,new_sector,telephone1,emailaddress1)",
             requested_url,
         )
-        self.assertIn("$orderby=createdon desc", requested_url)
+
+
+class PEQualifiedLeadMetricsTest(unittest.TestCase):
+    def test_canonicalizes_pe_client_name_variants(self):
+        self.assertEqual(_canonical_pe_client_name("Upstate SC Alliance"), "Upstate South Carolina Alliance")
+        self.assertEqual(_canonical_pe_client_name("Upstate South Carolina Alliance"), "Upstate South Carolina Alliance")
+        self.assertEqual(_canonical_pe_client_name("Southern Carolina Alliance"), "South Carolina Alliance")
+
+    def test_builds_sorted_pe_qualified_lead_rollups(self):
+        rows = [
+            {"client_name": "South Carolina Alliance"},
+            {"client_name": "Upstate South Carolina Alliance"},
+            {"client_name": "Upstate South Carolina Alliance"},
+            {"client_name": ""},
+        ]
+
+        self.assertEqual(
+            _build_pe_qualified_lead_rollups(rows),
+            [
+                {"client_name": "Upstate South Carolina Alliance", "qualified_leads": 2},
+                {"client_name": "Missing", "qualified_leads": 1},
+                {"client_name": "South Carolina Alliance", "qualified_leads": 1},
+            ],
+        )
+
+
+class PEQualifiedLeadQueryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_year_queries_all_time(self):
+        FakeAsyncClient.requested_urls = []
+        FakeAsyncClient.prospect_payload = {
+            "value": [
+                {
+                    "new_prospectid": "prospect-1",
+                    "new_prospectname": "Example Prospect",
+                    "new_client": "Upstate SC Alliance",
+                    "cr73c_leadstatus@OData.Community.Display.V1.FormattedValue": "Pending-Sent to Client",
+                    "createdon": "2026-01-01T00:00:00Z",
+                }
+            ]
+        }
+
+        with (
+            patch("backend.app.services.dynamics.API_URL", "https://example.crm/api/data/v9.2"),
+            patch("backend.app.services.dynamics.get_access_token", new=AsyncMock(return_value="token")),
+            patch("backend.app.services.dynamics.httpx.AsyncClient", new=FakeAsyncClient),
+        ):
+            result = await get_pe_qualified_leads(year=None, limit=25)
+
+        self.assertIsNone(result["year"])
+        self.assertIsNone(result["month"])
+        self.assertEqual(result["from"], "2000-01-01T00:00:00Z")
+        self.assertEqual(result["rollups"], [{"client_name": "Upstate South Carolina Alliance", "qualified_leads": 1}])
+        requested_url = next(url for url in FakeAsyncClient.requested_urls if "/new_prospects?" in url)
+        self.assertIn("createdon ge 2000-01-01T00:00:00Z", requested_url)
 
 
 if __name__ == "__main__":

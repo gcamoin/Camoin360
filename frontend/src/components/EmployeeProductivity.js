@@ -71,6 +71,12 @@ const formatPercent = (value) =>
     minimumFractionDigits: 1,
   })}%`;
 
+const formatHours = (value) =>
+  Number(value || 0).toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 0,
+  });
+
 const getUtilizationRate = (employee) => {
   if (employee.utilization_rate !== undefined && employee.utilization_rate !== null) {
     return Number(employee.utilization_rate || 0);
@@ -95,8 +101,11 @@ export default function EmployeeProductivity() {
   const latestRequestIdRef = useRef(0);
   const [metrics, setMetrics] = useState({
     employees: [],
+    excluded_scope: "prospect_engage",
     from: "",
+    scope: "consulting",
     to: "",
+    utilization_employees: [],
     weeks: 12,
     updated_at: "",
   });
@@ -148,8 +157,11 @@ export default function EmployeeProductivity() {
 
       setMetrics({
         employees: response.data?.employees || [],
+        excluded_scope: response.data?.excluded_scope || "prospect_engage",
         from: response.data?.from || "",
+        scope: response.data?.scope || "consulting",
         to: response.data?.to || "",
+        utilization_employees: response.data?.utilization_employees || response.data?.employees || [],
         weeks: response.data?.weeks || 12,
         updated_at: response.data?.updated_at || "",
       });
@@ -245,14 +257,30 @@ export default function EmployeeProductivity() {
   );
   const utilizationRows = useMemo(
     () =>
-      [...filteredEmployees]
+      [...metrics.utilization_employees]
         .map((employee) => ({
           ...employee,
           utilization_rate: getUtilizationRate(employee),
         }))
         .sort((a, b) => b.utilization_rate - a.utilization_rate),
-    [filteredEmployees]
+    [metrics.utilization_employees]
   );
+  const utilizationSummary = useMemo(() => {
+    const totals = metrics.utilization_employees.reduce(
+      (summary, employee) => {
+        summary.billableHours += Number(employee.billable_hours || 0);
+        summary.nonBillableHours += Number(employee.non_billable_hours || 0);
+        summary.totalHours += Number(employee.total_hours || 0);
+        return summary;
+      },
+      { billableHours: 0, nonBillableHours: 0, totalHours: 0 }
+    );
+
+    return {
+      ...totals,
+      utilizationRate: totals.totalHours ? (totals.billableHours / totals.totalHours) * 100 : 0,
+    };
+  }, [metrics.utilization_employees]);
   const chartHeight = filteredEmployees.length > 18 ? 380 : 420;
   const utilizationChartHeight = utilizationRows.length > 18 ? 380 : 420;
 
@@ -468,6 +496,39 @@ export default function EmployeeProductivity() {
         )}
       </Paper>
 
+      <Box
+        sx={{
+          display: "grid",
+          gap: 1.5,
+          gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", lg: "repeat(4, minmax(0, 1fr))" },
+        }}
+      >
+        {[
+          ["Total Hours", `${formatHours(utilizationSummary.totalHours)}h`],
+          ["Billable Hours", `${formatHours(utilizationSummary.billableHours)}h`],
+          ["Non-Billed Hours", `${formatHours(utilizationSummary.nonBillableHours)}h`],
+          ["Utilization Rate", formatPercent(utilizationSummary.utilizationRate)],
+        ].map(([label, value]) => (
+          <Box
+            key={label}
+            sx={{
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: 2,
+              p: 1.5,
+              backgroundColor: "#f8fafc",
+            }}
+          >
+            <Typography color="text.secondary" variant="overline">
+              {label}
+            </Typography>
+            <Typography color="text.primary" sx={{ fontSize: "1.45rem", fontWeight: 800, lineHeight: 1.2 }}>
+              {value}
+            </Typography>
+          </Box>
+        ))}
+      </Box>
+
       <Paper
         elevation={0}
         sx={{
@@ -483,7 +544,7 @@ export default function EmployeeProductivity() {
             Utilization Rate by Employee
           </Typography>
           <Typography color="text.secondary" variant="body2">
-            Billable hours divided by total logged Harvest hours for {dateRangeLabel}.
+            Consulting billable hours divided by consulting logged Harvest hours for {dateRangeLabel}.
           </Typography>
         </Stack>
 

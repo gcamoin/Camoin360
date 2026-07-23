@@ -51,6 +51,8 @@ const CHART_COLORS = {
 /**
  * @typedef {Object} BillableBreakdownResponse
  * @property {number} billable_hours
+ * @property {string} excluded_scope
+ * @property {string} scope
  * @property {number} non_billable_hours
  * @property {number} total_hours
  */
@@ -97,7 +99,9 @@ export default function BillableBreakdownCard() {
   const [selectedMonth, setSelectedMonth] = useState("");
   const [metrics, setMetrics] = useState({
     billable_hours: 0,
+    excluded_scope: "prospect_engage",
     non_billable_hours: 0,
+    scope: "consulting",
     total_hours: 0,
   });
   const [isLoading, setIsLoading] = useState(true);
@@ -126,7 +130,9 @@ export default function BillableBreakdownCard() {
       const data = response.data || {};
       setMetrics({
         billable_hours: data.billable_hours || 0,
+        excluded_scope: data.excluded_scope || "prospect_engage",
         non_billable_hours: data.non_billable_hours || 0,
+        scope: data.scope || "consulting",
         total_hours: data.total_hours || 0,
       });
     } catch (fetchError) {
@@ -139,7 +145,9 @@ export default function BillableBreakdownCard() {
       setError(getApiErrorMessage(fetchError, "Unable to load billable breakdown."));
       setMetrics({
         billable_hours: 0,
+        excluded_scope: "prospect_engage",
         non_billable_hours: 0,
+        scope: "consulting",
         total_hours: 0,
       });
     } finally {
@@ -196,7 +204,7 @@ export default function BillableBreakdownCard() {
             Billable vs Non-Billable Hours
           </Typography>
           <Typography color="text.secondary" variant="body2">
-            Harvest hours grouped by project task assignment billable status.
+            Consulting Harvest hours grouped by project task assignment billable status.
           </Typography>
         </Stack>
 

@@ -330,4 +330,4 @@ async def refresh_service_line_marketing_metrics_cache() -> dict:
                 """,
                 (str(exc), CACHE_KEY),
             )
-        raise
+        return get_service_line_marketing_metrics()

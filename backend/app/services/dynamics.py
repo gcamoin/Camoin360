@@ -1531,8 +1531,8 @@ PE_CLIENT_ALIASES = {
     "VCEDA": ("vceda",),
     "Empire State Development": ("empire state development", "esd"),
     "I-77 Alliance": ("i-77 alliance", "i77 alliance", "i 77 alliance"),
-    "Upstate SC Alliance": ("upstate sc alliance",),
-    "Southern Carolina Alliance": ("southern carolina alliance", "sca"),
+    "Upstate South Carolina Alliance": ("upstate south carolina alliance", "upstate sc alliance"),
+    "South Carolina Alliance": ("south carolina alliance", "southern carolina alliance", "sca"),
     "Missouri Partnership": ("missouri partnership",),
     "MBREDC": ("mbredc",),
     "Catawba County": ("catawba county",),
@@ -2817,11 +2817,45 @@ def _get_prospect_client_name(record: dict) -> str:
     )
 
 
+def _canonical_pe_client_name(client_name: str) -> str:
+    normalized_name = " ".join(str(client_name or "").strip().casefold().split())
+    if not normalized_name:
+        return ""
+
+    for canonical_name, aliases in PE_CLIENT_ALIASES.items():
+        if normalized_name in {alias.casefold() for alias in aliases}:
+            return canonical_name
+
+    return str(client_name or "").strip()
+
+
+def _build_pe_qualified_lead_rollups(rows: list[dict]) -> list[dict]:
+    counts = {}
+    for row in rows:
+        client_name = row.get("client_name") or "Missing"
+        counts[client_name] = counts.get(client_name, 0) + 1
+
+    return sorted(
+        (
+            {
+                "client_name": client_name,
+                "qualified_leads": qualified_leads,
+            }
+            for client_name, qualified_leads in counts.items()
+        ),
+        key=lambda row: (-row["qualified_leads"], row["client_name"].casefold()),
+    )
+
+
 async def get_pe_qualified_leads(year: int | None = None, month: int | None = None, limit: int = PE_QUALIFIED_LEAD_DEFAULT_LIMIT):
     token = await get_access_token()
-    target_year = year or datetime.now(timezone.utc).year
-    start_date, end_date = _month_date_window(target_year, month)
-    filter_query = f"createdon ge {start_date} and createdon lt {end_date}"
+    if year:
+        start_date, end_date = _month_date_window(year, month)
+        filter_query = f"createdon ge {start_date} and createdon lt {end_date}"
+    else:
+        start_date = "2000-01-01T00:00:00Z"
+        end_date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        filter_query = f"createdon ge {start_date} and createdon lt {end_date}"
     url = (
         f"{API_URL}/new_prospects?"
         f"$filter={quote(filter_query, safe='_ =:-')}&"
@@ -2845,11 +2879,12 @@ async def get_pe_qualified_leads(year: int | None = None, month: int | None = No
                 if not _matches_pe_qualified_status(record):
                     continue
 
+                client_name = _canonical_pe_client_name(_get_prospect_client_name(record))
                 rows.append(
                     {
                         "id": record.get("new_prospectid"),
                         "prospect_name": record.get("new_prospectname") or "",
-                        "client_name": _get_prospect_client_name(record),
+                        "client_name": client_name,
                         "status": PE_QUALIFIED_LEAD_STATUS_LABEL,
                         "createdon": record.get("createdon"),
                         "createdon_formatted": get_formatted_value(record, "createdon") or "",
@@ -2863,10 +2898,11 @@ async def get_pe_qualified_leads(year: int | None = None, month: int | None = No
         "data": rows,
         "from": start_date,
         "limit": limit,
+        "rollups": _build_pe_qualified_lead_rollups(rows),
         "status": PE_QUALIFIED_LEAD_STATUS_LABEL,
         "to": end_date,
-        "year": target_year,
-        "month": month,
+        "year": year,
+        "month": month if year else None,
     }
 
 
