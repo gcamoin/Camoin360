@@ -67,6 +67,7 @@ WEBSITE_VISIT_CLIENT_RELATIONSHIP_CANDIDATES = ("new_Client",)
 _DATA_QUALITY_CACHE = {"expires_at": 0, "data": None, "limit": 0}
 _SUMMARY_CACHE = {"expires_at": 0, "data": None}
 _MARKETING_LIST_CAMPAIGN_NAVIGATION_CACHE = {"loaded": False, "value": None}
+_MARKETING_LIST_CLIENT_LOOKUP_CACHE = {"loaded": False, "value": None}
 _ACCOUNT_WEBSITE_VISIT_NAVIGATION_CACHE = {"loaded": False, "value": None}
 _WEBSITE_VISIT_CLIENT_NAVIGATION_CACHE = {"loaded": False, "value": None}
 _WEBSITE_VISIT_ACCOUNT_NAVIGATION_CACHE = {"loaded": False, "value": None}
@@ -827,6 +828,24 @@ async def delete_account(account_id: str):
     return {"status": "deleted", "account_id": account_id}
 
 
+async def delete_marketing_list(list_id: str):
+    token = await get_access_token()
+    url = f"{API_URL}/lists({list_id})"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "OData-Version": "4.0",
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.delete(url, headers=headers)
+
+    if response.status_code not in [200, 202, 204]:
+        raise Exception(f"Dynamics DELETE error: {response.text}")
+
+    return {"status": "deleted", "list_id": list_id}
+
+
 def get_formatted_value(record: dict, field_name: str):
     return record.get(f"{field_name}@OData.Community.Display.V1.FormattedValue", record.get(field_name))
 
@@ -923,24 +942,23 @@ def get_client_name_from_marketing_list_accounts(
 def normalize_marketing_list_record(
     record: dict,
     campaign_relationship_name: str | None = None,
-    account_website_visit_relationship_name: str | None = None,
-    website_visit_client_relationship_name: str | None = None,
+    client_lookup_field: str | None = None,
 ):
     created_by = record.get("createdby", {}) if isinstance(record.get("createdby"), dict) else {}
+    campaign = ""
+    if campaign_relationship_name:
+        campaign = get_related_record_value(record, campaign_relationship_name, ("name",))
+
+    dynamic_client_name = get_lookup_display_value(record, client_lookup_field) if client_lookup_field else ""
     client_name = (
         get_related_record_value(record, "new_client", ("name",))
         or get_related_record_value(record, "new_clientid", ("name",))
         or get_related_record_value(record, "new_ClientId", ("name",))
+        or dynamic_client_name
+        or get_lookup_display_value(record, "_new_client_value")
+        or get_lookup_display_value(record, "_new_clientid_value")
         or get_first_present_record_value(record, ("new_client", "_new_client_value", "_new_clientid_value"))
-        or get_client_name_from_marketing_list_accounts(
-            record,
-            account_website_visit_relationship_name,
-            website_visit_client_relationship_name,
-        )
     )
-    campaign = ""
-    if campaign_relationship_name:
-        campaign = get_related_record_value(record, campaign_relationship_name, ("name",))
 
     return {
         "listid": record.get("listid"),
@@ -983,6 +1001,55 @@ async def get_list_campaign_navigation_property(client: httpx.AsyncClient, heade
     _MARKETING_LIST_CAMPAIGN_NAVIGATION_CACHE["value"] = campaign_navigation_property
 
     return campaign_navigation_property
+
+
+async def get_list_client_lookup_field(client: httpx.AsyncClient, headers: dict):
+    if _MARKETING_LIST_CLIENT_LOOKUP_CACHE["loaded"]:
+        return _MARKETING_LIST_CLIENT_LOOKUP_CACHE["value"]
+
+    metadata_url = (
+        f"{API_URL}/EntityDefinitions(LogicalName='list')/ManyToOneRelationships?"
+        "$select=ReferencingAttribute,ReferencingEntityNavigationPropertyName,ReferencedEntity,SchemaName&"
+        "$filter=ReferencedEntity%20eq%20'account'"
+    )
+
+    response = await client.get(metadata_url, headers=headers)
+    client_lookup_field = None
+
+    if response.status_code == 200:
+        relationships = response.json().get("value", [])
+        candidates = []
+        for relationship in relationships:
+            referencing_attribute = str(relationship.get("ReferencingAttribute") or "")
+            if not referencing_attribute:
+                continue
+
+            searchable_text = " ".join(
+                str(relationship.get(field) or "").lower()
+                for field in ("ReferencingAttribute", "ReferencingEntityNavigationPropertyName", "SchemaName")
+            )
+            if "client" not in searchable_text:
+                continue
+
+            normalized_attribute = referencing_attribute.lower()
+            score = 0
+            if normalized_attribute in {"new_clientid", "new_client"}:
+                score = 3
+            elif normalized_attribute.endswith("clientid") or normalized_attribute.endswith("client"):
+                score = 2
+            else:
+                score = 1
+
+            candidates.append((score, referencing_attribute))
+
+        if candidates:
+            _score, referencing_attribute = sorted(candidates, key=lambda item: (-item[0], item[1].casefold()))[0]
+            client_lookup_field = f"_{referencing_attribute.lower()}_value"
+
+    _MARKETING_LIST_CLIENT_LOOKUP_CACHE["loaded"] = True
+    _MARKETING_LIST_CLIENT_LOOKUP_CACHE["value"] = client_lookup_field
+
+    return client_lookup_field
 
 
 async def get_account_website_visit_navigation_property(client: httpx.AsyncClient, headers: dict):
@@ -1100,7 +1167,9 @@ async def get_website_visit_account_navigation_property(client: httpx.AsyncClien
 def build_marketing_lists_url(
     limit: int,
     campaign_navigation_property: str | None = None,
-    include_client_column: bool = True,
+    client_lookup_field: str | None = None,
+    created_from: str | None = None,
+    created_to: str | None = None,
 ):
     expand_parts = ["createdby($select=fullname)"]
     if campaign_navigation_property:
@@ -1114,13 +1183,21 @@ def build_marketing_lists_url(
         "type",
         "_createdby_value",
     ]
-    if include_client_column:
-        select_fields.append("new_client")
+    if client_lookup_field:
+        select_fields.append(client_lookup_field)
+
+    filter_parts = []
+    if created_from:
+        filter_parts.append(f"createdon ge {created_from}T00:00:00Z")
+    if created_to:
+        filter_parts.append(f"createdon le {created_to}T23:59:59Z")
+    filter_query = f"$filter={quote(' and '.join(filter_parts), safe='')}&" if filter_parts else ""
 
     return (
         f"{API_URL}/lists?"
         f"$select={','.join(select_fields)}&"
         f"$expand={','.join(expand_parts)}&"
+        f"{filter_query}"
         "$orderby=createdon desc&"
         f"$top={limit}"
     )
@@ -1233,7 +1310,11 @@ def is_missing_dynamics_property_error(response: httpx.Response):
     return response.status_code == 400 and "0x80060888" in response.text and "Could not find a property named" in response.text
 
 
-async def get_marketing_lists(limit: int = MARKETING_LIST_DEFAULT_LIMIT):
+async def get_marketing_lists(
+    limit: int = MARKETING_LIST_DEFAULT_LIMIT,
+    created_from: str | None = None,
+    created_to: str | None = None,
+):
     token = await get_access_token()
     headers = {
         "Authorization": f"Bearer {token}",
@@ -1248,25 +1329,29 @@ async def get_marketing_lists(limit: int = MARKETING_LIST_DEFAULT_LIMIT):
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             campaign_navigation_property = await get_list_campaign_navigation_property(client, headers)
-            account_website_visit_relationship_name = await get_account_website_visit_navigation_property(client, headers)
-            website_visit_client_relationship_name = await get_website_visit_client_navigation_property(client, headers)
-            include_client_column = True
+            client_lookup_field = await get_list_client_lookup_field(client, headers)
             next_url = build_marketing_lists_url(
                 limit,
                 campaign_navigation_property,
-                include_client_column,
+                client_lookup_field,
+                created_from,
+                created_to,
             )
 
             while next_url and len(marketing_lists) < limit:
                 response = await client.get(next_url, headers=headers)
 
                 if response.status_code != 200:
-                    if include_client_column and is_missing_dynamics_property_error(response) and "new_client" in response.text:
-                        include_client_column = False
+                    if client_lookup_field and is_missing_dynamics_property_error(response) and client_lookup_field in response.text:
+                        client_lookup_field = None
+                        _MARKETING_LIST_CLIENT_LOOKUP_CACHE["loaded"] = True
+                        _MARKETING_LIST_CLIENT_LOOKUP_CACHE["value"] = None
                         next_url = build_marketing_lists_url(
                             limit,
                             campaign_navigation_property,
-                            include_client_column,
+                            None,
+                            created_from,
+                            created_to,
                         )
                         continue
 
@@ -1277,29 +1362,25 @@ async def get_marketing_lists(limit: int = MARKETING_LIST_DEFAULT_LIMIT):
                         next_url = build_marketing_lists_url(
                             limit,
                             None,
-                            include_client_column,
+                            client_lookup_field,
+                            created_from,
+                            created_to,
                         )
                         continue
 
-                    raise Exception(f"Dynamics GET error: {response.text}")
+                    error_detail = response.text or f"HTTP {response.status_code}"
+                    raise Exception(f"Dynamics GET error ({response.status_code}): {error_detail}")
 
                 payload = response.json()
                 marketing_lists.extend(
                     normalize_marketing_list_record(
                         record,
                         campaign_navigation_property,
+                        client_lookup_field,
                     )
                     for record in payload.get("value", [])
                 )
                 next_url = payload.get("@odata.nextLink")
-
-            marketing_lists = await enrich_marketing_lists_with_client_names(
-                client,
-                headers,
-                marketing_lists,
-                account_website_visit_relationship_name,
-                website_visit_client_relationship_name,
-            )
     except httpx.TimeoutException as exc:
         raise Exception(
             f"Dynamics request timed out after {MARKETING_LIST_REQUEST_TIMEOUT_SECONDS} seconds while loading marketing lists"
@@ -1549,6 +1630,15 @@ def _normalized_list_label(marketing_list: dict) -> str:
     )
 
 
+def _contains_normalized_phrase(text: str, phrase: str) -> bool:
+    normalized_text = re.sub(r"[^a-z0-9]+", " ", str(text or "").casefold()).strip()
+    normalized_phrase = re.sub(r"[^a-z0-9]+", " ", str(phrase or "").casefold()).strip()
+    if not normalized_text or not normalized_phrase:
+        return False
+
+    return re.search(rf"(?:^|\s){re.escape(normalized_phrase)}(?:\s|$)", normalized_text) is not None
+
+
 def _active_trade_show_terms(trade_show_terms: list[str] | tuple[str, ...] | None = None) -> tuple[str, ...]:
     custom_terms = tuple(
         str(term or "").strip().lower()
@@ -1593,7 +1683,7 @@ def _has_pe_tag(marketing_list: dict) -> bool:
 def _detect_client_name_from_list(marketing_list: dict) -> str:
     label = _normalized_list_label(marketing_list)
     for client_name, aliases in PE_CLIENT_ALIASES.items():
-        if any(alias in label for alias in aliases):
+        if any(_contains_normalized_phrase(label, alias) for alias in aliases):
             return client_name
 
     return ""
@@ -1602,7 +1692,7 @@ def _detect_client_name_from_list(marketing_list: dict) -> str:
 def _detect_override_client_name_from_list(marketing_list: dict, override_pe_clients: set[str]) -> str:
     label = _normalized_list_label(marketing_list)
     for client_name in sorted(override_pe_clients):
-        if client_name.lower() in label:
+        if _contains_normalized_phrase(label, client_name):
             return client_name
 
     return ""

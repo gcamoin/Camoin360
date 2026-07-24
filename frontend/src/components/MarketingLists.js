@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import axios from "axios";
 import {
   Alert,
   Box,
@@ -24,7 +25,7 @@ import {
 } from "@mui/material";
 
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
-import { getCached } from "../apiClient";
+import { getCached, invalidateApiCache } from "../apiClient";
 import { EmptyState, ModalTitle, subtleTableHeadCellSx } from "./UiPrimitives";
 
 const API_URL = `${API_BASE_URL}/marketing-lists`;
@@ -41,6 +42,7 @@ const columns = [
   { key: "created_by", label: "Created By", width: 180 },
   { key: "member_count", label: "Accounts / Contacts", width: 170 },
   { key: "list_member_type", label: "Account or Contact List", width: 190 },
+  { key: "actions", label: "Actions", width: 120, sortable: false },
 ];
 
 function isMissingValue(value) {
@@ -127,11 +129,18 @@ export default function MarketingLists() {
   const [hasMoreLists, setHasMoreLists] = useState(false);
   const [sortConfig, setSortConfig] = useState({ key: "createdon", direction: "desc" });
   const [searchQuery, setSearchQuery] = useState("");
+  const [createdFrom, setCreatedFrom] = useState("");
+  const [createdTo, setCreatedTo] = useState("");
+  const [draftCreatedFrom, setDraftCreatedFrom] = useState("");
+  const [draftCreatedTo, setDraftCreatedTo] = useState("");
   const [columnMenu, setColumnMenu] = useState({ anchorEl: null, columnKey: "" });
   const [activeMarketingList, setActiveMarketingList] = useState(null);
   const [listMembers, setListMembers] = useState({ accounts: [], contacts: [] });
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
   const [memberError, setMemberError] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
 
@@ -144,7 +153,7 @@ export default function MarketingLists() {
       }
 
       return marketingLists.filter((marketingList) =>
-        columns.some((column) =>
+        columns.filter((column) => column.key !== "actions").some((column) =>
           normalizeSearch(getColumnFilterValue(marketingList, column.key)).includes(normalizedSearchQuery)
         )
       );
@@ -162,16 +171,54 @@ export default function MarketingLists() {
   );
 
   const hasActiveSearch = Boolean(searchQuery.trim());
+  const hasActiveDateFilter = Boolean(createdFrom || createdTo);
+  const hasPendingDateFilter = draftCreatedFrom !== createdFrom || draftCreatedTo !== createdTo;
+  const hasActiveFilters = hasActiveSearch || hasActiveDateFilter;
   const activeColumnMenu = columns.find((column) => column.key === columnMenu.columnKey);
+
+  function getMarketingListParams(limit) {
+    return {
+      limit,
+      ...(createdFrom ? { created_from: createdFrom } : {}),
+      ...(createdTo ? { created_to: createdTo } : {}),
+    };
+  }
 
   function clearSearch() {
     setSearchQuery("");
     setPage(0);
   }
 
+  function clearFilters() {
+    setSearchQuery("");
+    setCreatedFrom("");
+    setCreatedTo("");
+    setDraftCreatedFrom("");
+    setDraftCreatedTo("");
+    setLoadedListLimit(INITIAL_LIST_LIMIT);
+    setPage(0);
+  }
+
   function updateSearch(value) {
     setPage(0);
     setSearchQuery(value);
+  }
+
+  function updateCreatedFrom(value) {
+    setPage(0);
+    setDraftCreatedFrom(value);
+  }
+
+  function updateCreatedTo(value) {
+    setPage(0);
+    setDraftCreatedTo(value);
+  }
+
+  function applyDateFilters() {
+    setPage(0);
+    setLoadedListLimit(INITIAL_LIST_LIMIT);
+    setCreatedFrom(draftCreatedFrom);
+    setCreatedTo(draftCreatedTo);
   }
 
   function openColumnMenu(event, columnKey) {
@@ -222,7 +269,7 @@ export default function MarketingLists() {
       const response = await getCached(API_URL, {
         force: true,
         headers: getAuthHeaders(),
-        params: { limit: nextLimit },
+        params: getMarketingListParams(nextLimit),
         timeout: 30 * 1000,
         ttl: 5 * 60 * 1000,
       });
@@ -267,6 +314,44 @@ export default function MarketingLists() {
     setMemberError("");
   }
 
+  function openDeleteDialog(marketingList) {
+    setDeleteTarget(marketingList);
+    setDeleteError("");
+  }
+
+  function closeDeleteDialog() {
+    if (isDeleting) {
+      return;
+    }
+
+    setDeleteTarget(null);
+    setDeleteError("");
+  }
+
+  async function deleteMarketingList() {
+    if (!deleteTarget?.listid) {
+      return;
+    }
+
+    setIsDeleting(true);
+    setDeleteError("");
+
+    try {
+      await axios.delete(`${API_URL}/${deleteTarget.listid}`, { headers: getAuthHeaders() });
+      invalidateApiCache(API_URL);
+      setMarketingLists((currentLists) =>
+        currentLists.filter((marketingList) => marketingList.listid !== deleteTarget.listid)
+      );
+      setDeleteTarget(null);
+    } catch (deleteRequestError) {
+      if (!handleUnauthorized(deleteRequestError)) {
+        setDeleteError(getApiErrorMessage(deleteRequestError, "Unable to delete marketing list."));
+      }
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
   useEffect(() => {
     const lastPage = Math.max(0, Math.ceil(filteredMarketingLists.length / rowsPerPage) - 1);
 
@@ -285,7 +370,7 @@ export default function MarketingLists() {
       try {
         const response = await getCached(API_URL, {
           headers: getAuthHeaders(),
-          params: { limit: INITIAL_LIST_LIMIT },
+          params: getMarketingListParams(INITIAL_LIST_LIMIT),
           ttl: 5 * 60 * 1000,
         });
 
@@ -314,7 +399,7 @@ export default function MarketingLists() {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [createdFrom, createdTo]);
 
   if (isLoading) {
     return (
@@ -342,22 +427,20 @@ export default function MarketingLists() {
     >
       <Box
         sx={{
-          alignItems: { xs: "flex-start", sm: "center" },
           borderBottom: "1px solid rgba(0, 51, 108, 0.10)",
           display: "flex",
-          flexDirection: { xs: "column", sm: "row" },
-          gap: 1,
-          justifyContent: "space-between",
+          flexDirection: "column",
+          gap: 2,
           px: { xs: 2, md: 3 },
           py: 2,
         }}
       >
         <Box
           sx={{
-            alignItems: { xs: "stretch", md: "center" },
+            alignItems: { xs: "stretch", sm: "flex-start" },
             display: "flex",
-            flexDirection: { xs: "column", md: "row" },
-            gap: 2,
+            flexDirection: "column",
+            gap: 1.5,
           }}
         >
           <Box>
@@ -373,28 +456,69 @@ export default function MarketingLists() {
             label="Search marketing lists"
             onChange={(event) => updateSearch(event.target.value)}
             size="small"
-            sx={{ minWidth: { sm: 280 } }}
+            sx={{ maxWidth: 760, width: "100%" }}
             value={searchQuery}
           />
         </Box>
+        <Box
+          sx={{
+            alignItems: { xs: "stretch", md: "center" },
+            display: "flex",
+            flexDirection: { xs: "column", md: "row" },
+            gap: 1.5,
+            justifyContent: "space-between",
+          }}
+        >
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+          <TextField
+            InputLabelProps={{ shrink: true }}
+            inputProps={{ "aria-label": "Created from date" }}
+            label="Created From"
+            onChange={(event) => updateCreatedFrom(event.target.value)}
+            size="small"
+            sx={{ minWidth: 160 }}
+            type="date"
+            value={draftCreatedFrom}
+          />
+          <TextField
+            InputLabelProps={{ shrink: true }}
+            inputProps={{ "aria-label": "Created to date" }}
+            label="Created To"
+            onChange={(event) => updateCreatedTo(event.target.value)}
+            size="small"
+            sx={{ minWidth: 160 }}
+            type="date"
+            value={draftCreatedTo}
+          />
+          <Button
+            disabled={!hasPendingDateFilter}
+            onClick={applyDateFilters}
+            size="small"
+            sx={{ alignSelf: { xs: "stretch", md: "center" }, fontWeight: 800, whiteSpace: "nowrap" }}
+            variant="contained"
+          >
+            Apply Dates
+          </Button>
+          </Stack>
         <Stack alignItems="center" direction="row" spacing={1}>
           {hasMoreLists ? (
             <Button disabled={isLoadingMore} onClick={loadMoreMarketingLists} size="small" variant="outlined">
               {isLoadingMore ? "Loading more..." : `Load next ${LIST_LIMIT_STEP}`}
             </Button>
           ) : null}
-          {hasActiveSearch ? (
+          {hasActiveFilters ? (
             <Button
-              onClick={clearSearch}
+              onClick={clearFilters}
               size="small"
               sx={{ borderRadius: 1, fontWeight: 800, whiteSpace: "nowrap" }}
               variant="outlined"
             >
-              Clear Search
+              Clear Filters
             </Button>
           ) : null}
           <Chip label={`${marketingLists.length} total`} sx={{ fontWeight: 800 }} />
         </Stack>
+        </Box>
       </Box>
 
       <TableContainer sx={{ overflowX: "auto" }}>
@@ -426,44 +550,46 @@ export default function MarketingLists() {
                     >
                       {column.label}
                     </Typography>
-                    <Button
-                      aria-label={`${column.label} sort options`}
-                      onClick={(event) => openColumnMenu(event, column.key)}
-                      size="small"
-                      sx={{
-                        borderColor: "rgba(18, 59, 100, 0.26)",
-                        color: "primary.main",
-                        flex: "0 0 auto",
-                        fontSize: "0.7rem",
-                        lineHeight: 1,
-                        minWidth: 28,
-                        px: 0.5,
-                        py: 0.25,
-                      }}
-                      variant="outlined"
-                    >
-                      <Box
-                        aria-hidden="true"
+                    {column.sortable === false ? null : (
+                      <Button
+                        aria-label={`${column.label} sort options`}
+                        onClick={(event) => openColumnMenu(event, column.key)}
+                        size="small"
                         sx={{
-                          borderLeft: "6px solid transparent",
-                          borderRight: "6px solid transparent",
-                          borderTop: "8px solid currentColor",
-                          height: 0,
-                          position: "relative",
-                          width: 0,
-                          "&::after": {
-                            backgroundColor: "currentColor",
-                            borderRadius: 999,
-                            content: '""',
-                            height: 5,
-                            left: -1,
-                            position: "absolute",
-                            top: -1,
-                            width: 2,
-                          },
+                          borderColor: "rgba(18, 59, 100, 0.26)",
+                          color: "primary.main",
+                          flex: "0 0 auto",
+                          fontSize: "0.7rem",
+                          lineHeight: 1,
+                          minWidth: 28,
+                          px: 0.5,
+                          py: 0.25,
                         }}
-                      />
-                    </Button>
+                        variant="outlined"
+                      >
+                        <Box
+                          aria-hidden="true"
+                          sx={{
+                            borderLeft: "6px solid transparent",
+                            borderRight: "6px solid transparent",
+                            borderTop: "8px solid currentColor",
+                            height: 0,
+                            position: "relative",
+                            width: 0,
+                            "&::after": {
+                              backgroundColor: "currentColor",
+                              borderRadius: 999,
+                              content: '""',
+                              height: 5,
+                              left: -1,
+                              position: "absolute",
+                              top: -1,
+                              width: 2,
+                            },
+                          }}
+                        />
+                      </Button>
+                    )}
                   </Box>
                 </TableCell>
               ))}
@@ -497,22 +623,43 @@ export default function MarketingLists() {
                     </Typography>
                   </TableCell>
                   <TableCell>{marketingList.list_member_type || "Missing"}</TableCell>
+                  <TableCell>
+                    <Stack direction="row" spacing={1}>
+                      <Button
+                        disabled={!marketingList.listid}
+                        onClick={() => openMemberModal(marketingList)}
+                        size="small"
+                        variant="outlined"
+                      >
+                        View
+                      </Button>
+                      <Button
+                        color="error"
+                        disabled={!marketingList.listid}
+                        onClick={() => openDeleteDialog(marketingList)}
+                        size="small"
+                        variant="outlined"
+                      >
+                        Delete
+                      </Button>
+                    </Stack>
+                  </TableCell>
                 </TableRow>
               ))
             ) : (
               <TableRow>
                 <TableCell colSpan={columns.length} sx={{ p: 0 }}>
                   <EmptyState
-                    actionLabel={hasActiveSearch ? "Clear search" : undefined}
+                    actionLabel={hasActiveFilters ? "Clear filters" : undefined}
                     compact
                     description={
-                      hasActiveSearch
-                        ? "Clear or adjust the search to broaden the results."
+                      hasActiveFilters
+                        ? "Clear or adjust the filters to broaden the results."
                         : "Marketing lists will appear here after they are available from Dynamics."
                     }
-                    icon={hasActiveSearch ? "search" : "database"}
-                    onAction={hasActiveSearch ? clearSearch : undefined}
-                    title={hasActiveSearch ? "No matching marketing lists" : "No marketing lists found"}
+                    icon={hasActiveFilters ? "search" : "database"}
+                    onAction={hasActiveFilters ? clearFilters : undefined}
+                    title={hasActiveFilters ? "No matching marketing lists" : "No marketing lists found"}
                   />
                 </TableCell>
               </TableRow>
@@ -648,6 +795,33 @@ export default function MarketingLists() {
         </DialogContent>
         <DialogActions sx={{ px: 3, py: 2 }}>
           <Button onClick={closeMemberModal}>Close</Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog onClose={closeDeleteDialog} open={Boolean(deleteTarget)}>
+        <ModalTitle onClose={isDeleting ? undefined : closeDeleteDialog}>
+          Delete marketing list?
+        </ModalTitle>
+        <DialogContent dividers>
+          <Stack spacing={2}>
+            <Typography>
+              This will delete the marketing list from Dynamics and remove it from Camoin 360.
+            </Typography>
+            <Box>
+              <Typography sx={{ fontWeight: 800 }}>
+                {deleteTarget?.marketing_list_name || "Unnamed marketing list"}
+              </Typography>
+              <Typography color="text.secondary" variant="body2">
+                Created {formatDate(deleteTarget?.createdon)}
+              </Typography>
+            </Box>
+            {deleteError ? <Alert severity="error">{deleteError}</Alert> : null}
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2 }}>
+          <Button disabled={isDeleting} onClick={closeDeleteDialog}>Cancel</Button>
+          <Button color="error" disabled={isDeleting} onClick={deleteMarketingList} variant="contained">
+            {isDeleting ? "Deleting..." : "Delete List"}
+          </Button>
         </DialogActions>
       </Dialog>
     </Paper>

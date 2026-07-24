@@ -20,6 +20,7 @@ from ..services.dynamics import (
     get_accounts_needing_enrichment,
     get_duplicate_account_records,
     delete_account,
+    delete_marketing_list,
     get_marketing_list_conversion_analysis,
     get_marketing_lists,
     get_marketing_list_members,
@@ -373,12 +374,14 @@ async def add_pe_client_user(request: PEClientUserCreateRequest, _user=Depends(r
 @router.get("/marketing-lists")
 async def fetch_marketing_lists(
     limit: int = Query(default=500, ge=1, le=5000),
+    created_from: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    created_to: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     _user=Depends(require_user),
 ):
     try:
         marketing_lists = await read_cache.get(
-            f"marketing-lists:{limit}",
-            lambda: get_marketing_lists(limit),
+            f"marketing-lists:{limit}:{created_from or ''}:{created_to or ''}",
+            lambda: get_marketing_lists(limit, created_from, created_to),
             ttl_seconds=MARKETING_LIST_TTL_SECONDS,
             stale_seconds=STALE_GRACE_SECONDS,
         )
@@ -391,6 +394,8 @@ async def fetch_marketing_lists(
     return {
         "count": len(marketing_lists),
         "limit": limit,
+        "created_from": created_from,
+        "created_to": created_to,
         "data": marketing_lists
     }
 
@@ -448,6 +453,21 @@ async def fetch_marketing_list_members(list_id: UUID, _user=Depends(require_user
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Unable to load Dynamics marketing list members: {exc}",
+        ) from exc
+
+
+@router.delete("/marketing-lists/{list_id}")
+async def remove_marketing_list(list_id: UUID, _user=Depends(require_user)):
+    try:
+        result = await delete_marketing_list(str(list_id))
+        read_cache.invalidate("marketing-lists:")
+        read_cache.invalidate(f"marketing-list-members:{list_id}")
+        read_cache.invalidate("marketing-list-conversion-analysis:")
+        return result
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to delete Dynamics marketing list: {exc}",
         ) from exc
 
 

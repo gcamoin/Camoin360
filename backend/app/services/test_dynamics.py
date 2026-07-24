@@ -6,6 +6,7 @@ from . import dynamics
 from .dynamics import (
     create_pe_client,
     create_pe_client_user,
+    delete_marketing_list,
     get_leadfeeder_visits,
     get_marketing_list_conversion_analysis,
     get_marketing_list_members,
@@ -32,6 +33,7 @@ class FakeDynamicsResponse:
 
 class FakeAsyncClient:
     requested_urls = []
+    deleted_urls = []
     list_metadata_relationships = []
     account_metadata_relationships = []
     website_visit_metadata_relationships = []
@@ -44,6 +46,8 @@ class FakeAsyncClient:
     website_visit_payload = {"value": []}
     fail_new_client = False
     fail_account_client_expand = False
+    delete_status_code = 204
+    delete_text = ""
 
     def __init__(self, *args, **kwargs):
         pass
@@ -73,11 +77,11 @@ class FakeAsyncClient:
                 text='{"error":{"code":"0x80060888","message":"Could not find a property named \'campaignid\' on type \'Microsoft.Dynamics.CRM.list\'."}}',
             )
 
-        if self.fail_new_client and "_createdby_value,new_client" in url:
+        if self.fail_new_client and ("_createdby_value,_new_client_value" in url or "_createdby_value,_new_clientid_value" in url):
             return FakeDynamicsResponse(
                 {},
                 status_code=400,
-                text='{"error":{"code":"0x80060888","message":"Could not find a property named \'new_client\' on type \'Microsoft.Dynamics.CRM.list\'."}}',
+                text='{"error":{"code":"0x80060888","message":"Could not find a property named \'_new_clientid_value\' on type \'Microsoft.Dynamics.CRM.list\'."}}',
             )
 
         if self.fail_account_client_expand and "listaccount_association" in url:
@@ -106,6 +110,10 @@ class FakeAsyncClient:
             return FakeDynamicsResponse(self.conversion_list_payload)
 
         return FakeDynamicsResponse(self.list_payload)
+
+    async def delete(self, url, headers):
+        self.deleted_urls.append(url)
+        return FakeDynamicsResponse({}, status_code=self.delete_status_code, text=self.delete_text)
 
 
 class PEClientServiceTest(unittest.IsolatedAsyncioTestCase):
@@ -241,13 +249,21 @@ class MarketingListNormalizationTest(unittest.TestCase):
         result = normalize_marketing_list_record(
             record,
             "campaignid_campaign",
-            "cr73c_lfapp_websitevisit",
-            "new_Client",
         )
 
         self.assertEqual(result["created_by"], "Taylor Lee")
-        self.assertEqual(result["client_name"], "Contoso")
+        self.assertEqual(result["client_name"], "")
         self.assertEqual(result["campaign"], "Spring Campaign")
+
+    def test_does_not_detect_client_name_from_unrelated_list_text(self):
+        result = normalize_marketing_list_record(
+            {
+                "listid": "list-1",
+                "listname": "# Hermes API Integration",
+            }
+        )
+
+        self.assertEqual(result["client_name"], "")
 
 
 class MarketingMetricsWindowTest(unittest.TestCase):
@@ -369,6 +385,7 @@ class ProjectCreationMetricsTest(unittest.IsolatedAsyncioTestCase):
 class MarketingListQueryTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         FakeAsyncClient.requested_urls = []
+        FakeAsyncClient.deleted_urls = []
         FakeAsyncClient.list_metadata_relationships = []
         FakeAsyncClient.account_metadata_relationships = []
         FakeAsyncClient.website_visit_metadata_relationships = []
@@ -381,8 +398,12 @@ class MarketingListQueryTest(unittest.IsolatedAsyncioTestCase):
         FakeAsyncClient.website_visit_payload = {"value": []}
         FakeAsyncClient.fail_new_client = False
         FakeAsyncClient.fail_account_client_expand = False
+        FakeAsyncClient.delete_status_code = 204
+        FakeAsyncClient.delete_text = ""
         dynamics._MARKETING_LIST_CAMPAIGN_NAVIGATION_CACHE["loaded"] = False
         dynamics._MARKETING_LIST_CAMPAIGN_NAVIGATION_CACHE["value"] = None
+        dynamics._MARKETING_LIST_CLIENT_LOOKUP_CACHE["loaded"] = False
+        dynamics._MARKETING_LIST_CLIENT_LOOKUP_CACHE["value"] = None
         dynamics._ACCOUNT_WEBSITE_VISIT_NAVIGATION_CACHE["loaded"] = False
         dynamics._ACCOUNT_WEBSITE_VISIT_NAVIGATION_CACHE["value"] = None
         dynamics._WEBSITE_VISIT_CLIENT_NAVIGATION_CACHE["loaded"] = False
@@ -394,6 +415,59 @@ class MarketingListQueryTest(unittest.IsolatedAsyncioTestCase):
                 "ReferencingAttribute": "campaignid",
                 "ReferencingEntityNavigationPropertyName": "campaignid_campaign",
                 "ReferencedEntity": "campaign",
+            },
+            {
+                "ReferencingAttribute": "new_clientid",
+                "ReferencingEntityNavigationPropertyName": "new_ClientId",
+                "ReferencedEntity": "account",
+                "SchemaName": "new_list_ClientId_account",
+            },
+        ]
+        FakeAsyncClient.account_metadata_relationships = [
+            {
+                "ReferencingAttribute": "cr73c_lfapp_websitevisit",
+                "ReferencingEntityNavigationPropertyName": "cr73c_lfapp_websitevisit",
+                "ReferencedEntity": "lfapp_websitevisit",
+                "SchemaName": "cr73c_Account_lfapp_websitevisit_lfapp_websitev",
+            }
+        ]
+        FakeAsyncClient.website_visit_metadata_relationships = [
+            {
+                "ReferencingAttribute": "new_client",
+                "ReferencingEntityNavigationPropertyName": "new_Client",
+                "ReferencedEntity": "account",
+                "SchemaName": "new_lfapp_websitevisit_Client_Account",
+            }
+        ]
+
+        with (
+            patch("backend.app.services.dynamics.API_URL", "https://example.crm/api/data/v9.2"),
+            patch("backend.app.services.dynamics.get_access_token", new=AsyncMock(return_value="token")),
+            patch("backend.app.services.dynamics.httpx.AsyncClient", new=FakeAsyncClient),
+        ):
+            await get_marketing_lists(limit=25)
+
+        self.assertEqual(len(FakeAsyncClient.requested_urls), 3)
+        requested_url = FakeAsyncClient.requested_urls[2]
+        self.assertNotIn("new_marketing_list_CampaignID", requested_url)
+        self.assertNotIn("_new_campaignid_value", requested_url)
+        self.assertNotIn("campaignid($select=name)", requested_url)
+        self.assertIn("$select=listid,listname,createdon,membercount,createdfromcode,type,_createdby_value,_new_clientid_value", requested_url)
+        self.assertIn("$expand=createdby($select=fullname),campaignid_campaign($select=name)", requested_url)
+        self.assertNotIn("listaccount_association", requested_url)
+
+    async def test_retries_without_campaign_when_navigation_property_is_invalid(self):
+        FakeAsyncClient.list_metadata_relationships = [
+            {
+                "ReferencingAttribute": "campaignid",
+                "ReferencingEntityNavigationPropertyName": "campaignid",
+                "ReferencedEntity": "campaign",
+            },
+            {
+                "ReferencingAttribute": "new_clientid",
+                "ReferencingEntityNavigationPropertyName": "new_ClientId",
+                "ReferencedEntity": "account",
+                "SchemaName": "new_list_ClientId_account",
             }
         ]
         FakeAsyncClient.account_metadata_relationships = [
@@ -421,63 +495,22 @@ class MarketingListQueryTest(unittest.IsolatedAsyncioTestCase):
             await get_marketing_lists(limit=25)
 
         self.assertEqual(len(FakeAsyncClient.requested_urls), 4)
-        requested_url = FakeAsyncClient.requested_urls[3]
-        self.assertNotIn("new_marketing_list_CampaignID", requested_url)
-        self.assertNotIn("_new_campaignid_value", requested_url)
-        self.assertNotIn("campaignid($select=name)", requested_url)
-        self.assertIn("$select=listid,listname,createdon,membercount,createdfromcode,type,_createdby_value,new_client", requested_url)
-        self.assertIn("$expand=createdby($select=fullname),campaignid_campaign($select=name)", requested_url)
-        self.assertNotIn("listaccount_association", requested_url)
-
-    async def test_retries_without_campaign_when_navigation_property_is_invalid(self):
-        FakeAsyncClient.list_metadata_relationships = [
-            {
-                "ReferencingAttribute": "campaignid",
-                "ReferencingEntityNavigationPropertyName": "campaignid",
-                "ReferencedEntity": "campaign",
-            }
-        ]
-        FakeAsyncClient.account_metadata_relationships = [
-            {
-                "ReferencingAttribute": "cr73c_lfapp_websitevisit",
-                "ReferencingEntityNavigationPropertyName": "cr73c_lfapp_websitevisit",
-                "ReferencedEntity": "lfapp_websitevisit",
-                "SchemaName": "cr73c_Account_lfapp_websitevisit_lfapp_websitev",
-            }
-        ]
-        FakeAsyncClient.website_visit_metadata_relationships = [
-            {
-                "ReferencingAttribute": "new_client",
-                "ReferencingEntityNavigationPropertyName": "new_Client",
-                "ReferencedEntity": "account",
-                "SchemaName": "new_lfapp_websitevisit_Client_Account",
-            }
-        ]
-
-        with (
-            patch("backend.app.services.dynamics.API_URL", "https://example.crm/api/data/v9.2"),
-            patch("backend.app.services.dynamics.get_access_token", new=AsyncMock(return_value="token")),
-            patch("backend.app.services.dynamics.httpx.AsyncClient", new=FakeAsyncClient),
-        ):
-            await get_marketing_lists(limit=25)
-
-        self.assertEqual(len(FakeAsyncClient.requested_urls), 5)
-        failed_url = FakeAsyncClient.requested_urls[3]
-        retried_url = FakeAsyncClient.requested_urls[4]
+        failed_url = FakeAsyncClient.requested_urls[2]
+        retried_url = FakeAsyncClient.requested_urls[3]
         self.assertIn("campaignid($select=name)", failed_url)
         self.assertNotIn("campaignid($select=name)", retried_url)
-        self.assertIn("new_client", retried_url)
+        self.assertIn("_new_clientid_value", retried_url)
         self.assertNotIn("listaccount_association", retried_url)
         self.assertIn("$expand=createdby($select=fullname)", retried_url)
 
     async def test_retries_without_new_client_when_client_column_is_invalid(self):
         FakeAsyncClient.fail_new_client = True
-        FakeAsyncClient.account_metadata_relationships = [
+        FakeAsyncClient.list_metadata_relationships = [
             {
-                "ReferencingAttribute": "cr73c_lfapp_websitevisit",
-                "ReferencingEntityNavigationPropertyName": "cr73c_lfapp_websitevisit",
-                "ReferencedEntity": "lfapp_websitevisit",
-                "SchemaName": "cr73c_Account_lfapp_websitevisit_lfapp_websitev",
+                "ReferencingAttribute": "new_clientid",
+                "ReferencingEntityNavigationPropertyName": "new_ClientId",
+                "ReferencedEntity": "account",
+                "SchemaName": "new_list_ClientId_account",
             }
         ]
         FakeAsyncClient.website_visit_metadata_relationships = [
@@ -496,15 +529,55 @@ class MarketingListQueryTest(unittest.IsolatedAsyncioTestCase):
         ):
             await get_marketing_lists(limit=25)
 
-        self.assertEqual(len(FakeAsyncClient.requested_urls), 5)
-        failed_url = FakeAsyncClient.requested_urls[3]
-        retried_url = FakeAsyncClient.requested_urls[4]
-        self.assertIn("new_client", failed_url)
-        self.assertNotIn("_createdby_value,new_client", retried_url)
-        self.assertNotIn("_createdby_value,new_client", retried_url)
+        self.assertEqual(len(FakeAsyncClient.requested_urls), 4)
+        failed_url = FakeAsyncClient.requested_urls[2]
+        retried_url = FakeAsyncClient.requested_urls[3]
+        self.assertIn("_new_clientid_value", failed_url)
+        self.assertNotIn("_createdby_value,_new_clientid_value", retried_url)
         self.assertIn("$expand=createdby($select=fullname)", retried_url)
 
-    async def test_enriches_client_name_from_associated_account_website_visit(self):
+    async def test_uses_formatted_client_lookup_value_from_marketing_list_record(self):
+        FakeAsyncClient.list_metadata_relationships = [
+            {
+                "ReferencingAttribute": "new_clientid",
+                "ReferencingEntityNavigationPropertyName": "new_ClientId",
+                "ReferencedEntity": "account",
+                "SchemaName": "new_list_ClientId_account",
+            }
+        ]
+        FakeAsyncClient.list_payload = {
+            "value": [
+                {
+                    "listid": "list-1",
+                    "listname": "Client Audience",
+                    "_new_clientid_value": "11111111-1111-1111-1111-111111111111",
+                    "_new_clientid_value@OData.Community.Display.V1.FormattedValue": "Direct Client",
+                }
+            ]
+        }
+
+        with (
+            patch("backend.app.services.dynamics.API_URL", "https://example.crm/api/data/v9.2"),
+            patch("backend.app.services.dynamics.get_access_token", new=AsyncMock(return_value="token")),
+            patch("backend.app.services.dynamics.httpx.AsyncClient", new=FakeAsyncClient),
+        ):
+            rows = await get_marketing_lists(limit=25)
+
+        self.assertEqual(rows[0]["client_name"], "Direct Client")
+
+    async def test_applies_created_date_filters_to_marketing_list_query(self):
+        with (
+            patch("backend.app.services.dynamics.API_URL", "https://example.crm/api/data/v9.2"),
+            patch("backend.app.services.dynamics.get_access_token", new=AsyncMock(return_value="token")),
+            patch("backend.app.services.dynamics.httpx.AsyncClient", new=FakeAsyncClient),
+        ):
+            await get_marketing_lists(limit=25, created_from="2024-01-01", created_to="2024-12-31")
+
+        requested_url = next(url for url in FakeAsyncClient.requested_urls if "/lists?" in url)
+        self.assertIn("$filter=createdon%20ge%202024-01-01T00%3A00%3A00Z%20and%20createdon%20le%202024-12-31T23%3A59%3A59Z", requested_url)
+        self.assertIn("$orderby=createdon desc", requested_url)
+
+    async def test_does_not_infer_client_name_from_associated_account_website_visit(self):
         FakeAsyncClient.list_payload = {
             "value": [
                 {
@@ -553,13 +626,9 @@ class MarketingListQueryTest(unittest.IsolatedAsyncioTestCase):
         ):
             rows = await get_marketing_lists(limit=25)
 
-        self.assertEqual(rows[0]["client_name"], "Contoso")
-        account_member_url = next(url for url in FakeAsyncClient.requested_urls if "listaccount_association" in url)
-        website_visit_url = next(url for url in FakeAsyncClient.requested_urls if "lfapp_websitevisits" in url)
-        self.assertIn("$select=accountid", account_member_url)
-        self.assertIn("$expand=new_Client($select=name)", website_visit_url)
-        self.assertIn("Microsoft.Dynamics.CRM.In(PropertyName='lfapp_account',PropertyValues=['account-1'])", website_visit_url)
-        self.assertIn("_new_client_value%20ne%20null", website_visit_url)
+        self.assertEqual(rows[0]["client_name"], "")
+        self.assertFalse(any("listaccount_association" in url for url in FakeAsyncClient.requested_urls))
+        self.assertFalse(any("lfapp_websitevisits" in url for url in FakeAsyncClient.requested_urls))
 
 
 class MarketingListMemberQueryTest(unittest.IsolatedAsyncioTestCase):
@@ -587,6 +656,28 @@ class MarketingListMemberQueryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("new_sector", account_url)
         self.assertNotIn("new_sector", contact_url)
+
+
+class MarketingListDeleteTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        FakeAsyncClient.requested_urls = []
+        FakeAsyncClient.deleted_urls = []
+        FakeAsyncClient.delete_status_code = 204
+        FakeAsyncClient.delete_text = ""
+
+    async def test_deletes_marketing_list_from_dynamics_list_entity_set(self):
+        with (
+            patch("backend.app.services.dynamics.API_URL", "https://example.crm/api/data/v9.2"),
+            patch("backend.app.services.dynamics.get_access_token", new=AsyncMock(return_value="token")),
+            patch("backend.app.services.dynamics.httpx.AsyncClient", new=FakeAsyncClient),
+        ):
+            result = await delete_marketing_list("11111111-1111-1111-1111-111111111111")
+
+        self.assertEqual(result, {"status": "deleted", "list_id": "11111111-1111-1111-1111-111111111111"})
+        self.assertEqual(
+            FakeAsyncClient.deleted_urls,
+            ["https://example.crm/api/data/v9.2/lists(11111111-1111-1111-1111-111111111111)"],
+        )
 
 
 class MarketingListConversionAnalysisTest(unittest.IsolatedAsyncioTestCase):
