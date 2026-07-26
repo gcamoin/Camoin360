@@ -33,6 +33,32 @@ const DEFAULT_ROWS_PER_PAGE = 25;
 const INITIAL_LIST_LIMIT = 500;
 const LIST_LIMIT_STEP = 500;
 const MAX_LIST_LIMIT = 5000;
+const brandTextFieldSx = {
+  "& .MuiInputBase-input": {
+    color: "primary.main",
+    fontWeight: 700,
+  },
+  "& .MuiInputLabel-root": {
+    color: "primary.main",
+    fontWeight: 800,
+  },
+  "& .MuiInputLabel-root.Mui-focused": {
+    color: "primary.main",
+  },
+  "& .MuiOutlinedInput-root": {
+    backgroundColor: "#ffffff",
+    "& fieldset": {
+      borderColor: "rgba(18, 59, 100, 0.38)",
+    },
+    "&:hover fieldset": {
+      borderColor: "primary.main",
+    },
+    "&.Mui-focused fieldset": {
+      borderColor: "primary.main",
+      borderWidth: 2,
+    },
+  },
+};
 
 const columns = [
   { key: "client_name", label: "Client Name", width: 190 },
@@ -42,7 +68,8 @@ const columns = [
   { key: "created_by", label: "Created By", width: 180 },
   { key: "member_count", label: "Accounts / Contacts", width: 170 },
   { key: "list_member_type", label: "Account or Contact List", width: 190 },
-  { key: "actions", label: "Actions", width: 120, sortable: false },
+  { key: "actions", label: "Actions", width: 180, sortable: false },
+  { key: "row_end", label: "", width: 56, sortable: false },
 ];
 
 function isMissingValue(value) {
@@ -153,7 +180,7 @@ export default function MarketingLists() {
       }
 
       return marketingLists.filter((marketingList) =>
-        columns.filter((column) => column.key !== "actions").some((column) =>
+        columns.filter((column) => !["actions", "row_end"].includes(column.key)).some((column) =>
           normalizeSearch(getColumnFilterValue(marketingList, column.key)).includes(normalizedSearchQuery)
         )
       );
@@ -455,8 +482,8 @@ export default function MarketingLists() {
             inputProps={{ "aria-label": "Search marketing lists" }}
             label="Search marketing lists"
             onChange={(event) => updateSearch(event.target.value)}
-            size="small"
-            sx={{ maxWidth: 760, width: "100%" }}
+            size="medium"
+            sx={{ ...brandTextFieldSx, maxWidth: 960, width: "100%" }}
             value={searchQuery}
           />
         </Box>
@@ -470,37 +497,37 @@ export default function MarketingLists() {
           }}
         >
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
-          <TextField
-            InputLabelProps={{ shrink: true }}
-            inputProps={{ "aria-label": "Created from date" }}
-            label="Created From"
-            onChange={(event) => updateCreatedFrom(event.target.value)}
-            size="small"
-            sx={{ minWidth: 160 }}
-            type="date"
-            value={draftCreatedFrom}
-          />
-          <TextField
-            InputLabelProps={{ shrink: true }}
-            inputProps={{ "aria-label": "Created to date" }}
-            label="Created To"
-            onChange={(event) => updateCreatedTo(event.target.value)}
-            size="small"
-            sx={{ minWidth: 160 }}
-            type="date"
-            value={draftCreatedTo}
-          />
-          <Button
-            disabled={!hasPendingDateFilter}
-            onClick={applyDateFilters}
-            size="small"
-            sx={{ alignSelf: { xs: "stretch", md: "center" }, fontWeight: 800, whiteSpace: "nowrap" }}
-            variant="contained"
-          >
-            Apply Dates
-          </Button>
+            <TextField
+              InputLabelProps={{ shrink: true }}
+              inputProps={{ "aria-label": "Created from date" }}
+              label="Created From"
+              onChange={(event) => updateCreatedFrom(event.target.value)}
+              size="medium"
+              sx={{ ...brandTextFieldSx, minWidth: { xs: "100%", sm: 220 } }}
+              type="date"
+              value={draftCreatedFrom}
+            />
+            <TextField
+              InputLabelProps={{ shrink: true }}
+              inputProps={{ "aria-label": "Created to date" }}
+              label="Created To"
+              onChange={(event) => updateCreatedTo(event.target.value)}
+              size="medium"
+              sx={{ ...brandTextFieldSx, minWidth: { xs: "100%", sm: 220 } }}
+              type="date"
+              value={draftCreatedTo}
+            />
+            <Button
+              disabled={!hasPendingDateFilter}
+              onClick={applyDateFilters}
+              size="medium"
+              sx={{ alignSelf: { xs: "stretch", md: "center" }, fontWeight: 800, minHeight: 56, whiteSpace: "nowrap" }}
+              variant="contained"
+            >
+              Apply Dates
+            </Button>
           </Stack>
-        <Stack alignItems="center" direction="row" spacing={1}>
+          <Stack alignItems="center" direction="row" spacing={1}>
           {hasMoreLists ? (
             <Button disabled={isLoadingMore} onClick={loadMoreMarketingLists} size="small" variant="outlined">
               {isLoadingMore ? "Loading more..." : `Load next ${LIST_LIMIT_STEP}`}
@@ -522,7 +549,7 @@ export default function MarketingLists() {
       </Box>
 
       <TableContainer sx={{ overflowX: "auto" }}>
-        <Table size="small" sx={{ minWidth: 1350, tableLayout: "fixed" }}>
+        <Table size="small" sx={{ minWidth: 1560, tableLayout: "fixed", width: "100%" }}>
           <TableHead>
             <TableRow>
               {columns.map((column) => (
@@ -624,7 +651,7 @@ export default function MarketingLists() {
                   </TableCell>
                   <TableCell>{marketingList.list_member_type || "Missing"}</TableCell>
                   <TableCell>
-                    <Stack direction="row" spacing={1}>
+                    <Stack direction="row" spacing={1} sx={{ pr: 1 }}>
                       <Button
                         disabled={!marketingList.listid}
                         onClick={() => openMemberModal(marketingList)}
@@ -644,6 +671,7 @@ export default function MarketingLists() {
                       </Button>
                     </Stack>
                   </TableCell>
+                  <TableCell aria-hidden="true" />
                 </TableRow>
               ))
             ) : (

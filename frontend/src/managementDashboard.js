@@ -14,10 +14,12 @@ import {
 } from "@mui/material";
 import EconomicIndicators from "./components/EconomicIndicators";
 import { EmptyState } from "./components/UiPrimitives";
+import CompanyFinancials from "./components/CompanyFinancials";
 import EmployeeProductivity from "./components/EmployeeProductivity";
 import MarketingMetrics, { MarketingOverview } from "./components/MarketingMetrics";
 import PEQualifiedLeads from "./components/PEQualifiedLeads";
 import ProductivityProjects from "./components/ProductivityProjects";
+import ServiceLineFinancials from "./components/ServiceLineFinancials";
 import SoftwareInventory from "./components/SoftwareInventory";
 
 const views = {
@@ -40,6 +42,13 @@ const views = {
     title: "Company Financials",
     description:
       "Financial performance data and trends across portfolio companies.",
+  },
+  serviceLineFinancials: {
+    label: "Service Line Financials",
+    icon: "finance",
+    title: "Service Line Financials",
+    description:
+      "Dummy monthly and quarterly financial trends by consulting service line.",
   },
   marketing: {
     label: "Marketing",
@@ -341,6 +350,8 @@ export default function ManagementDashboard({ onLogout }) {
               </Box>
 
               {activeView === "economicIndicators" && <EconomicIndicators />}
+              {activeView === "companyFinancials" && <CompanyFinancials />}
+              {activeView === "serviceLineFinancials" && <ServiceLineFinancials />}
               {activeView === "marketing" && <MarketingOverview />}
               {activeView === "marketingMetrics" && <MarketingMetrics />}
               {activeView === "pe" && <PEQualifiedLeads />}
@@ -351,7 +362,7 @@ export default function ManagementDashboard({ onLogout }) {
               {activeView === "employeeProductivity" && (
                 <EmployeeProductivity />
               )}
-              {["overview", "companyFinancials"].includes(activeView) && (
+              {activeView === "overview" && (
                 <Paper
                   elevation={0}
                   sx={{
