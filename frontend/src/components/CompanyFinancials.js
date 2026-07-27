@@ -1,7 +1,10 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import axios from "axios";
 import {
+  Alert,
   Box,
   Button,
+  CircularProgress,
   Dialog,
   DialogContent,
   DialogTitle,
@@ -29,8 +32,11 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
 
-const START_YEAR = 2021;
+const API_URL = `${API_BASE_URL}/company-financials`;
+const REQUEST_TIMEOUT_MS = 60 * 1000;
+
 const ALL_VALUE = "all";
 const QUARTER_OPTIONS = [
   { label: "All Quarters", value: ALL_VALUE },
@@ -63,54 +69,6 @@ const tooltipStyle = {
     fontSize: 12,
   },
 };
-
-function buildMonthlyFinancials() {
-  const today = new Date();
-  const rows = [];
-
-  for (let year = START_YEAR; year <= today.getFullYear(); year += 1) {
-    const finalMonth = year === today.getFullYear() ? today.getMonth() : 11;
-    for (let monthIndex = 0; monthIndex <= finalMonth; monthIndex += 1) {
-      const monthNumber = monthIndex + 1;
-      const sequence = (year - START_YEAR) * 12 + monthIndex;
-      const seasonalLift = Math.sin((monthIndex / 12) * Math.PI * 2) * 85000;
-      const sales = 840000 + sequence * 18500 + seasonalLift + (monthIndex % 4) * 42000;
-      const cashOnHand = 520000 + sequence * 9500 + Math.cos(monthIndex / 2) * 45000;
-      const currentRatio = 1.35 + (sequence % 18) * 0.018 + Math.sin(monthIndex / 3) * 0.06;
-      const ownerEquity = 1900000 + sequence * 31500 + Math.sin(monthIndex / 4) * 85000;
-      const debtToEquity = 0.92 - sequence * 0.004 + Math.cos(monthIndex / 3) * 0.035;
-      const debtToAssets = 0.48 - sequence * 0.0018 + Math.sin(monthIndex / 5) * 0.018;
-      const returnOnAssets = 0.055 + sequence * 0.00045 + Math.cos(monthIndex / 4) * 0.006;
-      const netIncome = 96000 + sequence * 3100 + Math.sin(monthIndex / 2) * 22000;
-
-      rows.push({
-        cashOnHand: Math.round(cashOnHand),
-        currentRatio: Number(currentRatio.toFixed(2)),
-        debtToAssets: Number(Math.max(0.18, debtToAssets).toFixed(2)),
-        debtToEquity: Number(Math.max(0.25, debtToEquity).toFixed(2)),
-        month: new Date(year, monthIndex, 1).toLocaleDateString(undefined, { month: "short", year: "2-digit" }),
-        monthNumber: String(monthNumber),
-        monthKey: `${year}-${String(monthNumber).padStart(2, "0")}`,
-        netIncome: Math.round(netIncome),
-        ownerEquity: Math.round(ownerEquity),
-        quarter: String(Math.ceil(monthNumber / 3)),
-        returnOnAssets: Number(Math.max(0.02, returnOnAssets).toFixed(3)),
-        sales: Math.round(sales),
-        year: String(year),
-      });
-    }
-  }
-
-  return rows;
-}
-
-const monthlyFinancials = buildMonthlyFinancials();
-const YEAR_OPTIONS = [
-  { label: "All Years", value: ALL_VALUE },
-  ...Array.from(new Set(monthlyFinancials.map((row) => row.year)))
-    .sort((a, b) => Number(b) - Number(a))
-    .map((year) => ({ label: year, value: year })),
-];
 
 function formatCurrency(value) {
   return new Intl.NumberFormat(undefined, {
@@ -160,7 +118,11 @@ function average(rows, key) {
   return rows.reduce((sum, row) => sum + Number(row[key] || 0), 0) / rows.length;
 }
 
-function buildProjectionRows() {
+function buildProjectionRows(monthlyFinancials) {
+  if (monthlyFinancials.length < 6) {
+    return [];
+  }
+
   const recentQuarter = monthlyFinancials.slice(-3);
   const priorQuarter = monthlyFinancials.slice(-6, -3);
   const latestRow = monthlyFinancials[monthlyFinancials.length - 1];
@@ -196,37 +158,103 @@ function InsightCard({ label, value }) {
 }
 
 export default function CompanyFinancials() {
+  const isMountedRef = useRef(true);
   const theme = useTheme();
   const brandBlue = theme.palette.primary.main;
   const brandGreen = theme.palette.secondary.main;
+  const [monthlyFinancials, setMonthlyFinancials] = useState([]);
+  const [updatedAt, setUpdatedAt] = useState("");
+  const [source, setSource] = useState("QuickBooks Online sandbox");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState("");
   const [selectedYear, setSelectedYear] = useState(ALL_VALUE);
   const [selectedQuarter, setSelectedQuarter] = useState(ALL_VALUE);
   const [selectedMonth, setSelectedMonth] = useState(ALL_VALUE);
   const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
   const [analysisTab, setAnalysisTab] = useState("analysis");
+  const displayRows = monthlyFinancials;
+  const yearOptions = useMemo(
+    () => [
+      { label: "All Years", value: ALL_VALUE },
+      ...Array.from(new Set(displayRows.map((row) => row.year)))
+        .sort((a, b) => Number(b) - Number(a))
+        .map((year) => ({ label: year, value: year })),
+    ],
+    [displayRows]
+  );
+  const fetchFinancials = useCallback(async ({ refresh = false, silent = false } = {}) => {
+    if (!isMountedRef.current) return;
+
+    if (silent) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
+    setError("");
+
+    try {
+      const response = await axios.get(API_URL, {
+        headers: getAuthHeaders(),
+        params: refresh ? { refresh: true } : undefined,
+        timeout: REQUEST_TIMEOUT_MS,
+      });
+
+      if (!isMountedRef.current) return;
+
+      setMonthlyFinancials(response.data?.rows || []);
+      setUpdatedAt(response.data?.updated_at || "");
+      setSource(response.data?.source || "QuickBooks Online sandbox");
+    } catch (requestError) {
+      if (!isMountedRef.current || handleUnauthorized(requestError)) return;
+
+      setError(getApiErrorMessage(requestError, "Unable to load QuickBooks company financials."));
+    } finally {
+      if (isMountedRef.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    fetchFinancials();
+
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, [fetchFinancials]);
+
   const filteredRows = useMemo(
     () =>
-      monthlyFinancials.filter(
+      displayRows.filter(
         (row) =>
           (selectedYear === ALL_VALUE || row.year === selectedYear) &&
           (selectedMonth !== ALL_VALUE || selectedQuarter === ALL_VALUE || row.quarter === selectedQuarter) &&
           (selectedMonth === ALL_VALUE || row.monthNumber === selectedMonth)
       ),
-    [selectedMonth, selectedQuarter, selectedYear]
+    [displayRows, selectedMonth, selectedQuarter, selectedYear]
   );
-  const chartRows = filteredRows.length ? filteredRows : monthlyFinancials;
-  const projectionRows = useMemo(() => buildProjectionRows(), []);
-  const latestMonth = monthlyFinancials[monthlyFinancials.length - 1];
-  const recentQuarter = monthlyFinancials.slice(-3);
-  const priorQuarter = monthlyFinancials.slice(-6, -3);
+  const chartRows = filteredRows.length ? filteredRows : displayRows;
+  const projectionRows = useMemo(() => buildProjectionRows(displayRows), [displayRows]);
+  const latestMonth = displayRows[displayRows.length - 1] || {};
+  const recentQuarter = displayRows.slice(-3);
+  const priorQuarter = displayRows.slice(-6, -3);
   const recentSalesAverage = average(recentQuarter, "sales");
   const priorSalesAverage = average(priorQuarter, "sales");
   const salesChange = priorSalesAverage ? ((recentSalesAverage - priorSalesAverage) / priorSalesAverage) * 100 : 0;
   const projectedQuarterSales = projectionRows.reduce((sum, row) => sum + row.sales, 0);
   const projectedQuarterNetIncome = projectionRows.reduce((sum, row) => sum + row.netIncome, 0);
+  const updatedLabel = updatedAt ? new Date(updatedAt).toLocaleString() : "";
 
   return (
     <Stack spacing={2.5}>
+      {error ? (
+        <Alert severity="error" sx={{ borderRadius: 2 }}>
+          {error}
+        </Alert>
+      ) : null}
       <Paper
         elevation={0}
         sx={{
@@ -246,7 +274,7 @@ export default function CompanyFinancials() {
                 onChange={(event) => setSelectedYear(event.target.value)}
                 value={selectedYear}
               >
-                {YEAR_OPTIONS.map((option) => (
+                {yearOptions.map((option) => (
                   <MenuItem key={option.value} value={option.value}>
                     {option.label}
                   </MenuItem>
@@ -284,18 +312,48 @@ export default function CompanyFinancials() {
               </Select>
             </FormControl>
           </Stack>
-          <Button onClick={() => setIsAnalysisOpen(true)} sx={{ fontWeight: 800 }} variant="contained">
-            AI Analysis
-          </Button>
+          <Stack alignItems={{ xs: "stretch", sm: "center" }} direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+            <Stack spacing={0.25}>
+              <Typography color="text.secondary" variant="caption">
+                {source}
+              </Typography>
+              {updatedLabel ? (
+                <Typography color="text.secondary" variant="caption">
+                  Updated {updatedLabel}
+                </Typography>
+              ) : null}
+            </Stack>
+            <Button disabled={isRefreshing} onClick={() => fetchFinancials({ refresh: true, silent: true })} sx={{ fontWeight: 800 }} variant="outlined">
+              {isRefreshing ? "Refreshing" : "Refresh"}
+            </Button>
+            <Button onClick={() => setIsAnalysisOpen(true)} sx={{ fontWeight: 800 }} variant="contained">
+              AI Analysis
+            </Button>
+          </Stack>
         </Stack>
       </Paper>
 
+      {isLoading ? (
+        <Paper elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 4 }}>
+          <Stack alignItems="center" spacing={1.5}>
+            <CircularProgress size={28} />
+            <Typography color="text.secondary">Loading QuickBooks financials...</Typography>
+          </Stack>
+        </Paper>
+      ) : null}
+
+      {!isLoading && !error && !displayRows.length ? (
+        <Alert severity="info" sx={{ borderRadius: 2 }}>
+          QuickBooks returned no financial rows for the configured sandbox company.
+        </Alert>
+      ) : null}
+
       <ChartPanel
-        subtitle={`All-time dummy monthly sales from 2021 through the current month (${monthlyFinancials.length.toLocaleString()} values).`}
+        subtitle={`Monthly sales from ${source} (${displayRows.length.toLocaleString()} values).`}
         title="Monthly Sales"
       >
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={monthlyFinancials} margin={{ top: 8, right: 20, bottom: 8, left: 8 }}>
+          <LineChart data={displayRows} margin={{ top: 8, right: 20, bottom: 8, left: 8 }}>
             <CartesianGrid stroke="#f1f5f9" strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="month" minTickGap={28} tick={{ fontSize: 11 }} />
             <YAxis tick={{ fontSize: 11 }} tickFormatter={(value) => `$${Math.round(value / 1000)}k`} />
@@ -306,7 +364,7 @@ export default function CompanyFinancials() {
       </ChartPanel>
 
       <Box sx={{ display: "grid", gap: 2.5, gridTemplateColumns: { xs: "1fr", xl: "1fr 1fr" } }}>
-        <ChartPanel subtitle="Grouped bar chart showing placeholder liquidity measures." title="Cash on Hand & Current Ratio">
+        <ChartPanel subtitle="Grouped bar chart showing QuickBooks liquidity measures." title="Cash on Hand & Current Ratio">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartRows} margin={{ top: 8, right: 20, bottom: 8, left: 8 }}>
               <CartesianGrid stroke="#f1f5f9" strokeDasharray="3 3" vertical={false} />
@@ -356,7 +414,7 @@ export default function CompanyFinancials() {
           </ResponsiveContainer>
         </ChartPanel>
 
-        <ChartPanel subtitle="Blue line chart with placeholder monthly net income values." title="Net Income">
+        <ChartPanel subtitle="Blue line chart with monthly QuickBooks net income values." title="Net Income">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartRows} margin={{ top: 8, right: 20, bottom: 8, left: 8 }}>
               <CartesianGrid stroke="#f1f5f9" strokeDasharray="3 3" vertical={false} />
@@ -389,10 +447,10 @@ export default function CompanyFinancials() {
                 <InsightCard label="Recent Sales Change" value={`${salesChange.toFixed(1)}%`} />
               </Box>
               <Typography color="text.secondary">
-                Dummy AI readout: sales are trending upward over the latest quarter, while net income remains positive with moderate month-to-month volatility. Liquidity is stable in the placeholder model, with cash on hand continuing to rise and the current ratio holding above operating comfort levels.
+                QuickBooks readout: sales changed {salesChange.toFixed(1)}% versus the prior comparable quarter. Net income is {formatCurrency(latestMonth.netIncome)} in the latest month, with liquidity shown by cash on hand and current ratio across the selected period.
               </Typography>
               <Typography color="text.secondary">
-                Balance sheet indicators show owner equity expanding while leverage ratios gradually improve. The dummy data suggests the company could sustain near-term investment without materially weakening its debt profile.
+                Balance sheet indicators show owner equity, leverage, and return on assets from the connected QuickBooks sandbox reports. Use refresh to pull the latest report values after sandbox changes.
               </Typography>
             </Stack>
           ) : null}
@@ -400,10 +458,10 @@ export default function CompanyFinancials() {
           {analysisTab === "snipits" ? (
             <Stack spacing={1.5}>
               {[
-                "Monthly sales remain above the long-term dummy trend line.",
-                "Cash on hand has increased across the latest rolling quarter.",
-                "Debt-to-equity continues to edge down as owner equity grows.",
-                "Return on assets is improving gradually, but not sharply enough to suggest an unusual one-time spike.",
+                `Latest monthly sales are ${formatCurrency(latestMonth.sales)}.`,
+                `Latest monthly net income is ${formatCurrency(latestMonth.netIncome)}.`,
+                `Cash on hand is ${formatCurrency(latestMonth.cashOnHand)} in the latest QuickBooks balance sheet period.`,
+                `Debt-to-equity is ${formatRatio(latestMonth.debtToEquity)} and return on assets is ${formatPercent(latestMonth.returnOnAssets)}.`,
               ].map((snippet) => (
                 <Paper key={snippet} elevation={0} sx={{ backgroundColor: "#F8FAFC", border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2 }}>
                   <Typography color="text.secondary">{snippet}</Typography>
@@ -419,7 +477,7 @@ export default function CompanyFinancials() {
                 <InsightCard label="Projected Next Quarter Net Income" value={formatCurrency(projectedQuarterNetIncome)} />
               </Box>
               <Typography color="text.secondary">
-                Dummy AI projection: using the latest quarter-over-quarter trend, next quarter sales are projected to continue increasing at a measured pace. Net income is projected to stay positive, with expected seasonal variation month to month.
+                QuickBooks projection: using the latest quarter-over-quarter trend, next quarter sales and net income are estimated from the connected sandbox report history.
               </Typography>
               <Stack spacing={1}>
                 {projectionRows.map((row) => (

@@ -43,6 +43,28 @@ By default, the frontend calls `http://localhost:8000`. To use a different backe
 
 Signup requires a password with at least 8 characters.
 
+## QuickBooks Company Financials
+
+The management dashboard's Company Financials view reads QuickBooks Online sandbox reports through the authenticated backend endpoint:
+
+```http
+GET /company-financials
+```
+
+Set these values in the repo `.env` file to connect a sandbox company:
+
+```bash
+QUICKBOOKS_CLIENT_ID=
+QUICKBOOKS_CLIENT_SECRET=
+QUICKBOOKS_REFRESH_TOKEN=
+QUICKBOOKS_REALM_ID=
+QUICKBOOKS_ENVIRONMENT=sandbox
+QUICKBOOKS_MINOR_VERSION=75
+QUICKBOOKS_FINANCIALS_START_YEAR=2021
+```
+
+The service refreshes the OAuth access token, loads monthly ProfitAndLoss and BalanceSheet reports, and normalizes them into the existing chart fields for sales, net income, cash, liquidity, equity, leverage, and return on assets.
+
 ## Software Inventory
 
 The Software Inventory feature tracks software and data subscriptions used by the management dashboard. The frontend calls the authenticated `/software-subscriptions` API and manages search, filtering, sorting, pagination, detail display, CSV export, and CRUD workflows.
