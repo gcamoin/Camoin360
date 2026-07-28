@@ -50,12 +50,23 @@ const monthOptions = [
   { label: "November", value: "11" },
   { label: "December", value: "12" },
 ];
+const calendarMonths = monthOptions
+  .filter((option) => option.value !== ALL_VALUE)
+  .map((option) => ({
+    label: option.label,
+    shortLabel: option.label.slice(0, 3),
+    value: option.value,
+  }));
 
 const serviceLines = [
   { key: "prospecting", label: "Prospecting", base: 210000, growth: 4200 },
   { key: "impact_analysis", label: "Impact Analysis", base: 185000, growth: 3600 },
   { key: "real_estate", label: "Real Estate", base: 165000, growth: 3100 },
   { key: "strategic_planning", label: "Strategic Planning", base: 195000, growth: 3900 },
+  { key: "housing", label: "Housing", base: 142000, growth: 2800 },
+  { key: "target_industry_analytics", label: "Target Industry Analytics", base: 156000, growth: 3300 },
+  { key: "workforce", label: "Workforce", base: 128000, growth: 2600 },
+  { key: "prospect_engage", label: "ProspectEngage", base: 118000, growth: 2400 },
 ];
 
 const tooltipStyle = {
@@ -72,12 +83,11 @@ function buildMonthlyRows() {
   const rows = [];
 
   for (let year = START_YEAR; year <= today.getFullYear(); year += 1) {
-    const finalMonth = year === today.getFullYear() ? today.getMonth() : 11;
-    for (let monthIndex = 0; monthIndex <= finalMonth; monthIndex += 1) {
+    for (let monthIndex = 0; monthIndex < 12; monthIndex += 1) {
       const monthNumber = monthIndex + 1;
       const sequence = (year - START_YEAR) * 12 + monthIndex;
       const row = {
-        month: new Date(year, monthIndex, 1).toLocaleDateString(undefined, { month: "short", year: "2-digit" }),
+        month: calendarMonths[monthIndex].shortLabel,
         monthNumber: String(monthNumber),
         monthKey: `${year}-${String(monthNumber).padStart(2, "0")}`,
         quarter: `Q${Math.ceil(monthNumber / 3)}`,
@@ -96,6 +106,22 @@ function buildMonthlyRows() {
   }
 
   return rows;
+}
+
+function buildCalendarMonthRows(rows) {
+  return calendarMonths.map((calendarMonth) => {
+    const matchingRows = rows.filter((row) => row.monthNumber === calendarMonth.value);
+    const monthRow = {
+      month: calendarMonth.shortLabel,
+      monthNumber: calendarMonth.value,
+    };
+
+    for (const serviceLine of serviceLines) {
+      monthRow[serviceLine.key] = matchingRows.reduce((sum, row) => sum + Number(row[serviceLine.key] || 0), 0);
+    }
+
+    return monthRow;
+  });
 }
 
 const monthlyRows = buildMonthlyRows();
@@ -181,7 +207,7 @@ function FinancialBarChart({ color, data, dataKey, title }) {
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 8, right: 18, bottom: 8, left: 0 }}>
             <CartesianGrid stroke="#f1f5f9" strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="month" minTickGap={20} tick={{ fontSize: 11 }} />
+            <XAxis dataKey="month" interval={0} minTickGap={0} tick={{ fontSize: 11 }} />
             <YAxis tick={{ fontSize: 11 }} tickFormatter={(value) => `$${Math.round(value / 1000)}k`} />
             <Tooltip {...tooltipStyle} formatter={(value) => [formatCurrency(value), title]} />
             <Bar dataKey={dataKey} fill={color} fillOpacity={0.88} maxBarSize={44} radius={[3, 3, 0, 0]} />
@@ -209,11 +235,21 @@ export default function ServiceLineFinancials() {
       ),
     [month, quarter, year]
   );
-  const colors = [theme.palette.primary.main, theme.palette.secondary.main, "#2a78d6", "#7c8a2e"];
+  const chartMonthlyRows = useMemo(() => buildCalendarMonthRows(visibleMonthlyRows), [visibleMonthlyRows]);
+  const colors = [
+    theme.palette.primary.main,
+    theme.palette.secondary.main,
+    "#2a78d6",
+    "#7c8a2e",
+    "#0d9488",
+    "#b45309",
+    "#7c3aed",
+    "#475569",
+  ];
   const projectionRows = useMemo(() => buildServiceLineProjections(), []);
   const totals = serviceLines.map((serviceLine) => ({
     label: serviceLine.label,
-    total: visibleMonthlyRows.reduce((sum, row) => sum + Number(row[serviceLine.key] || 0), 0),
+    total: chartMonthlyRows.reduce((sum, row) => sum + Number(row[serviceLine.key] || 0), 0),
   }));
   const topLine = [...totals].sort((a, b) => b.total - a.total)[0];
 
@@ -288,7 +324,7 @@ export default function ServiceLineFinancials() {
         {serviceLines.map((serviceLine, index) => (
           <FinancialBarChart
             color={colors[index % colors.length]}
-            data={visibleMonthlyRows}
+            data={chartMonthlyRows}
             dataKey={serviceLine.key}
             key={serviceLine.key}
             title={serviceLine.label}
@@ -318,7 +354,7 @@ export default function ServiceLineFinancials() {
                 Dummy AI readout: service line revenue remains broad-based, with {topLine?.label || "the leading line"} carrying the strongest visible-period contribution. Monthly and quarterly views should be used together: monthly bars show volatility, while quarterly bars smooth the project timing.
               </Typography>
               <Typography color="text.secondary">
-                The placeholder data suggests steady expansion across consulting lines, with Prospecting and Strategic Planning showing the most consistent upward drift in the recent dummy history.
+                The placeholder data suggests steady expansion across consulting lines, with Prospecting, Strategic Planning, Housing, Target Industry Analytics, Workforce, and ProspectEngage showing varied monthly project timing in the recent dummy history.
               </Typography>
             </Stack>
           ) : null}
@@ -329,7 +365,7 @@ export default function ServiceLineFinancials() {
                 "Quarter and month filters now narrow the monthly service-line bars directly.",
                 "Filtering by quarter is useful for comparing planning periods without changing the chart format.",
                 "Filtering by month is useful for spotting project timing spikes and dips.",
-                "Real Estate and Impact Analysis show steadier dummy month-to-month changes than Prospecting.",
+                "Housing, Target Industry Analytics, Workforce, and ProspectEngage use placeholder monthly revenue until the live service-line source is wired in.",
               ].map((snippet) => (
                 <Paper key={snippet} elevation={0} sx={{ backgroundColor: "#F8FAFC", border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2 }}>
                   <Typography color="text.secondary">{snippet}</Typography>

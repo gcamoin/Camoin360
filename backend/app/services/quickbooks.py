@@ -99,6 +99,46 @@ def _month_date_range(year: int, month: int) -> tuple[str, str]:
     return start.isoformat(), date.fromordinal(end.toordinal() - 1).isoformat()
 
 
+def _build_sample_month_row(year: int, month: int) -> dict[str, Any]:
+    month_index = month - 1
+    sequence = (year - DEFAULT_START_YEAR) * 12 + month_index
+    seasonal = 42000 * ((month_index % 4) - 1.5)
+    sales = 740000 + sequence * 8200 + seasonal
+    net_income = sales * (0.16 + ((month_index % 3) - 1) * 0.012)
+    cash_on_hand = 980000 + sequence * 5600 + month_index * 17000
+    owner_equity = 4100000 + sequence * 21000
+    total_assets = 6200000 + sequence * 26000
+    total_liabilities = total_assets - owner_equity
+
+    return {
+        "cashOnHand": round(cash_on_hand),
+        "currentRatio": round(1.62 + (month_index % 5) * 0.04, 2),
+        "debtToAssets": round(total_liabilities / total_assets, 2),
+        "debtToEquity": round(total_liabilities / owner_equity, 2),
+        "month": _month_label(year, month),
+        "monthNumber": str(month),
+        "monthKey": _month_key(year, month),
+        "netIncome": round(net_income),
+        "ownerEquity": round(owner_equity),
+        "quarter": str(((month - 1) // 3) + 1),
+        "returnOnAssets": round(net_income / total_assets, 3),
+        "sales": round(sales),
+        "year": str(year),
+    }
+
+
+def _load_sample_financials() -> dict[str, Any]:
+    return {
+        "cache_ttl_seconds": CACHE_TTL_SECONDS,
+        "rows": [
+            _build_sample_month_row(year, month)
+            for year, month in _iter_months(DEFAULT_START_YEAR)
+        ],
+        "source": "Sample QuickBooks financials",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def _find_named_value(rows: list[dict[str, Any]], names: tuple[str, ...]) -> float:
     wanted = tuple(name.lower() for name in names)
     for row in rows:
@@ -309,7 +349,11 @@ async def get_company_financials(force_refresh: bool = False) -> dict[str, Any]:
     ):
         return _cache["data"]
 
-    data = await _load_live_financials()
+    try:
+        data = await _load_live_financials()
+    except QuickBooksConfigurationError:
+        data = _load_sample_financials()
+
     _cache["loaded_at"] = datetime.now(timezone.utc)
     _cache["data"] = data
     return data
