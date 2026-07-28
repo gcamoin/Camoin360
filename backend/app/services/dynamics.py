@@ -59,7 +59,12 @@ PE_CLIENT_MAX_LIMIT = 5000
 PE_CLIENT_REQUEST_TIMEOUT_SECONDS = 60
 PE_QUALIFIED_LEAD_DEFAULT_LIMIT = 1000
 PE_QUALIFIED_LEAD_MAX_LIMIT = 5000
-PE_QUALIFIED_LEAD_STATUS_LABEL = "Pending-Sent to Client"
+PE_QUALIFIED_LEAD_STATUS_FIELD = "cr73c_leadstatus"
+PE_QUALIFIED_LEAD_STATUS_LABEL = "Qualified"
+PE_QUALIFIED_LEAD_INTERNAL_CLIENTS = {
+    "camoin marketing",
+    "camoin, marketing",
+}
 MARKETING_LIST_ACCOUNT_WEBSITE_VISIT_RELATIONSHIP_CANDIDATES = (
     "cr73c_lfapp_websitevisit",
 )
@@ -2888,14 +2893,11 @@ def _month_date_window(year: int, month: int | None = None) -> tuple[str, str]:
 
 def _matches_pe_qualified_status(record: dict) -> bool:
     target = PE_QUALIFIED_LEAD_STATUS_LABEL.casefold()
-    for key, value in record.items():
-        if not key.endswith("@OData.Community.Display.V1.FormattedValue"):
-            continue
+    formatted_value = get_formatted_value(record, PE_QUALIFIED_LEAD_STATUS_FIELD)
+    if str(formatted_value or "").strip().casefold() == target:
+        return True
 
-        if str(value or "").strip().casefold() == target:
-            return True
-
-    return any(str(value or "").strip().casefold() == target for value in record.values())
+    return str(record.get(PE_QUALIFIED_LEAD_STATUS_FIELD) or "").strip().casefold() == target
 
 
 def _get_prospect_client_name(record: dict) -> str:
@@ -2917,6 +2919,11 @@ def _canonical_pe_client_name(client_name: str) -> str:
             return canonical_name
 
     return str(client_name or "").strip()
+
+
+def _is_internal_pe_lead_client(client_name: str) -> bool:
+    normalized_name = " ".join(str(client_name or "").strip().casefold().split())
+    return normalized_name in PE_QUALIFIED_LEAD_INTERNAL_CLIENTS
 
 
 def _build_pe_qualified_lead_rollups(rows: list[dict]) -> list[dict]:
@@ -2970,6 +2977,12 @@ async def get_pe_qualified_leads(year: int | None = None, month: int | None = No
                     continue
 
                 client_name = _canonical_pe_client_name(_get_prospect_client_name(record))
+                if not client_name:
+                    continue
+
+                if _is_internal_pe_lead_client(client_name):
+                    continue
+
                 rows.append(
                     {
                         "id": record.get("new_prospectid"),

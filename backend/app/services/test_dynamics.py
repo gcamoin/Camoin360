@@ -1296,7 +1296,28 @@ class PEQualifiedLeadQueryTest(unittest.IsolatedAsyncioTestCase):
                     "new_prospectid": "prospect-1",
                     "new_prospectname": "Example Prospect",
                     "new_client": "Upstate SC Alliance",
+                    "cr73c_leadstatus@OData.Community.Display.V1.FormattedValue": "Qualified",
+                    "createdon": "2026-01-01T00:00:00Z",
+                },
+                {
+                    "new_prospectid": "prospect-2",
+                    "new_prospectname": "Pending Prospect",
+                    "new_client": "Upstate SC Alliance",
                     "cr73c_leadstatus@OData.Community.Display.V1.FormattedValue": "Pending-Sent to Client",
+                    "createdon": "2026-01-01T00:00:00Z",
+                },
+                {
+                    "new_prospectid": "prospect-3",
+                    "new_prospectname": "Internal Prospect",
+                    "new_client": "Camoin, Marketing",
+                    "cr73c_leadstatus@OData.Community.Display.V1.FormattedValue": "Qualified",
+                    "createdon": "2026-01-01T00:00:00Z",
+                },
+                {
+                    "new_prospectid": "prospect-4",
+                    "new_prospectname": "Blank Project Prospect",
+                    "new_client": "",
+                    "cr73c_leadstatus@OData.Community.Display.V1.FormattedValue": "Qualified",
                     "createdon": "2026-01-01T00:00:00Z",
                 }
             ]
@@ -1312,6 +1333,8 @@ class PEQualifiedLeadQueryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result["year"])
         self.assertIsNone(result["month"])
         self.assertEqual(result["from"], "2000-01-01T00:00:00Z")
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["status"], "Qualified")
         self.assertEqual(result["rollups"], [{"client_name": "Upstate South Carolina Alliance", "qualified_leads": 1}])
         requested_url = next(url for url in FakeAsyncClient.requested_urls if "/new_prospects?" in url)
         self.assertIn("createdon ge 2000-01-01T00:00:00Z", requested_url)

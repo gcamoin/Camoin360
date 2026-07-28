@@ -65,7 +65,7 @@ export default function PEQualifiedLeads() {
   const [selectedMonth, setSelectedMonth] = useState("");
   const [leads, setLeads] = useState([]);
   const [rollups, setRollups] = useState([]);
-  const [statusLabel, setStatusLabel] = useState("Pending-Sent to Client");
+  const [statusLabel, setStatusLabel] = useState("Qualified");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -93,7 +93,7 @@ export default function PEQualifiedLeads() {
 
       setLeads(response.data?.data || []);
       setRollups(response.data?.rollups || []);
-      setStatusLabel(response.data?.status || "Pending-Sent to Client");
+      setStatusLabel(response.data?.status || "Qualified");
     } catch (fetchError) {
       if (handleUnauthorized(fetchError)) {
         return;
@@ -142,7 +142,11 @@ export default function PEQualifiedLeads() {
     const counts = new Map();
 
     for (const lead of leads) {
-      const clientName = lead.client_name || "Missing";
+      const clientName = String(lead.client_name || "").trim();
+      if (!clientName) {
+        continue;
+      }
+
       counts.set(clientName, (counts.get(clientName) || 0) + 1);
     }
 
