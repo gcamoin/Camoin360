@@ -22,6 +22,7 @@ const dashboardOptions = [
   { value: "prospecting", label: "Prospecting" },
   { value: "consulting", label: "Consulting" },
   { value: "management", label: "Management" },
+  { value: "consulting", label: "Consulting" },
 ];
 
 export default function Login({ onLogin, onShowSignup }) {

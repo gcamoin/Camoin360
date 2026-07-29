@@ -29,7 +29,7 @@ import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } 
 const API_URL = `${API_BASE_URL}/productivity/employee-hours`;
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const CURRENT_YEAR = new Date().getFullYear();
-const YEAR_OPTIONS = Array.from({ length: 6 }, (_, index) => CURRENT_YEAR - index);
+const YEAR_OPTIONS = Array.from({ length: CURRENT_YEAR - 2022 + 1 }, (_, index) => CURRENT_YEAR - index);
 const MONTH_OPTIONS = [
   { label: "All Months", value: "" },
   { label: "January", value: 1 },
@@ -109,7 +109,7 @@ export default function EmployeeProductivity() {
     weeks: 12,
     updated_at: "",
   });
-  const [selectedYear, setSelectedYear] = useState(CURRENT_YEAR);
+  const [selectedYear, setSelectedYear] = useState("");
   const [selectedMonth, setSelectedMonth] = useState("");
   const [selectedEmployee, setSelectedEmployee] = useState(ALL_EMPLOYEES_VALUE);
   const [selectedBilling, setSelectedBilling] = useState("all");
@@ -140,7 +140,10 @@ export default function EmployeeProductivity() {
     }
 
     try {
-      const params = { year: selectedYear };
+      const params = {};
+      if (selectedYear) {
+        params.year = selectedYear;
+      }
       if (selectedMonth) {
         params.month = selectedMonth;
       }
@@ -332,9 +335,16 @@ export default function EmployeeProductivity() {
             <Select
               label="Year"
               labelId="weekly-hours-year-label"
-              onChange={(event) => setSelectedYear(Number(event.target.value))}
+              onChange={(event) => {
+                const year = event.target.value;
+                setSelectedYear(year === "" ? "" : Number(year));
+                if (year === "") {
+                  setSelectedMonth("");
+                }
+              }}
               value={selectedYear}
             >
+              <MenuItem value="">All Years (Since 2022)</MenuItem>
               {YEAR_OPTIONS.map((year) => (
                 <MenuItem key={year} value={year}>
                   {year}
@@ -347,6 +357,7 @@ export default function EmployeeProductivity() {
             <Select
               label="Month"
               labelId="weekly-hours-month-label"
+              disabled={!selectedYear}
               onChange={(event) => setSelectedMonth(event.target.value)}
               value={selectedMonth}
             >

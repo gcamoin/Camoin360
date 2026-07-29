@@ -3,7 +3,7 @@ import json
 import re
 from calendar import monthrange
 from collections import defaultdict
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -19,7 +19,7 @@ load_dotenv(BACKEND_ROOT / ".env")
 HARVEST_ACCESS_TOKEN = os.getenv("HARVEST_ACCESS_TOKEN")
 HARVEST_ACCOUNT_ID = os.getenv("HARVEST_ACCOUNT_ID")
 HARVEST_API_BASE = os.getenv("HARVEST_API_BASE", "https://api.harvestapp.com/v2").rstrip("/")
-HARVEST_WINDOW_WEEKS = 12
+HARVEST_HISTORY_START_DATE = date.fromisoformat(os.getenv("HARVEST_HISTORY_START_DATE", "2022-01-01"))
 EMPLOYEE_PRODUCTIVITY_SYNC_STALE_SECONDS = int(os.getenv("EMPLOYEE_PRODUCTIVITY_SYNC_STALE_SECONDS", "1800"))
 PROSPECT_ENGAGE_PATTERN = re.compile(r"\b(?:prospect\s*engage|prospect-?engage|pe)\b", re.IGNORECASE)
 DEFAULT_PROSPECT_ENGAGE_EMPLOYEE_NAMES = {"garrett", "jacob"}
@@ -176,10 +176,10 @@ async def _load_employee_weekly_hours_from_harvest(year=None, month=None):
         end_date = date(year, month, monthrange(year, month)[1])
     elif year:
         start_date = date(year, 1, 1)
-        end_date = date(year, 12, 31)
+        end_date = min(date(year, 12, 31), date.today())
     else:
         end_date = date.today()
-        start_date = end_date - timedelta(weeks=HARVEST_WINDOW_WEEKS) + timedelta(days=1)
+        start_date = HARVEST_HISTORY_START_DATE
 
     average_weeks = max((end_date - start_date).days + 1, 1) / 7
     hours_by_employee = defaultdict(lambda: {"billable": 0.0, "non_billable": 0.0})
@@ -212,7 +212,7 @@ async def _load_employee_weekly_hours_from_harvest(year=None, month=None):
 
 
 def _employee_productivity_cache_key(year=None, month=None) -> str:
-    return f"{year or 'rolling'}:{month or 'all'}"
+    return f"{year or 'history'}:{month or 'all'}"
 
 
 def _employee_productivity_empty_payload(year=None, month=None) -> dict:
@@ -221,10 +221,10 @@ def _employee_productivity_empty_payload(year=None, month=None) -> dict:
         end_date = date(year, month, monthrange(year, month)[1])
     elif year:
         start_date = date(year, 1, 1)
-        end_date = date(year, 12, 31)
+        end_date = min(date(year, 12, 31), date.today())
     else:
         end_date = date.today()
-        start_date = end_date - timedelta(weeks=HARVEST_WINDOW_WEEKS) + timedelta(days=1)
+        start_date = HARVEST_HISTORY_START_DATE
 
     return {
         "employees": [],
