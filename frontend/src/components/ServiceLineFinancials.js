@@ -224,6 +224,7 @@ export default function ServiceLineFinancials() {
   const [quarter, setQuarter] = useState(ALL_VALUE);
   const [month, setMonth] = useState(ALL_VALUE);
   const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
+  const [isAnalysisGenerated, setIsAnalysisGenerated] = useState(false);
   const [analysisTab, setAnalysisTab] = useState("analysis");
   const visibleMonthlyRows = useMemo(
     () =>
@@ -313,7 +314,15 @@ export default function ServiceLineFinancials() {
                 </Select>
               </FormControl>
             </Stack>
-            <Button onClick={() => setIsAnalysisOpen(true)} sx={{ fontWeight: 800 }} variant="contained">
+            <Button
+              onClick={() => {
+                setIsAnalysisGenerated(false);
+                setAnalysisTab("analysis");
+                setIsAnalysisOpen(true);
+              }}
+              sx={{ fontWeight: 800 }}
+              variant="contained"
+            >
               AI Analysis
             </Button>
           </Stack>
@@ -333,18 +342,36 @@ export default function ServiceLineFinancials() {
       </Box>
 
       <Dialog fullWidth maxWidth="md" onClose={() => setIsAnalysisOpen(false)} open={isAnalysisOpen}>
-        <DialogTitle sx={{ borderBottom: "1px solid", borderColor: "divider", pb: 0 }}>
+        <DialogTitle sx={{ borderBottom: "1px solid", borderColor: "divider", pb: isAnalysisGenerated ? 0 : 2 }}>
           <Typography color="text.primary" fontWeight={800} variant="h6">
             AI Service Line Financial Analysis
           </Typography>
-          <Tabs onChange={(_event, value) => setAnalysisTab(value)} sx={{ mt: 1 }} value={analysisTab}>
-            <Tab label="Analysis" value="analysis" />
-            <Tab label="Snipits" value="snipits" />
-            <Tab label="Projections" value="projections" />
-          </Tabs>
+          {isAnalysisGenerated ? (
+            <Tabs onChange={(_event, value) => setAnalysisTab(value)} sx={{ mt: 1 }} value={analysisTab}>
+              <Tab label="Analysis" value="analysis" />
+              <Tab label="Snipits" value="snipits" />
+              <Tab label="Projections" value="projections" />
+            </Tabs>
+          ) : null}
         </DialogTitle>
         <DialogContent sx={{ p: 3 }}>
-          {analysisTab === "analysis" ? (
+          {!isAnalysisGenerated ? (
+            <Stack alignItems="center" spacing={2} sx={{ py: { xs: 3, sm: 5 }, textAlign: "center" }}>
+              <Box>
+                <Typography fontWeight={800} variant="h6">
+                  Generate an analysis of service line financials
+                </Typography>
+                <Typography color="text.secondary" sx={{ mt: 0.75 }}>
+                  Review revenue performance, service-line trends, and projections using the selected reporting period.
+                </Typography>
+              </Box>
+              <Button onClick={() => setIsAnalysisGenerated(true)} sx={{ fontWeight: 800, px: 3 }} variant="contained">
+                Generate AI Analysis
+              </Button>
+            </Stack>
+          ) : null}
+
+          {isAnalysisGenerated && analysisTab === "analysis" ? (
             <Stack spacing={2}>
               <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" } }}>
                 <InsightCard label="Top Service Line" value={topLine ? topLine.label : "No Data"} />
@@ -359,7 +386,7 @@ export default function ServiceLineFinancials() {
             </Stack>
           ) : null}
 
-          {analysisTab === "snipits" ? (
+          {isAnalysisGenerated && analysisTab === "snipits" ? (
             <Stack spacing={1.5}>
               {[
                 "Quarter and month filters now narrow the monthly service-line bars directly.",
@@ -374,7 +401,7 @@ export default function ServiceLineFinancials() {
             </Stack>
           ) : null}
 
-          {analysisTab === "projections" ? (
+          {isAnalysisGenerated && analysisTab === "projections" ? (
             <Stack spacing={2}>
               <Typography color="text.secondary">
                 Dummy AI projection: next quarter is projected from the latest quarter-over-quarter average monthly trend for each service line.

@@ -172,6 +172,7 @@ export default function CompanyFinancials() {
   const [selectedQuarter, setSelectedQuarter] = useState(ALL_VALUE);
   const [selectedMonth, setSelectedMonth] = useState(ALL_VALUE);
   const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
+  const [isAnalysisGenerated, setIsAnalysisGenerated] = useState(false);
   const [analysisTab, setAnalysisTab] = useState("analysis");
   const displayRows = monthlyFinancials;
   const yearOptions = useMemo(
@@ -237,6 +238,22 @@ export default function CompanyFinancials() {
     [displayRows, selectedMonth, selectedQuarter, selectedYear]
   );
   const chartRows = filteredRows.length ? filteredRows : displayRows;
+  const salesYearTicks = useMemo(
+    () =>
+      Array.from(
+        displayRows.reduce((ticksByYear, row) => {
+          if (!ticksByYear.has(row.year)) {
+            ticksByYear.set(row.year, row.month);
+          }
+          return ticksByYear;
+        }, new Map())
+      ).map(([year, month]) => ({ month, year })),
+    [displayRows]
+  );
+  const salesYearByMonth = useMemo(
+    () => Object.fromEntries(salesYearTicks.map(({ month, year }) => [month, year])),
+    [salesYearTicks]
+  );
   const projectionRows = useMemo(() => buildProjectionRows(displayRows), [displayRows]);
   const latestMonth = displayRows[displayRows.length - 1] || {};
   const recentQuarter = displayRows.slice(-3);
@@ -326,7 +343,15 @@ export default function CompanyFinancials() {
             <Button disabled={isRefreshing} onClick={() => fetchFinancials({ refresh: true, silent: true })} sx={{ fontWeight: 800 }} variant="outlined">
               {isRefreshing ? "Refreshing" : "Refresh"}
             </Button>
-            <Button onClick={() => setIsAnalysisOpen(true)} sx={{ fontWeight: 800 }} variant="contained">
+            <Button
+              onClick={() => {
+                setIsAnalysisGenerated(false);
+                setAnalysisTab("analysis");
+                setIsAnalysisOpen(true);
+              }}
+              sx={{ fontWeight: 800 }}
+              variant="contained"
+            >
               AI Analysis
             </Button>
           </Stack>
@@ -355,7 +380,12 @@ export default function CompanyFinancials() {
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={displayRows} margin={{ top: 8, right: 20, bottom: 8, left: 8 }}>
             <CartesianGrid stroke="#f1f5f9" strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="month" minTickGap={28} tick={{ fontSize: 11 }} />
+            <XAxis
+              dataKey="month"
+              tick={{ fontSize: 11 }}
+              tickFormatter={(month) => salesYearByMonth[month] || month}
+              ticks={salesYearTicks.map(({ month }) => month)}
+            />
             <YAxis tick={{ fontSize: 11 }} tickFormatter={(value) => `$${Math.round(value / 1000)}k`} />
             <Tooltip {...tooltipStyle} formatter={(value) => [formatCurrency(value), "Sales"]} />
             <Line dataKey="sales" dot={false} name="Monthly Sales" stroke={brandBlue} strokeWidth={2.5} type="monotone" />
@@ -428,18 +458,36 @@ export default function CompanyFinancials() {
       </Box>
 
       <Dialog fullWidth maxWidth="md" onClose={() => setIsAnalysisOpen(false)} open={isAnalysisOpen}>
-        <DialogTitle sx={{ borderBottom: "1px solid", borderColor: "divider", pb: 0 }}>
+        <DialogTitle sx={{ borderBottom: "1px solid", borderColor: "divider", pb: isAnalysisGenerated ? 0 : 2 }}>
           <Typography color="text.primary" fontWeight={800} variant="h6">
             AI Financial Analysis
           </Typography>
-          <Tabs onChange={(_event, value) => setAnalysisTab(value)} sx={{ mt: 1 }} value={analysisTab}>
-            <Tab label="Analysis" value="analysis" />
-            <Tab label="Snipits" value="snipits" />
-            <Tab label="Projections" value="projections" />
-          </Tabs>
+          {isAnalysisGenerated ? (
+            <Tabs onChange={(_event, value) => setAnalysisTab(value)} sx={{ mt: 1 }} value={analysisTab}>
+              <Tab label="Analysis" value="analysis" />
+              <Tab label="Snipits" value="snipits" />
+              <Tab label="Projections" value="projections" />
+            </Tabs>
+          ) : null}
         </DialogTitle>
         <DialogContent sx={{ p: 3 }}>
-          {analysisTab === "analysis" ? (
+          {!isAnalysisGenerated ? (
+            <Stack alignItems="center" spacing={2} sx={{ py: { xs: 3, sm: 5 }, textAlign: "center" }}>
+              <Box>
+                <Typography fontWeight={800} variant="h6">
+                  Generate an analysis of company financials
+                </Typography>
+                <Typography color="text.secondary" sx={{ mt: 0.75 }}>
+                  Review the current financial data, trends, and projections using the selected reporting period.
+                </Typography>
+              </Box>
+              <Button onClick={() => setIsAnalysisGenerated(true)} sx={{ fontWeight: 800, px: 3 }} variant="contained">
+                Generate AI Analysis
+              </Button>
+            </Stack>
+          ) : null}
+
+          {isAnalysisGenerated && analysisTab === "analysis" ? (
             <Stack spacing={2}>
               <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr 1fr" } }}>
                 <InsightCard label="Latest Sales" value={formatCurrency(latestMonth.sales)} />
@@ -455,7 +503,7 @@ export default function CompanyFinancials() {
             </Stack>
           ) : null}
 
-          {analysisTab === "snipits" ? (
+          {isAnalysisGenerated && analysisTab === "snipits" ? (
             <Stack spacing={1.5}>
               {[
                 `Latest monthly sales are ${formatCurrency(latestMonth.sales)}.`,
@@ -470,7 +518,7 @@ export default function CompanyFinancials() {
             </Stack>
           ) : null}
 
-          {analysisTab === "projections" ? (
+          {isAnalysisGenerated && analysisTab === "projections" ? (
             <Stack spacing={2}>
               <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" } }}>
                 <InsightCard label="Projected Next Quarter Sales" value={formatCurrency(projectedQuarterSales)} />
