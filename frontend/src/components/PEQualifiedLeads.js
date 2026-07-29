@@ -166,51 +166,6 @@ export default function PEQualifiedLeads() {
           border: "1px solid",
           borderColor: "divider",
           borderRadius: 2,
-          p: 2,
-          backgroundColor: "common.white",
-        }}
-      >
-        <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}>
-          <FormControl size="small" sx={{ minWidth: 132 }}>
-            <InputLabel id="pe-leads-year-label">Year</InputLabel>
-            <Select
-              label="Year"
-              labelId="pe-leads-year-label"
-              onChange={(event) => setSelectedYear(event.target.value)}
-              value={selectedYear}
-            >
-              {YEAR_OPTIONS.map((year) => (
-                <MenuItem key={year.value} value={year.value}>
-                  {year.label}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <FormControl size="small" sx={{ minWidth: 156 }}>
-            <InputLabel id="pe-leads-month-label">Month</InputLabel>
-            <Select
-              label="Month"
-              labelId="pe-leads-month-label"
-              disabled={selectedYear === ALL_TIME_YEAR_VALUE}
-              onChange={(event) => setSelectedMonth(event.target.value)}
-              value={selectedMonth}
-            >
-              {MONTH_OPTIONS.map((month) => (
-                <MenuItem key={month.label} value={month.value}>
-                  {month.label}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-        </Stack>
-      </Paper>
-
-      <Paper
-        elevation={0}
-        sx={{
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: 2,
           p: { xs: 2, md: 2.5 },
           backgroundColor: "common.white",
         }}

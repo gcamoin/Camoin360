@@ -330,44 +330,6 @@ export default function EmployeeProductivity() {
         }}
       >
         <Stack direction={{ xs: "column", md: "row" }} spacing={1.25} flexWrap="wrap" useFlexGap>
-          <FormControl size="small" sx={{ minWidth: 132 }}>
-            <InputLabel id="weekly-hours-year-label">Year</InputLabel>
-            <Select
-              label="Year"
-              labelId="weekly-hours-year-label"
-              onChange={(event) => {
-                const year = event.target.value;
-                setSelectedYear(year === "" ? "" : Number(year));
-                if (year === "") {
-                  setSelectedMonth("");
-                }
-              }}
-              value={selectedYear}
-            >
-              <MenuItem value="">All Years (Since 2022)</MenuItem>
-              {YEAR_OPTIONS.map((year) => (
-                <MenuItem key={year} value={year}>
-                  {year}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <FormControl size="small" sx={{ minWidth: 156 }}>
-            <InputLabel id="weekly-hours-month-label">Month</InputLabel>
-            <Select
-              label="Month"
-              labelId="weekly-hours-month-label"
-              disabled={!selectedYear}
-              onChange={(event) => setSelectedMonth(event.target.value)}
-              value={selectedMonth}
-            >
-              {MONTH_OPTIONS.map((month) => (
-                <MenuItem key={month.label} value={month.value}>
-                  {month.label}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
           <FormControl size="small" sx={{ minWidth: 196 }}>
             <InputLabel id="weekly-hours-employee-label">Employee</InputLabel>
             <Select

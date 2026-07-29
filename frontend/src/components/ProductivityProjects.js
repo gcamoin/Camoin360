@@ -374,53 +374,6 @@ export default function ProductivityProjects() {
         </Paper>
       </Box>
 
-      <Paper elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2 }}>
-        <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-          <FormControl fullWidth size="small">
-            <InputLabel id="project-year-filter-label">Year</InputLabel>
-            <Select
-              label="Year"
-              labelId="project-year-filter-label"
-              onChange={(event) => updateTimeFilter("year", event.target.value)}
-              value={timeFilters.year}
-            >
-              <MenuItem value={ALL_FILTER_VALUE}>All years</MenuItem>
-              {yearOptions.map((year) => (
-                <MenuItem key={year} value={year}>{year}</MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <FormControl fullWidth size="small">
-            <InputLabel id="project-quarter-filter-label">Quarter</InputLabel>
-            <Select
-              label="Quarter"
-              labelId="project-quarter-filter-label"
-              onChange={(event) => updateTimeFilter("quarter", event.target.value)}
-              value={timeFilters.quarter}
-            >
-              <MenuItem value={ALL_FILTER_VALUE}>All quarters</MenuItem>
-              {QUARTER_OPTIONS.map((quarter) => (
-                <MenuItem key={quarter.value} value={quarter.value}>{quarter.label}</MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <FormControl fullWidth size="small">
-            <InputLabel id="project-month-filter-label">Month</InputLabel>
-            <Select
-              label="Month"
-              labelId="project-month-filter-label"
-              onChange={(event) => updateTimeFilter("month", event.target.value)}
-              value={timeFilters.month}
-            >
-              <MenuItem value={ALL_FILTER_VALUE}>All months</MenuItem>
-              {monthOptions.map((month) => (
-                <MenuItem key={`${month.value}-${month.label}`} value={month.value}>{month.label}</MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-        </Stack>
-      </Paper>
-
       <Paper
         elevation={0}
         sx={{

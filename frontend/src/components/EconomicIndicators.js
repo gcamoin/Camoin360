@@ -286,37 +286,7 @@ export default function EconomicIndicators() {
         <Typography color="text.secondary" fontSize="0.75rem">
           {updatedLabel || "Live economic data"}
         </Typography>
-        <Stack direction="row" justifyContent="flex-end" alignItems="center" spacing={0.75} flexWrap="wrap">
-          {RANGES.map(({ label }) => {
-            const isActive = range === label;
-            return (
-              <Button
-                key={label}
-                size="small"
-                onClick={() => setRange(label)}
-                variant={isActive ? "contained" : "outlined"}
-                disableElevation
-                sx={{
-                  fontSize: "0.75rem",
-                  fontWeight: 700,
-                  px: 1.5,
-                  py: 0.4,
-                  minWidth: 0,
-                  borderRadius: 1,
-                  ...(!isActive && { borderColor: "divider", color: "text.secondary" }),
-                }}
-              >
-                {label}
-              </Button>
-            );
-          })}
-          <Button
-            size="small"
-            onClick={() => setRange("All Years")}
-            sx={{ fontSize: "0.75rem", color: "text.secondary", fontWeight: 600, minWidth: 0 }}
-          >
-            Reset
-          </Button>
+        <Stack direction="row" justifyContent="flex-end" alignItems="center" spacing={0.75}>
           <Button
             disabled={isRefreshing}
             onClick={() => fetchIndicators({ refresh: true, silent: true })}

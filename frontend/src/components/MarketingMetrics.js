@@ -526,57 +526,6 @@ export default function MarketingMetrics({ showOverview = false, showServiceLine
           </Stack>
         </Stack>
 
-        <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
-          <FormControl size="small" sx={{ minWidth: 120 }}>
-            <InputLabel id="service-line-quarter-label">Quarter</InputLabel>
-            <Select
-              labelId="service-line-quarter-label"
-              label="Quarter"
-              value={quarterFilter}
-              onChange={(event) => setQuarterFilter(event.target.value)}
-            >
-              <MenuItem value="all">All</MenuItem>
-              {QUARTER_OPTIONS.map((option) => (
-                <MenuItem key={option.value} value={option.value}>
-                  {option.label}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <FormControl size="small" sx={{ minWidth: 140 }}>
-            <InputLabel id="service-line-month-label">Month</InputLabel>
-            <Select
-              labelId="service-line-month-label"
-              label="Month"
-              value={monthFilter}
-              onChange={(event) => setMonthFilter(event.target.value)}
-            >
-              <MenuItem value="all">All</MenuItem>
-              {MONTH_OPTIONS.map((option) => (
-                <MenuItem key={option.value} value={option.value}>
-                  {option.label}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <FormControl size="small" sx={{ minWidth: 110 }}>
-            <InputLabel id="service-line-year-label">Year</InputLabel>
-            <Select
-              labelId="service-line-year-label"
-              label="Year"
-              value={yearFilter}
-              onChange={(event) => setYearFilter(event.target.value)}
-            >
-              <MenuItem value="all">All</MenuItem>
-              {availableYears.map((year) => (
-                <MenuItem key={year} value={year}>
-                  {year}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-        </Stack>
-
         {isServiceLineLoading ? (
           <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
             <CircularProgress />

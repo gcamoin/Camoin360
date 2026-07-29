@@ -225,6 +225,8 @@ export default function ServiceLineFinancials() {
   const [month, setMonth] = useState(ALL_VALUE);
   const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
   const [isAnalysisGenerated, setIsAnalysisGenerated] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastRefreshed, setLastRefreshed] = useState(() => new Date());
   const [analysisTab, setAnalysisTab] = useState("analysis");
   const visibleMonthlyRows = useMemo(
     () =>
@@ -254,73 +256,73 @@ export default function ServiceLineFinancials() {
   }));
   const topLine = [...totals].sort((a, b) => b.total - a.total)[0];
 
+  function refreshFinancials() {
+    setIsRefreshing(true);
+    window.setTimeout(() => {
+      setLastRefreshed(new Date());
+      setIsRefreshing(false);
+    }, 450);
+  }
+
   return (
     <Stack spacing={2.5}>
       <Paper
         elevation={0}
         sx={{
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: 2,
-          p: { xs: 2, md: 2.5 },
+          background: "linear-gradient(135deg, #ffffff 0%, #f8fbff 100%)",
+          border: "1px solid rgba(0, 51, 108, 0.14)",
+          borderRadius: 3,
+          boxShadow: "0 12px 32px rgba(0, 51, 108, 0.07)",
+          p: { xs: 2.25, md: 3 },
         }}
       >
-        <Stack spacing={1.75}>
-          <Stack alignItems={{ xs: "stretch", md: "center" }} direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={1.5}>
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
-              <FormControl size="small" sx={{ minWidth: { xs: "100%", md: 180 } }}>
-                <InputLabel id="service-line-financial-year-label">Year</InputLabel>
-                <Select
-                  label="Year"
-                  labelId="service-line-financial-year-label"
-                  onChange={(event) => setYear(event.target.value)}
-                  value={year}
-                >
-                  {yearOptions.map((option) => (
-                    <MenuItem key={option.value} value={option.value}>
-                      {option.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <FormControl size="small" sx={{ minWidth: { xs: "100%", md: 180 } }}>
-                <InputLabel id="service-line-financial-quarter-label">Quarter</InputLabel>
-                <Select
-                  label="Quarter"
-                  labelId="service-line-financial-quarter-label"
-                  onChange={(event) => setQuarter(event.target.value)}
-                  value={quarter}
-                >
-                  {quarterOptions.map((option) => (
-                    <MenuItem key={option.value} value={option.value}>
-                      {option.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <FormControl size="small" sx={{ minWidth: { xs: "100%", md: 200 } }}>
-                <InputLabel id="service-line-financial-month-label">Month</InputLabel>
-                <Select
-                  label="Month"
-                  labelId="service-line-financial-month-label"
-                  onChange={(event) => setMonth(event.target.value)}
-                  value={month}
-                >
-                  {monthOptions.map((option) => (
-                    <MenuItem key={option.value} value={option.value}>
-                      {option.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+        <Stack alignItems={{ xs: "stretch", lg: "center" }} direction={{ xs: "column", lg: "row" }} justifyContent="space-between" spacing={2}>
+          <Stack spacing={0.65}>
+            <Stack alignItems="center" direction="row" spacing={1}>
+              <Box sx={{ backgroundColor: "success.main", borderRadius: "50%", height: 8, width: 8 }} />
+              <Typography color="success.dark" fontWeight={800} variant="overline">
+                Reporting view ready
+              </Typography>
             </Stack>
+            <Typography color="primary.main" fontWeight={850} variant="h6">
+              Service Line Performance
+            </Typography>
+            <Typography color="text.secondary" variant="body2">
+              Compare consulting revenue and generate an executive analysis of the visible reporting period.
+            </Typography>
+          </Stack>
+          <Stack alignItems={{ xs: "stretch", sm: "center" }} direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+            <Stack spacing={0.25}>
+              <Typography color="text.secondary" variant="caption">Internal financial model</Typography>
+              <Typography color="text.secondary" variant="caption">
+                Updated {lastRefreshed.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+              </Typography>
+            </Stack>
+            <Button
+              disabled={isRefreshing}
+              onClick={refreshFinancials}
+              startIcon={isRefreshing ? null : (
+                <Box component="span" sx={{ display: "inline-flex" }}>
+                  <svg aria-hidden="true" fill="none" height="18" viewBox="0 0 24 24" width="18"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" /></svg>
+                </Box>
+              )}
+              sx={{ borderRadius: 2, fontWeight: 800, minHeight: 42, px: 2 }}
+              variant="outlined"
+            >
+              {isRefreshing ? "Refreshing" : "Refresh"}
+            </Button>
             <Button
               onClick={() => {
                 setIsAnalysisGenerated(false);
                 setAnalysisTab("analysis");
                 setIsAnalysisOpen(true);
               }}
-              sx={{ fontWeight: 800 }}
+              startIcon={(
+                <Box component="span" sx={{ display: "inline-flex" }}>
+                  <svg aria-hidden="true" fill="none" height="18" viewBox="0 0 24 24" width="18"><path d="m12 3 1.4 4.1L17.5 8.5l-4.1 1.4L12 14l-1.4-4.1-4.1-1.4 4.1-1.4L12 3Zm6 10 .8 2.2L21 16l-2.2.8L18 19l-.8-2.2L15 16l2.2-.8L18 13Z" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" /></svg>
+                </Box>
+              )}
+              sx={{ borderRadius: 2, boxShadow: "0 8px 18px rgba(0, 51, 108, 0.20)", fontWeight: 800, minHeight: 42, px: 2.25 }}
               variant="contained"
             >
               AI Analysis
@@ -341,10 +343,19 @@ export default function ServiceLineFinancials() {
         ))}
       </Box>
 
-      <Dialog fullWidth maxWidth="md" onClose={() => setIsAnalysisOpen(false)} open={isAnalysisOpen}>
-        <DialogTitle sx={{ borderBottom: "1px solid", borderColor: "divider", pb: isAnalysisGenerated ? 0 : 2 }}>
-          <Typography color="text.primary" fontWeight={800} variant="h6">
+      <Dialog
+        fullWidth
+        maxWidth="md"
+        onClose={() => setIsAnalysisOpen(false)}
+        open={isAnalysisOpen}
+        PaperProps={{ sx: { borderRadius: 3, boxShadow: "0 24px 80px rgba(15, 23, 42, 0.24)", overflow: "hidden" } }}
+      >
+        <DialogTitle sx={{ background: "linear-gradient(135deg, #f8fbff 0%, #eef6ff 100%)", borderBottom: "1px solid", borderColor: "divider", px: 3, pb: isAnalysisGenerated ? 0 : 2.5, pt: 2.5 }}>
+          <Typography color="primary.main" fontWeight={850} variant="h6">
             AI Service Line Financial Analysis
+          </Typography>
+          <Typography color="text.secondary" variant="body2">
+            Executive insights generated from the current service-line reporting view
           </Typography>
           {isAnalysisGenerated ? (
             <Tabs onChange={(_event, value) => setAnalysisTab(value)} sx={{ mt: 1 }} value={analysisTab}>
