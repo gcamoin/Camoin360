@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Box,
   Button,
@@ -21,6 +21,19 @@ import PEQualifiedLeads from "./components/PEQualifiedLeads";
 import ProductivityProjects from "./components/ProductivityProjects";
 import ServiceLineFinancials from "./components/ServiceLineFinancials";
 import SoftwareInventory from "./components/SoftwareInventory";
+import AiChatBox from "./components/AiChatBox";
+import DashboardDateFilters, { EMPTY_DATE_FILTERS } from "./components/DashboardDateFilters";
+
+const graphViews = new Set([
+  "economicIndicators",
+  "companyFinancials",
+  "serviceLineFinancials",
+  "marketing",
+  "marketingMetrics",
+  "productivityProjects",
+  "employeeProductivity",
+  "pe",
+]);
 
 const views = {
   overview: {
@@ -121,8 +134,19 @@ function NavIcon({ name }) {
 export default function ManagementDashboard({ onLogout }) {
   const [activeView, setActiveView] = useState("overview");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [dateFiltersByView, setDateFiltersByView] = useState({});
   const theme = useTheme();
   const currentView = views[activeView];
+  const activeDateFilters = dateFiltersByView[activeView] || EMPTY_DATE_FILTERS;
+  const analystContext = useMemo(
+    () => ({
+      active_view: activeView,
+      date_filters: graphViews.has(activeView) ? activeDateFilters : null,
+      description: currentView.description,
+      title: currentView.title,
+    }),
+    [activeDateFilters, activeView, currentView]
+  );
 
   return (
     <Box
@@ -349,6 +373,24 @@ export default function ManagementDashboard({ onLogout }) {
                 </Typography>
               </Box>
 
+              {graphViews.has(activeView) ? (
+                <DashboardDateFilters
+                  onChange={(nextFilters) =>
+                    setDateFiltersByView((current) => ({
+                      ...current,
+                      [activeView]: nextFilters,
+                    }))
+                  }
+                  value={activeDateFilters}
+                />
+              ) : null}
+
+              <AiChatBox
+                context={analystContext}
+                placeholder={`Ask the AI Analyst about ${currentView.title.toLowerCase()}...`}
+                section={currentView.title}
+              />
+
               {activeView === "economicIndicators" && <EconomicIndicators />}
               {activeView === "companyFinancials" && <CompanyFinancials />}
               {activeView === "serviceLineFinancials" && <ServiceLineFinancials />}
@@ -381,6 +423,7 @@ export default function ManagementDashboard({ onLogout }) {
                   />
                 </Paper>
               )}
+
             </Stack>
           </Container>
         </Box>
