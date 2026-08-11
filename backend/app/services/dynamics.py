@@ -187,6 +187,28 @@ _DATA_QUALITY_CACHE = {"expires_at": 0, "data": None}
 _SUMMARY_CACHE = {"expires_at": 0, "data": None}
 _MARKETING_METRICS_CACHE = {"expires_at": 0, "data": None}
 _PROJECT_METRICS_CACHE = {"expires_at": 0, "data": None}
+_RFP_SUCCESS_RATE_CACHE = {"expires_at": 0, "data": None}
+_SERVICE_LINE_FINANCIALS_CACHE = {"expires_at": 0, "data": None}
+
+SERVICE_LINE_FINANCIAL_GROUPS = {
+    "prospecting": {
+        "label": "Prospecting",
+        "dynamics_labels": {"Lead Generation", "Marketing Mission", "Trade Show", "Site Location Consultant", "Prospect Reconnect"},
+    },
+    "impact_analysis": {"label": "Impact Analysis", "dynamics_labels": {"Impact Analysis"}},
+    "real_estate": {
+        "label": "Real Estate",
+        "dynamics_labels": {"Real Estate Market Analysis", "Real Estate Financial Feasibility Analysis"},
+    },
+    "strategic_planning": {"label": "Strategic Planning", "dynamics_labels": {"Strategic Planning"}},
+    "housing": {"label": "Housing", "dynamics_labels": {"Housing Needs Assessment"}},
+    "target_industry_analytics": {
+        "label": "Target Industry Analytics",
+        "dynamics_labels": {"Industry Analysis", "Geographic Competitiveness Analysis", "Supply Chain Analysis"},
+    },
+    "workforce": {"label": "Workforce", "dynamics_labels": {"Workforce"}},
+    "prospect_engage": {"label": "ProspectEngage", "dynamics_labels": {"ProspectEngage Subscription"}},
+}
 MARKETING_HISTORY_START_YEAR = 2022
 MARKETING_RANGE_OPTIONS = {
     "since_2022": {"label": "Since 2022", "start_year": MARKETING_HISTORY_START_YEAR},
@@ -2873,6 +2895,159 @@ async def get_project_creation_metrics():
     _PROJECT_METRICS_CACHE["data"] = result
     _PROJECT_METRICS_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
 
+    return result
+
+
+async def get_rfp_success_rate_metrics():
+    now = time.time()
+    if _RFP_SUCCESS_RATE_CACHE["data"] is not None and _RFP_SUCCESS_RATE_CACHE["expires_at"] > now:
+        return _RFP_SUCCESS_RATE_CACHE["data"]
+
+    token = await get_access_token()
+    headers = _dynamics_read_headers(token)
+    url = (
+        f"{API_URL}/opportunities?"
+        "$select=opportunityid,cr73c_dateproposed,statecode,statuscode,new_feeforcamoin&"
+        "$filter=cr73c_dateproposed ge 2016-01-01T00:00:00Z&"
+        "$orderby=cr73c_dateproposed asc"
+    )
+    records = []
+    async with httpx.AsyncClient(timeout=120) as client:
+        while url:
+            response = await client.get(url, headers=headers)
+            if response.status_code != 200:
+                raise Exception(f"Dynamics GET error: {response.text}")
+            payload = response.json()
+            records.extend(payload.get("value", []))
+            url = payload.get("@odata.nextLink")
+
+    quarters = {}
+    for record in records:
+        proposed_date = str(record.get("cr73c_dateproposed") or "")
+        if len(proposed_date) < 7:
+            continue
+        year = proposed_date[:4]
+        quarter = str(((int(proposed_date[5:7]) - 1) // 3) + 1)
+        period = f"{year} Q{quarter}"
+        row = quarters.setdefault(period, {
+            "period": period, "year": year, "quarter": quarter,
+            "won": 0, "lost": 0, "open": 0,
+            "won_fee": 0.0, "decided_fee": 0.0, "decided_with_fee": 0,
+        })
+        state = str(get_formatted_value(record, "statecode") or "").strip().lower()
+        if state not in {"won", "lost", "open"}:
+            continue
+        row[state] += 1
+        fee = record.get("new_feeforcamoin")
+        if state in {"won", "lost"} and fee is not None:
+            row["decided_fee"] += float(fee)
+            row["decided_with_fee"] += 1
+            if state == "won":
+                row["won_fee"] += float(fee)
+
+    series = []
+    for row in quarters.values():
+        decided = row["won"] + row["lost"]
+        series.append({
+            **row,
+            "count_success_rate": round((row["won"] / decided) * 100, 1) if decided else None,
+            "dollar_success_rate": round((row["won_fee"] / row["decided_fee"]) * 100, 1) if row["decided_fee"] else None,
+        })
+
+    totals = {
+        key: sum(row[key] for row in quarters.values())
+        for key in ("won", "lost", "open", "won_fee", "decided_fee", "decided_with_fee")
+    }
+    decided = totals["won"] + totals["lost"]
+    result = {
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "source": "Dynamics opportunities",
+        "series": series,
+        "overall": {
+            **totals,
+            "count_success_rate": round((totals["won"] / decided) * 100, 1) if decided else None,
+            "dollar_success_rate": round((totals["won_fee"] / totals["decided_fee"]) * 100, 1) if totals["decided_fee"] else None,
+        },
+    }
+    _RFP_SUCCESS_RATE_CACHE["data"] = result
+    _RFP_SUCCESS_RATE_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
+    return result
+
+
+async def get_service_line_financial_metrics():
+    now = time.time()
+    if _SERVICE_LINE_FINANCIALS_CACHE["data"] is not None and _SERVICE_LINE_FINANCIALS_CACHE["expires_at"] > now:
+        return _SERVICE_LINE_FINANCIALS_CACHE["data"]
+
+    token = await get_access_token()
+    headers = _dynamics_read_headers(token)
+    url = (
+        f"{API_URL}/new_projects?"
+        "$select=new_projectid,new_contractdate,new_feeforcamoin,cr73c_servicelineprimary&"
+        "$filter=new_contractdate ge 2021-01-01T00:00:00Z&"
+        "$orderby=new_contractdate asc"
+    )
+    records = []
+    async with httpx.AsyncClient(timeout=120) as client:
+        while url:
+            response = await client.get(url, headers=headers)
+            if response.status_code != 200:
+                raise Exception(f"Dynamics GET error: {response.text}")
+            payload = response.json()
+            records.extend(payload.get("value", []))
+            url = payload.get("@odata.nextLink")
+
+    label_to_group = {
+        dynamics_label: group_key
+        for group_key, group in SERVICE_LINE_FINANCIAL_GROUPS.items()
+        for dynamics_label in group["dynamics_labels"]
+    }
+    months = {}
+    included_records = 0
+    excluded_records = 0
+    missing_fee_records = 0
+    for record in records:
+        contract_date = str(record.get("new_contractdate") or "")
+        service_line = str(get_formatted_value(record, "cr73c_servicelineprimary") or "").strip()
+        group_key = label_to_group.get(service_line)
+        if len(contract_date) < 7 or not group_key:
+            excluded_records += 1
+            continue
+        fee = record.get("new_feeforcamoin")
+        if fee is None:
+            missing_fee_records += 1
+            fee = 0
+        month_key = contract_date[:7]
+        year, month = month_key.split("-")
+        row = months.setdefault(month_key, {
+            "monthKey": month_key,
+            "month": datetime(int(year), int(month), 1).strftime("%b"),
+            "monthNumber": str(int(month)),
+            "quarter": f"Q{((int(month) - 1) // 3) + 1}",
+            "year": year,
+            **{key: 0.0 for key in SERVICE_LINE_FINANCIAL_GROUPS},
+        })
+        row[group_key] += float(fee)
+        included_records += 1
+
+    result = {
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "source": "Dynamics contracted projects",
+        "value_definition": "Fee for Camoin grouped by Contract Date and primary Service Line",
+        "service_lines": [
+            {"key": key, "label": group["label"], "dynamics_labels": sorted(group["dynamics_labels"])}
+            for key, group in SERVICE_LINE_FINANCIAL_GROUPS.items()
+        ],
+        "months": list(months.values()),
+        "record_counts": {
+            "queried": len(records),
+            "included": included_records,
+            "excluded_unmapped": excluded_records,
+            "included_missing_fee": missing_fee_records,
+        },
+    }
+    _SERVICE_LINE_FINANCIALS_CACHE["data"] = result
+    _SERVICE_LINE_FINANCIALS_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
     return result
 
 

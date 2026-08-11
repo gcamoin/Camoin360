@@ -5,6 +5,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from .auth import require_user
 from ..services.dynamics import (
     get_project_creation_metrics,
+    get_rfp_success_rate_metrics,
+    get_service_line_financial_metrics,
     get_website_visit_metrics,
     refresh_website_visit_metrics_cache,
 )
@@ -64,6 +66,28 @@ async def fetch_project_creation_metrics(_user=Depends(require_user)):
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Unable to load project metrics from Dynamics: {exc}",
+        ) from exc
+
+
+@router.get("/management/rfp-success-rate")
+async def fetch_rfp_success_rate(_user=Depends(require_user)):
+    try:
+        return await get_rfp_success_rate_metrics()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to load RFP success rates from Dynamics: {exc}",
+        ) from exc
+
+
+@router.get("/management/service-line-financials")
+async def fetch_service_line_financials(_user=Depends(require_user)):
+    try:
+        return await get_service_line_financial_metrics()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to load service-line financials from Dynamics: {exc}",
         ) from exc
 
 

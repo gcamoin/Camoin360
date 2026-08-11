@@ -1,7 +1,10 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import axios from "axios";
 import {
+  Alert,
   Box,
   Button,
+  CircularProgress,
   Dialog,
   DialogContent,
   DialogTitle,
@@ -25,8 +28,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
 
-const START_YEAR = 2021;
 const ALL_VALUE = "all";
 const quarterOptions = [
   { label: "All Quarters", value: ALL_VALUE },
@@ -50,24 +53,8 @@ const monthOptions = [
   { label: "November", value: "11" },
   { label: "December", value: "12" },
 ];
-const calendarMonths = monthOptions
-  .filter((option) => option.value !== ALL_VALUE)
-  .map((option) => ({
-    label: option.label,
-    shortLabel: option.label.slice(0, 3),
-    value: option.value,
-  }));
-
-const serviceLines = [
-  { key: "prospecting", label: "Prospecting", base: 210000, growth: 4200 },
-  { key: "impact_analysis", label: "Impact Analysis", base: 185000, growth: 3600 },
-  { key: "real_estate", label: "Real Estate", base: 165000, growth: 3100 },
-  { key: "strategic_planning", label: "Strategic Planning", base: 195000, growth: 3900 },
-  { key: "housing", label: "Housing", base: 142000, growth: 2800 },
-  { key: "target_industry_analytics", label: "Target Industry Analytics", base: 156000, growth: 3300 },
-  { key: "workforce", label: "Workforce", base: 128000, growth: 2600 },
-  { key: "prospect_engage", label: "ProspectEngage", base: 118000, growth: 2400 },
-];
+const API_URL = `${API_BASE_URL}/management/service-line-financials`;
+const MONTH_PIXEL_WIDTH = 46;
 
 const tooltipStyle = {
   contentStyle: {
@@ -77,60 +64,6 @@ const tooltipStyle = {
     fontSize: 12,
   },
 };
-
-function buildMonthlyRows() {
-  const today = new Date();
-  const rows = [];
-
-  for (let year = START_YEAR; year <= today.getFullYear(); year += 1) {
-    for (let monthIndex = 0; monthIndex < 12; monthIndex += 1) {
-      const monthNumber = monthIndex + 1;
-      const sequence = (year - START_YEAR) * 12 + monthIndex;
-      const row = {
-        month: calendarMonths[monthIndex].shortLabel,
-        monthNumber: String(monthNumber),
-        monthKey: `${year}-${String(monthNumber).padStart(2, "0")}`,
-        quarter: `Q${Math.ceil(monthNumber / 3)}`,
-        quarterKey: `${year}-Q${Math.ceil(monthNumber / 3)}`,
-        year: String(year),
-      };
-
-      for (const serviceLine of serviceLines) {
-        const seasonal = Math.sin((monthIndex / 12) * Math.PI * 2 + serviceLine.key.length) * 18500;
-        const projectPulse = ((monthIndex + serviceLine.key.length) % 5) * 9500;
-        row[serviceLine.key] = Math.round(serviceLine.base + serviceLine.growth * sequence + seasonal + projectPulse);
-      }
-
-      rows.push(row);
-    }
-  }
-
-  return rows;
-}
-
-function buildCalendarMonthRows(rows) {
-  return calendarMonths.map((calendarMonth) => {
-    const matchingRows = rows.filter((row) => row.monthNumber === calendarMonth.value);
-    const monthRow = {
-      month: calendarMonth.shortLabel,
-      monthNumber: calendarMonth.value,
-    };
-
-    for (const serviceLine of serviceLines) {
-      monthRow[serviceLine.key] = matchingRows.reduce((sum, row) => sum + Number(row[serviceLine.key] || 0), 0);
-    }
-
-    return monthRow;
-  });
-}
-
-const monthlyRows = buildMonthlyRows();
-const yearOptions = [
-  { label: "All Years", value: ALL_VALUE },
-  ...Array.from(new Set(monthlyRows.map((row) => row.year)))
-    .sort((a, b) => Number(b) - Number(a))
-    .map((year) => ({ label: year, value: year })),
-];
 
 function formatCurrency(value) {
   return new Intl.NumberFormat(undefined, {
@@ -148,7 +81,7 @@ function average(rows, key) {
   return rows.reduce((sum, row) => sum + Number(row[key] || 0), 0) / rows.length;
 }
 
-function buildServiceLineProjections() {
+function buildServiceLineProjections(monthlyRows, serviceLines) {
   const recentQuarter = monthlyRows.slice(-3);
   const priorQuarter = monthlyRows.slice(-6, -3);
 
@@ -182,6 +115,27 @@ function InsightCard({ label, value }) {
   );
 }
 
+function FinancialTimelineTick({ x, y, payload }) {
+  const [year, monthValue] = String(payload?.value || "").split("-");
+  const month = Number(monthValue);
+  const monthLabel = month
+    ? new Date(Number(year), month - 1, 1).toLocaleDateString(undefined, { month: "short" })
+    : "";
+  const quarterLabel = month ? `Q${Math.ceil(month / 3)}` : "";
+  const showQuarter = [2, 5, 8, 11].includes(month);
+  const showYear = month === 7;
+
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text fill="#475569" fontSize="10" textAnchor="middle">
+        <tspan x="0" dy="12">{monthLabel}</tspan>
+        <tspan fontWeight="700" x="0" dy="12">{showQuarter ? quarterLabel : ""}</tspan>
+        <tspan fontWeight="700" x={showYear ? -(MONTH_PIXEL_WIDTH / 2) : 0} dy="12">{showYear ? year : ""}</tspan>
+      </text>
+    </g>
+  );
+}
+
 function FinancialBarChart({ color, data, dataKey, title }) {
   const total = data.reduce((sum, row) => sum + Number(row[dataKey] || 0), 0);
 
@@ -192,7 +146,10 @@ function FinancialBarChart({ color, data, dataKey, title }) {
         border: "1px solid",
         borderColor: "divider",
         borderRadius: 2,
+        minWidth: 0,
+        overflow: "hidden",
         p: { xs: 2, md: 2.5 },
+        width: "100%",
       }}
     >
       <Stack spacing={0.5} sx={{ mb: 2 }}>
@@ -200,19 +157,36 @@ function FinancialBarChart({ color, data, dataKey, title }) {
           {title}
         </Typography>
         <Typography color="text.secondary" variant="body2">
-          Dummy monthly revenue. Total {formatCurrency(total)}.
+          Live contracted Camoin fees. Total {formatCurrency(total)}.
         </Typography>
       </Stack>
-      <Box sx={{ height: 320, minWidth: 0 }}>
+      <Box sx={{ display: "flex", height: 340, maxWidth: "100%", minWidth: 0, width: "100%" }}>
+        <Box sx={{ flex: "0 0 58px", height: 320, position: "relative", zIndex: 1 }}>
+          <ResponsiveContainer height="100%" width="100%">
+            <BarChart data={data} margin={{ top: 8, right: 0, bottom: 62, left: 0 }}>
+              <YAxis tick={{ fontSize: 11 }} tickFormatter={(value) => `$${Math.round(value / 1000)}k`} width={58} />
+              <Bar dataKey={dataKey} fill="transparent" isAnimationActive={false} />
+            </BarChart>
+          </ResponsiveContainer>
+        </Box>
+        <Box sx={{ flex: 1, minWidth: 0, overflowX: "auto", overflowY: "hidden", pb: 1 }}>
+        <Box sx={{ height: 320, minWidth: "100%", width: `${Math.max(data.length * MONTH_PIXEL_WIDTH, 552)}px` }}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} margin={{ top: 8, right: 18, bottom: 8, left: 0 }}>
             <CartesianGrid stroke="#f1f5f9" strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="month" interval={0} minTickGap={0} tick={{ fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} tickFormatter={(value) => `$${Math.round(value / 1000)}k`} />
+            <XAxis
+              dataKey="monthKey"
+              height={54}
+              interval={0}
+              tick={<FinancialTimelineTick />}
+            />
+            <YAxis hide width={0} />
             <Tooltip {...tooltipStyle} formatter={(value) => [formatCurrency(value), title]} />
             <Bar dataKey={dataKey} fill={color} fillOpacity={0.88} maxBarSize={44} radius={[3, 3, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
+        </Box>
+        </Box>
       </Box>
     </Paper>
   );
@@ -220,14 +194,44 @@ function FinancialBarChart({ color, data, dataKey, title }) {
 
 export default function ServiceLineFinancials() {
   const theme = useTheme();
+  const [financials, setFinancials] = useState({ months: [], service_lines: [], record_counts: {} });
+  const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
   const [year, setYear] = useState(ALL_VALUE);
   const [quarter, setQuarter] = useState(ALL_VALUE);
   const [month, setMonth] = useState(ALL_VALUE);
   const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
   const [isAnalysisGenerated, setIsAnalysisGenerated] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [lastRefreshed, setLastRefreshed] = useState(() => new Date());
+  const [lastRefreshed, setLastRefreshed] = useState(null);
   const [analysisTab, setAnalysisTab] = useState("analysis");
+  const monthlyRows = financials.months;
+  const serviceLines = financials.service_lines;
+  const yearOptions = useMemo(() => [
+    { label: "All Years", value: ALL_VALUE },
+    ...Array.from(new Set(monthlyRows.map((row) => row.year)))
+      .sort((a, b) => Number(b) - Number(a))
+      .map((optionYear) => ({ label: optionYear, value: optionYear })),
+  ], [monthlyRows]);
+
+  const fetchFinancials = useCallback(async ({ refresh = false } = {}) => {
+    if (refresh) setIsRefreshing(true); else setIsLoading(true);
+    setError("");
+    try {
+      const response = await axios.get(API_URL, { headers: getAuthHeaders() });
+      setFinancials(response.data || { months: [], service_lines: [], record_counts: {} });
+      setLastRefreshed(new Date(response.data?.updated_at || Date.now()));
+    } catch (requestError) {
+      if (!handleUnauthorized(requestError)) {
+        setError(getApiErrorMessage(requestError, "Unable to load service-line financials from Dynamics."));
+      }
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchFinancials(); }, [fetchFinancials]);
   const visibleMonthlyRows = useMemo(
     () =>
       monthlyRows.filter(
@@ -236,9 +240,9 @@ export default function ServiceLineFinancials() {
           (month !== ALL_VALUE || quarter === ALL_VALUE || row.quarter === quarter) &&
           (month === ALL_VALUE || row.monthNumber === month)
       ),
-    [month, quarter, year]
+    [month, monthlyRows, quarter, year]
   );
-  const chartMonthlyRows = useMemo(() => buildCalendarMonthRows(visibleMonthlyRows), [visibleMonthlyRows]);
+  const chartMonthlyRows = visibleMonthlyRows;
   const colors = [
     theme.palette.primary.main,
     theme.palette.secondary.main,
@@ -249,7 +253,7 @@ export default function ServiceLineFinancials() {
     "#7c3aed",
     "#475569",
   ];
-  const projectionRows = useMemo(() => buildServiceLineProjections(), []);
+  const projectionRows = useMemo(() => buildServiceLineProjections(monthlyRows, serviceLines), [monthlyRows, serviceLines]);
   const totals = serviceLines.map((serviceLine) => ({
     label: serviceLine.label,
     total: chartMonthlyRows.reduce((sum, row) => sum + Number(row[serviceLine.key] || 0), 0),
@@ -257,15 +261,16 @@ export default function ServiceLineFinancials() {
   const topLine = [...totals].sort((a, b) => b.total - a.total)[0];
 
   function refreshFinancials() {
-    setIsRefreshing(true);
-    window.setTimeout(() => {
-      setLastRefreshed(new Date());
-      setIsRefreshing(false);
-    }, 450);
+    fetchFinancials({ refresh: true });
+  }
+
+  if (isLoading) {
+    return <Box sx={{ display: "flex", justifyContent: "center", py: 8 }}><CircularProgress /></Box>;
   }
 
   return (
     <Stack spacing={2.5}>
+      {error ? <Alert severity="error">{error}</Alert> : null}
       <Paper
         elevation={0}
         sx={{
@@ -281,21 +286,21 @@ export default function ServiceLineFinancials() {
             <Stack alignItems="center" direction="row" spacing={1}>
               <Box sx={{ backgroundColor: "success.main", borderRadius: "50%", height: 8, width: 8 }} />
               <Typography color="success.dark" fontWeight={800} variant="overline">
-                Reporting view ready
+                Live Dynamics data
               </Typography>
             </Stack>
             <Typography color="primary.main" fontWeight={850} variant="h6">
               Service Line Performance
             </Typography>
             <Typography color="text.secondary" variant="body2">
-              Compare consulting revenue and generate an executive analysis of the visible reporting period.
+              Compare contracted Camoin fees by primary service line and reporting period.
             </Typography>
           </Stack>
           <Stack alignItems={{ xs: "stretch", sm: "center" }} direction={{ xs: "column", sm: "row" }} spacing={1.5}>
             <Stack spacing={0.25}>
-              <Typography color="text.secondary" variant="caption">Internal financial model</Typography>
+              <Typography color="text.secondary" variant="caption">Dynamics contracted projects</Typography>
               <Typography color="text.secondary" variant="caption">
-                Updated {lastRefreshed.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                {lastRefreshed ? `Updated ${lastRefreshed.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}` : "Not updated"}
               </Typography>
             </Stack>
             <Button
@@ -331,7 +336,33 @@ export default function ServiceLineFinancials() {
         </Stack>
       </Paper>
 
-      <Box sx={{ display: "grid", gap: 2.5, gridTemplateColumns: { xs: "1fr", xl: "1fr 1fr" } }}>
+      <Paper elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2 }}>
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} useFlexGap flexWrap="wrap">
+          <FormControl size="small" sx={{ minWidth: 140 }}>
+            <InputLabel id="service-line-year-label">Year</InputLabel>
+            <Select label="Year" labelId="service-line-year-label" onChange={(event) => setYear(event.target.value)} value={year}>
+              {yearOptions.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
+            </Select>
+          </FormControl>
+          <FormControl size="small" sx={{ minWidth: 150 }}>
+            <InputLabel id="service-line-quarter-label">Quarter</InputLabel>
+            <Select label="Quarter" labelId="service-line-quarter-label" onChange={(event) => setQuarter(event.target.value)} value={quarter}>
+              {quarterOptions.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
+            </Select>
+          </FormControl>
+          <FormControl size="small" sx={{ minWidth: 160 }}>
+            <InputLabel id="service-line-month-label">Month</InputLabel>
+            <Select label="Month" labelId="service-line-month-label" onChange={(event) => setMonth(event.target.value)} value={month}>
+              {monthOptions.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
+            </Select>
+          </FormControl>
+        </Stack>
+        <Typography color="text.secondary" sx={{ mt: 1.25 }} variant="caption">
+          {financials.record_counts?.included?.toLocaleString() || 0} mapped contracted projects included. Values use Fee for Camoin and Contract Date from Dynamics; subcontractor fees are excluded.
+        </Typography>
+      </Paper>
+
+      <Box sx={{ display: "grid", gap: 2.5, gridTemplateColumns: { xs: "minmax(0, 1fr)", lg: "repeat(2, minmax(0, 1fr))" }, minWidth: 0 }}>
         {serviceLines.map((serviceLine, index) => (
           <FinancialBarChart
             color={colors[index % colors.length]}
@@ -373,7 +404,7 @@ export default function ServiceLineFinancials() {
                   Generate an analysis of service line financials
                 </Typography>
                 <Typography color="text.secondary" sx={{ mt: 0.75 }}>
-                  Review revenue performance, service-line trends, and projections using the selected reporting period.
+                  Review contracted Camoin-fee performance, service-line trends, and projections using the selected reporting period.
                 </Typography>
               </Box>
               <Button onClick={() => setIsAnalysisGenerated(true)} sx={{ fontWeight: 800, px: 3 }} variant="contained">
@@ -386,13 +417,13 @@ export default function ServiceLineFinancials() {
             <Stack spacing={2}>
               <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" } }}>
                 <InsightCard label="Top Service Line" value={topLine ? topLine.label : "No Data"} />
-                <InsightCard label="Visible Period Revenue" value={formatCurrency(totals.reduce((sum, row) => sum + row.total, 0))} />
+                <InsightCard label="Visible Camoin Fees" value={formatCurrency(totals.reduce((sum, row) => sum + row.total, 0))} />
               </Box>
               <Typography color="text.secondary">
-                Dummy AI readout: service line revenue remains broad-based, with {topLine?.label || "the leading line"} carrying the strongest visible-period contribution. Monthly and quarterly views should be used together: monthly bars show volatility, while quarterly bars smooth the project timing.
+                Live Dynamics data shows {topLine?.label || "the leading line"} carrying the strongest contracted Camoin-fee contribution in the visible period. Monthly and quarterly views can be used together to review contract timing.
               </Typography>
               <Typography color="text.secondary">
-                The placeholder data suggests steady expansion across consulting lines, with Prospecting, Strategic Planning, Housing, Target Industry Analytics, Workforce, and ProspectEngage showing varied monthly project timing in the recent dummy history.
+                Values represent Fee for Camoin and exclude subcontractor fees. They are contracted amounts, not recognized or invoiced revenue. Each project is assigned using its primary Dynamics service line.
               </Typography>
             </Stack>
           ) : null}
@@ -403,7 +434,7 @@ export default function ServiceLineFinancials() {
                 "Quarter and month filters now narrow the monthly service-line bars directly.",
                 "Filtering by quarter is useful for comparing planning periods without changing the chart format.",
                 "Filtering by month is useful for spotting project timing spikes and dips.",
-                "Housing, Target Industry Analytics, Workforce, and ProspectEngage use placeholder monthly revenue until the live service-line source is wired in.",
+                "All eight charts now use live contracted-project records from Dynamics.",
               ].map((snippet) => (
                 <Paper key={snippet} elevation={0} sx={{ backgroundColor: "#F8FAFC", border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2 }}>
                   <Typography color="text.secondary">{snippet}</Typography>
@@ -415,7 +446,7 @@ export default function ServiceLineFinancials() {
           {isAnalysisGenerated && analysisTab === "projections" ? (
             <Stack spacing={2}>
               <Typography color="text.secondary">
-                Dummy AI projection: next quarter is projected from the latest quarter-over-quarter average monthly trend for each service line.
+                Illustrative next-quarter projection based on the latest quarter-over-quarter average monthly trend in live contracted fees.
               </Typography>
               <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" } }}>
                 {projectionRows.map((row) => (
