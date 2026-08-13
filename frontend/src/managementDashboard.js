@@ -24,6 +24,7 @@ import SoftwareInventory from "./components/SoftwareInventory";
 import AiChatBox from "./components/AiChatBox";
 import DashboardDateFilters, { EMPTY_DATE_FILTERS } from "./components/DashboardDateFilters";
 import RfpOverallSuccessRate from "./components/RfpOverallSuccessRate";
+import SalesOutlook from "./components/SalesOutlook";
 
 const graphViews = new Set([
   "economicIndicators",
@@ -35,6 +36,7 @@ const graphViews = new Set([
   "employeeProductivity",
   "pe",
   "rfpOverallSuccessRate",
+  "salesOutlook",
 ]);
 
 const views = {
@@ -64,6 +66,12 @@ const views = {
     title: "Service Line Financials",
     description:
       "Dummy monthly and quarterly financial trends by consulting service line.",
+  },
+  salesOutlook: {
+    label: "Sales Outlook",
+    icon: "trending",
+    title: "Sales Outlook",
+    description: "Long-term contract value and monthly project trends from Dynamics.",
   },
   rfpOverallSuccessRate: {
     label: "RFP Overall Success Rate",
@@ -401,6 +409,7 @@ export default function ManagementDashboard({ onLogout }) {
 
               {activeView === "economicIndicators" && <EconomicIndicators />}
               {activeView === "companyFinancials" && <CompanyFinancials />}
+              {activeView === "salesOutlook" && <SalesOutlook />}
               {activeView === "serviceLineFinancials" && <ServiceLineFinancials />}
               {activeView === "rfpOverallSuccessRate" && (
                 <RfpOverallSuccessRate filters={activeDateFilters} />

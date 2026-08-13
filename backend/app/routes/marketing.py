@@ -6,6 +6,7 @@ from .auth import require_user
 from ..services.dynamics import (
     get_project_creation_metrics,
     get_rfp_success_rate_metrics,
+    get_sales_outlook_metrics,
     get_service_line_financial_metrics,
     get_website_visit_metrics,
     refresh_website_visit_metrics_cache,
@@ -88,6 +89,17 @@ async def fetch_service_line_financials(_user=Depends(require_user)):
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Unable to load service-line financials from Dynamics: {exc}",
+        ) from exc
+
+
+@router.get("/management/sales-outlook")
+async def fetch_sales_outlook(_user=Depends(require_user)):
+    try:
+        return await get_sales_outlook_metrics()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to load sales outlook from Dynamics: {exc}",
         ) from exc
 
 

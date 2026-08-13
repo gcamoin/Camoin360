@@ -1305,6 +1305,66 @@ export default function DataQualityTable() {
       <Paper
         elevation={0}
         sx={{
+          backgroundColor: "common.white",
+          border: "1px solid",
+          borderColor: selectedAccountIds.size ? "rgba(102, 138, 46, 0.45)" : "rgba(0, 51, 108, 0.10)",
+          borderRadius: 2,
+          boxShadow: selectedAccountIds.size ? "0 8px 24px rgba(18, 59, 100, 0.10)" : "0 4px 16px rgba(18, 59, 100, 0.05)",
+          p: { xs: 2, md: 2.25 },
+          position: "sticky",
+          top: 12,
+          transition: "border-color 160ms ease, box-shadow 160ms ease",
+          zIndex: 8,
+        }}
+      >
+        <Box
+          sx={{
+            alignItems: { xs: "stretch", lg: "center" },
+            display: "grid",
+            gap: { xs: 2, lg: 2.5 },
+            gridTemplateColumns: { xs: "1fr", lg: "210px minmax(0, 1fr) auto" },
+          }}
+        >
+          <Box>
+            <Typography color="text.secondary" sx={{ mb: 0.25 }} variant="overline">
+              Action Panel
+            </Typography>
+            <Typography color="primary.main" sx={{ fontSize: "1.35rem", fontWeight: 800, lineHeight: 1.2 }}>
+              {selectedAccountIds.size} Account{selectedAccountIds.size === 1 ? "" : "s"} Selected
+            </Typography>
+            <Typography color="text.secondary" variant="caption">
+              Select rows below, then preview the update.
+            </Typography>
+          </Box>
+
+          <Box sx={{ minWidth: 0 }}>
+            <FieldUpdateSelector
+              fieldOptions={fieldUpdateOptions}
+              fieldsToUpdate={fieldsToUpdate}
+              onFieldsChange={updateFieldsToUpdate}
+              selectedFieldLabels={selectedFieldLabels}
+            />
+          </Box>
+
+          <Button
+            disabled={!canPreviewEnrichment}
+            onClick={() => {
+              setEnrichmentError("");
+              setEnrichmentResult(null);
+              setIsPreviewOpen(true);
+            }}
+            size="large"
+            sx={{ borderRadius: 1, fontWeight: 800, minWidth: 190, whiteSpace: "nowrap" }}
+            variant="contained"
+          >
+            Preview Enrichment
+          </Button>
+        </Box>
+      </Paper>
+
+      <Paper
+        elevation={0}
+        sx={{
           border: "1px solid rgba(0, 51, 108, 0.10)",
           borderRadius: 2,
           overflow: "hidden",
@@ -1603,68 +1663,6 @@ export default function DataQualityTable() {
           rowsPerPage={rowsPerPage}
           rowsPerPageOptions={[25, 50, 100]}
         />
-      </Paper>
-
-      <Paper
-        elevation={0}
-        sx={{
-          border: "1px solid rgba(0, 51, 108, 0.10)",
-          borderRadius: 2,
-          p: { xs: 2, md: 3 },
-        }}
-      >
-        <Stack
-          direction={{ xs: "column", md: "row" }}
-          spacing={2}
-          sx={{ alignItems: { xs: "flex-start", md: "center" }, justifyContent: "space-between", mb: 2 }}
-        >
-          <Box>
-            <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="h6">
-              Action Panel
-            </Typography>
-            <Typography color="text.secondary" variant="body2">
-              Review selected accounts and fields before enrichment.
-            </Typography>
-          </Box>
-          <Button
-            disabled={!canPreviewEnrichment}
-            onClick={() => {
-              setEnrichmentError("");
-              setEnrichmentResult(null);
-              setIsPreviewOpen(true);
-            }}
-            size="large"
-            sx={{ borderRadius: 1, fontWeight: 800, minWidth: 190 }}
-            variant="contained"
-          >
-            Preview Enrichment
-          </Button>
-        </Stack>
-        <Box
-          sx={{
-            display: "grid",
-            gap: 2,
-            gridTemplateColumns: {
-              xs: "1fr",
-              md: "220px minmax(0, 1fr)",
-            },
-          }}
-        >
-          <Box>
-            <Typography color="text.secondary" variant="overline">
-              Selected Accounts
-            </Typography>
-            <Typography color="primary.main" sx={{ fontSize: "1.75rem", fontWeight: 800, lineHeight: 1.15 }}>
-              {selectedAccountIds.size} Account{selectedAccountIds.size === 1 ? "" : "s"} Selected
-            </Typography>
-          </Box>
-          <FieldUpdateSelector
-            fieldOptions={fieldUpdateOptions}
-            fieldsToUpdate={fieldsToUpdate}
-            onFieldsChange={updateFieldsToUpdate}
-            selectedFieldLabels={selectedFieldLabels}
-          />
-        </Box>
       </Paper>
 
       <Dialog fullWidth maxWidth="sm" onClose={() => setIsPreviewOpen(false)} open={isPreviewOpen}>

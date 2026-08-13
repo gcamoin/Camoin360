@@ -131,7 +131,7 @@ export default function LandingPage({ onLogout }) {
           display: "grid",
           gridTemplateColumns: {
             xs: "1fr",
-            md: sidebarCollapsed ? "88px minmax(0, 1fr)" : "272px minmax(0, 1fr)",
+            md: sidebarCollapsed ? "88px minmax(0, 1fr)" : "288px minmax(0, 1fr)",
           },
           minHeight: "100vh",
           transition: "grid-template-columns 180ms ease",
@@ -145,7 +145,7 @@ export default function LandingPage({ onLogout }) {
             color: "common.white",
             height: { md: "100vh" },
             overflow: { md: "hidden" },
-            p: { xs: 2, md: 3 },
+            p: { xs: 2, md: sidebarCollapsed ? 2 : 3 },
             position: { xs: "relative", md: "sticky" },
             top: { md: 0 },
             transition: "padding 180ms ease",
@@ -175,14 +175,7 @@ export default function LandingPage({ onLogout }) {
               >
                 {!sidebarCollapsed && (
                   <Box>
-                    <Typography
-                      component="h1"
-                      sx={{
-                        fontSize: "1.55rem",
-                        fontWeight: 800,
-                        lineHeight: 1.1,
-                      }}
-                    >
+                    <Typography component="h1" sx={{ fontSize: "1.55rem", fontWeight: 800, lineHeight: 1.1 }}>
                       Camoin 360
                     </Typography>
                     <Typography sx={{ color: "rgba(255,255,255,0.72)", mt: 0.75 }} variant="body2">
@@ -215,12 +208,20 @@ export default function LandingPage({ onLogout }) {
               </Box>
             </Box>
 
-            <Divider sx={{ borderColor: "rgba(255,255,255,0.18)" }} />
+            <Divider sx={{ borderColor: "rgba(255,255,255,0.12)" }} />
+
+            {!sidebarCollapsed && (
+              <Typography
+                sx={{ color: "rgba(255,255,255,0.48)", fontSize: "0.68rem", fontWeight: 800, letterSpacing: "0.12em", px: 1, textTransform: "uppercase" }}
+              >
+                Maintenance tools
+              </Typography>
+            )}
 
             <Stack
               component="nav"
               direction={{ xs: "row", md: "column" }}
-              spacing={1}
+              spacing={0.75}
               sx={{
                 flex: { md: 1 },
                 minHeight: 0,
@@ -242,24 +243,47 @@ export default function LandingPage({ onLogout }) {
                       startIcon={<NavIcon name={view.icon} />}
                       sx={{
                         justifyContent: sidebarCollapsed ? "center" : "flex-start",
-                        borderRadius: 1,
-                        color: isActive ? "primary.main" : "common.white",
+                        border: "1px solid",
+                        borderColor: isActive ? "rgba(255,255,255,0.24)" : "transparent",
+                        borderRadius: 2,
+                        boxShadow: isActive ? "0 8px 22px rgba(0,0,0,0.16)" : "none",
+                        color: isActive ? "primary.main" : "rgba(255,255,255,0.82)",
                         backgroundColor: isActive
                           ? "common.white"
                           : "transparent",
-                        fontWeight: 800,
+                        fontWeight: isActive ? 800 : 650,
                         minWidth: 0,
                         px: sidebarCollapsed ? 1 : 2,
-                        py: 1.25,
+                        py: 1.2,
+                        position: "relative",
+                        transition: "background-color 150ms ease, color 150ms ease, transform 150ms ease, box-shadow 150ms ease",
                         whiteSpace: "nowrap",
                         width: { xs: "auto", md: "100%" },
+                        "&::before": {
+                          backgroundColor: "secondary.main",
+                          borderRadius: 999,
+                          content: isActive ? '""' : 'none',
+                          height: 22,
+                          left: 5,
+                          position: "absolute",
+                          width: 3,
+                        },
                         "& .MuiButton-startIcon": {
+                          alignItems: "center",
+                          backgroundColor: isActive ? "rgba(102,138,46,0.12)" : "rgba(255,255,255,0.08)",
+                          borderRadius: 1.5,
+                          display: "flex",
+                          height: 30,
+                          justifyContent: "center",
                           m: sidebarCollapsed ? 0 : undefined,
+                          width: 30,
                         },
                         "&:hover": {
                           backgroundColor: isActive
                             ? "common.white"
-                            : "rgba(255,255,255,0.12)",
+                            : "rgba(255,255,255,0.10)",
+                          color: isActive ? "primary.main" : "common.white",
+                          transform: { md: "translateX(2px)" },
                         },
                       }}
                       title={view.label}
@@ -305,24 +329,46 @@ export default function LandingPage({ onLogout }) {
           </Stack>
         </Box>
 
-        <Box component="main" sx={{ py: { xs: 3, md: 5 } }}>
+        <Box component="main" sx={{ py: { xs: 3, md: 5.5 } }}>
           <Container
-            maxWidth={["dataQuality", "duplicateAccounts"].includes(activeView) ? false : "lg"}
+            maxWidth={false}
             sx={{
               px: {
                 xs: 2,
-                md: ["dataQuality", "duplicateAccounts"].includes(activeView) ? 3 : 4,
+                md: 3,
               },
             }}
           >
             <Stack spacing={3}>
-              <Box>
+              <Box
+                sx={{
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  pb: { xs: 2.5, md: 3 },
+                  position: "relative",
+                  "&::after": {
+                    backgroundColor: "secondary.main",
+                    bottom: -1,
+                    content: '""',
+                    height: 3,
+                    left: 0,
+                    position: "absolute",
+                    width: 48,
+                  },
+                }}
+              >
+                <Typography
+                  sx={{ color: "secondary.dark", fontSize: "0.7rem", fontWeight: 800, letterSpacing: "0.11em", mb: 0.75, textTransform: "uppercase" }}
+                >
+                  Sophie Maintenance
+                </Typography>
                 <Typography
                   component="h2"
                   sx={{
                     color: "primary.main",
-                    fontSize: { xs: "2rem", md: "2.35rem" },
+                    fontSize: { xs: "2rem", md: "2.45rem" },
                     fontWeight: 750,
+                    letterSpacing: "-0.035em",
                     lineHeight: 1.1,
                     mb: 1,
                   }}

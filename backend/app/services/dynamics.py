@@ -189,6 +189,7 @@ _MARKETING_METRICS_CACHE = {"expires_at": 0, "data": None}
 _PROJECT_METRICS_CACHE = {"expires_at": 0, "data": None}
 _RFP_SUCCESS_RATE_CACHE = {"expires_at": 0, "data": None}
 _SERVICE_LINE_FINANCIALS_CACHE = {"expires_at": 0, "data": None}
+_SALES_OUTLOOK_CACHE = {"expires_at": 0, "data": None}
 
 SERVICE_LINE_FINANCIAL_GROUPS = {
     "prospecting": {
@@ -2907,7 +2908,7 @@ async def get_rfp_success_rate_metrics():
     headers = _dynamics_read_headers(token)
     url = (
         f"{API_URL}/opportunities?"
-        "$select=opportunityid,cr73c_dateproposed,statecode,statuscode,new_feeforcamoin&"
+        "$select=opportunityid,cr73c_dateproposed,statecode,statuscode,new_feeforcamoin,cr73c_servicelineprimary&"
         "$filter=cr73c_dateproposed ge 2016-01-01T00:00:00Z&"
         "$orderby=cr73c_dateproposed asc"
     )
@@ -2929,8 +2930,11 @@ async def get_rfp_success_rate_metrics():
         year = proposed_date[:4]
         quarter = str(((int(proposed_date[5:7]) - 1) // 3) + 1)
         period = f"{year} Q{quarter}"
-        row = quarters.setdefault(period, {
+        service_line = str(get_formatted_value(record, "cr73c_servicelineprimary") or "Unassigned").strip()
+        aggregation_key = (period, service_line)
+        row = quarters.setdefault(aggregation_key, {
             "period": period, "year": year, "quarter": quarter,
+            "service_line": service_line,
             "won": 0, "lost": 0, "open": 0,
             "won_fee": 0.0, "decided_fee": 0.0, "decided_with_fee": 0,
         })
@@ -2962,7 +2966,8 @@ async def get_rfp_success_rate_metrics():
     result = {
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "source": "Dynamics opportunities",
-        "series": series,
+        "series": sorted(series, key=lambda row: (row["period"], row["service_line"])),
+        "service_lines": sorted({row["service_line"] for row in series}, key=str.casefold),
         "overall": {
             **totals,
             "count_success_rate": round((totals["won"] / decided) * 100, 1) if decided else None,
@@ -3048,6 +3053,72 @@ async def get_service_line_financial_metrics():
     }
     _SERVICE_LINE_FINANCIALS_CACHE["data"] = result
     _SERVICE_LINE_FINANCIALS_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
+    return result
+
+
+async def get_sales_outlook_metrics():
+    now = time.time()
+    if _SALES_OUTLOOK_CACHE["data"] is not None and _SALES_OUTLOOK_CACHE["expires_at"] > now:
+        return _SALES_OUTLOOK_CACHE["data"]
+
+    token = await get_access_token()
+    headers = _dynamics_read_headers(token)
+    url = (
+        f"{API_URL}/new_projects?"
+        "$select=new_projectid,createdon,new_contractdate,new_feeforcamoin&"
+        "$filter=createdon ge 2020-01-01T00:00:00Z or new_contractdate ge 2020-01-01T00:00:00Z&"
+        "$orderby=createdon asc"
+    )
+    records = []
+    async with httpx.AsyncClient(timeout=120) as client:
+        while url:
+            response = await client.get(url, headers=headers)
+            if response.status_code != 200:
+                raise Exception(f"Dynamics GET error: {response.text}")
+            payload = response.json()
+            records.extend(payload.get("value", []))
+            url = payload.get("@odata.nextLink")
+
+    current_time = datetime.now(timezone.utc)
+    annual_contracts = {str(year): 0.0 for year in range(2020, current_time.year + 1)}
+    monthly_projects = {}
+    cursor = datetime(2021, 1, 1, tzinfo=timezone.utc)
+    current_month = datetime(current_time.year, current_time.month, 1, tzinfo=timezone.utc)
+    while cursor <= current_month:
+        month_key = cursor.strftime("%Y-%m")
+        monthly_projects[month_key] = 0
+        cursor = datetime(
+            cursor.year + (1 if cursor.month == 12 else 0),
+            1 if cursor.month == 12 else cursor.month + 1,
+            1,
+            tzinfo=timezone.utc,
+        )
+
+    for record in records:
+        contract_date = str(record.get("new_contractdate") or "")
+        if len(contract_date) >= 4 and contract_date[:4] in annual_contracts:
+            annual_contracts[contract_date[:4]] += float(record.get("new_feeforcamoin") or 0)
+
+        created_date = str(record.get("createdon") or "")
+        if len(created_date) >= 7 and created_date[:7] in monthly_projects:
+            monthly_projects[created_date[:7]] += 1
+
+    result = {
+        "updated_at": current_time.isoformat(),
+        "source": "Dynamics projects",
+        "contract_value_definition": "Fee for Camoin grouped by Contract Date",
+        "project_count_definition": "Projects grouped by Dynamics created date",
+        "annual_contracts": [
+            {"year": year, "amount": round(amount, 2)}
+            for year, amount in annual_contracts.items()
+        ],
+        "monthly_projects": [
+            {"month_key": month_key, "projects": projects}
+            for month_key, projects in monthly_projects.items()
+        ],
+    }
+    _SALES_OUTLOOK_CACHE["data"] = result
+    _SALES_OUTLOOK_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
     return result
 
 
