@@ -14,6 +14,7 @@ from .dynamics import (
     get_pe_clients,
     get_pe_qualified_leads,
     get_project_creation_metrics,
+    get_sales_outlook_rfp_metrics,
     _build_pe_qualified_lead_rollups,
     _canonical_pe_client_name,
     _marketing_window,
@@ -380,6 +381,55 @@ class ProjectCreationMetricsTest(unittest.IsolatedAsyncioTestCase):
         requested_urls = "\n".join(call.args[0] for call in client.get.await_args_list)
         self.assertIn("$select=new_projectid,new_feeforcamoin,new_contractdate", requested_urls)
         self.assertIn("$select=opportunityid,name,new_feeforcamoin,cr73c_dateproposed", requested_urls)
+
+
+class SalesOutlookRfpMetricsTest(unittest.IsolatedAsyncioTestCase):
+    async def test_groups_proposals_and_won_contracts_using_dynamics_dates(self):
+        response = MagicMock(status_code=200)
+        response.json.return_value = {
+            "value": [
+                {
+                    "opportunityid": "rfp-won",
+                    "cr73c_dateproposed": "2021-03-10T00:00:00Z",
+                    "actualclosedate": "2022-04-15T00:00:00Z",
+                    "statecode@OData.Community.Display.V1.FormattedValue": "Won",
+                    "new_feeforcamoin": 125000,
+                },
+                {
+                    "opportunityid": "rfp-lost",
+                    "cr73c_dateproposed": "2021-07-10T00:00:00Z",
+                    "actualclosedate": "2022-04-20T00:00:00Z",
+                    "statecode@OData.Community.Display.V1.FormattedValue": "Lost",
+                    "new_feeforcamoin": 50000,
+                },
+                {
+                    "opportunityid": "non-bid-won",
+                    "actualclosedate": "2022-04-25T00:00:00Z",
+                    "statecode@OData.Community.Display.V1.FormattedValue": "Won",
+                    "new_feeforcamoin": 30000,
+                },
+            ]
+        }
+        client = AsyncMock()
+        client.get.return_value = response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+        dynamics._SALES_OUTLOOK_RFP_CACHE.update({"data": None, "expires_at": 0})
+
+        with (
+            patch("backend.app.services.dynamics.get_access_token", AsyncMock(return_value="token")),
+            patch("backend.app.services.dynamics.httpx.AsyncClient", return_value=client),
+            patch("backend.app.services.dynamics.API_URL", "https://example.crm/api/data/v9.2"),
+        ):
+            result = await get_sales_outlook_rfp_metrics()
+
+        proposals_2021 = next(row for row in result["annual_proposals"] if row["year"] == "2021")
+        april_2022 = next(row for row in result["monthly_contracts"] if row["month_key"] == "2022-04")
+        self.assertEqual(proposals_2021["amount"], 175000)
+        self.assertEqual(april_2022["rfp_signed_amount"], 125000)
+        self.assertEqual(april_2022["rfp_contracts_won"], 1)
+        self.assertEqual(april_2022["non_bid_signed_amount"], 30000)
+        self.assertIn("actualclosedate", client.get.await_args.args[0])
 
 
 class MarketingListQueryTest(unittest.IsolatedAsyncioTestCase):

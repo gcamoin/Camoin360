@@ -190,6 +190,7 @@ _PROJECT_METRICS_CACHE = {"expires_at": 0, "data": None}
 _RFP_SUCCESS_RATE_CACHE = {"expires_at": 0, "data": None}
 _SERVICE_LINE_FINANCIALS_CACHE = {"expires_at": 0, "data": None}
 _SALES_OUTLOOK_CACHE = {"expires_at": 0, "data": None}
+_SALES_OUTLOOK_RFP_CACHE = {"expires_at": 0, "data": None}
 
 SERVICE_LINE_FINANCIAL_GROUPS = {
     "prospecting": {
@@ -3119,6 +3120,93 @@ async def get_sales_outlook_metrics():
     }
     _SALES_OUTLOOK_CACHE["data"] = result
     _SALES_OUTLOOK_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
+    return result
+
+
+async def get_sales_outlook_rfp_metrics():
+    """Return proposal and signed-contract trends from live Dynamics opportunities.
+
+    Date Proposed identifies RFP opportunities. Won opportunities without a Date
+    Proposed are reported as non-bid contracts. Signed/won activity is grouped by
+    the opportunity's Actual Close Date.
+    """
+    now = time.time()
+    if _SALES_OUTLOOK_RFP_CACHE["data"] is not None and _SALES_OUTLOOK_RFP_CACHE["expires_at"] > now:
+        return _SALES_OUTLOOK_RFP_CACHE["data"]
+
+    token = await get_access_token()
+    headers = _dynamics_read_headers(token)
+    url = (
+        f"{API_URL}/opportunities?"
+        "$select=opportunityid,cr73c_dateproposed,actualclosedate,statecode,new_feeforcamoin&"
+        "$filter=cr73c_dateproposed ge 2016-01-01T00:00:00Z or actualclosedate ge 2020-01-01T00:00:00Z&"
+        "$orderby=cr73c_dateproposed asc"
+    )
+    records = []
+    async with httpx.AsyncClient(timeout=120) as client:
+        while url:
+            response = await client.get(url, headers=headers)
+            if response.status_code != 200:
+                raise Exception(f"Dynamics GET error: {response.text}")
+            payload = response.json()
+            records.extend(payload.get("value", []))
+            url = payload.get("@odata.nextLink")
+
+    current_time = datetime.now(timezone.utc)
+    proposal_amounts = {str(year): 0.0 for year in range(2016, current_time.year + 1)}
+    monthly = {}
+    cursor = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    current_month = datetime(current_time.year, current_time.month, 1, tzinfo=timezone.utc)
+    while cursor <= current_month:
+        monthly[cursor.strftime("%Y-%m")] = {
+            "rfp_signed_amount": 0.0,
+            "rfp_contracts_won": 0,
+            "non_bid_signed_amount": 0.0,
+        }
+        cursor = datetime(
+            cursor.year + (1 if cursor.month == 12 else 0),
+            1 if cursor.month == 12 else cursor.month + 1,
+            1,
+            tzinfo=timezone.utc,
+        )
+
+    for record in records:
+        proposed_date = str(record.get("cr73c_dateproposed") or "")
+        if len(proposed_date) >= 4 and proposed_date[:4] in proposal_amounts:
+            proposal_amounts[proposed_date[:4]] += float(record.get("new_feeforcamoin") or 0)
+
+        close_date = str(record.get("actualclosedate") or "")
+        month_key = close_date[:7]
+        state = str(get_formatted_value(record, "statecode") or "").strip().casefold()
+        if state != "won" or month_key not in monthly:
+            continue
+        fee = float(record.get("new_feeforcamoin") or 0)
+        if len(proposed_date) >= 7:
+            monthly[month_key]["rfp_signed_amount"] += fee
+            monthly[month_key]["rfp_contracts_won"] += 1
+        else:
+            monthly[month_key]["non_bid_signed_amount"] += fee
+
+    result = {
+        "updated_at": current_time.isoformat(),
+        "source": "Dynamics opportunities",
+        "definitions": {
+            "rfp": "Opportunity has a Date Proposed",
+            "non_bid": "Won opportunity does not have a Date Proposed",
+            "signed_date": "Actual Close Date",
+            "amount": "Fee for Camoin",
+        },
+        "annual_proposals": [
+            {"year": year, "amount": round(amount, 2)}
+            for year, amount in proposal_amounts.items()
+        ],
+        "monthly_contracts": [
+            {"month_key": month_key, **{key: round(value, 2) for key, value in values.items()}}
+            for month_key, values in monthly.items()
+        ],
+    }
+    _SALES_OUTLOOK_RFP_CACHE["data"] = result
+    _SALES_OUTLOOK_RFP_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
     return result
 
 
