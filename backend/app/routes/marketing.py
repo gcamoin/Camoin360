@@ -4,6 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 
 from .auth import require_user
 from ..services.dynamics import (
+    get_contract_backlog_metrics,
     get_project_creation_metrics,
     get_rfp_success_rate_metrics,
     get_sales_outlook_metrics,
@@ -112,6 +113,17 @@ async def fetch_sales_outlook_rfp(_user=Depends(require_user)):
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Unable to load RFP sales outlook from Dynamics: {exc}",
+        ) from exc
+
+
+@router.get("/management/contract-backlog")
+async def fetch_contract_backlog(_user=Depends(require_user)):
+    try:
+        return await get_contract_backlog_metrics()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to load contract backlog from Dynamics: {exc}",
         ) from exc
 
 

@@ -18,6 +18,7 @@ import MetricsDashboard from "./components/MetricsDashboard";
 import SummaryAnalytics from "./components/SummaryAnalytics";
 import { API_BASE_URL, getAuthHeaders } from "./auth";
 import { prefetch } from "./apiClient";
+import { SidebarResizeHandle, useResizableSidebar } from "./useResizableSidebar";
 
 const views = {
   seamless: {
@@ -86,6 +87,7 @@ function getViewForPath(pathname) {
 export default function LandingPage({ onLogout }) {
   const [activeView, setActiveView] = useState(() => getViewForPath(window.location.pathname));
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const sidebarResize = useResizableSidebar("maintenance");
   const theme = useTheme();
   const currentView = views[activeView];
 
@@ -131,10 +133,10 @@ export default function LandingPage({ onLogout }) {
           display: "grid",
           gridTemplateColumns: {
             xs: "1fr",
-            md: sidebarCollapsed ? "88px minmax(0, 1fr)" : "288px minmax(0, 1fr)",
+            md: sidebarCollapsed ? "88px minmax(0, 1fr)" : `${sidebarResize.width}px minmax(0, 1fr)`,
           },
           minHeight: "100vh",
-          transition: "grid-template-columns 180ms ease",
+          transition: sidebarResize.isResizing ? "none" : "grid-template-columns 180ms ease",
         }}
       >
         <Box
@@ -151,6 +153,13 @@ export default function LandingPage({ onLogout }) {
             transition: "padding 180ms ease",
           }}
         >
+          {!sidebarCollapsed && (
+            <SidebarResizeHandle
+              isResizing={sidebarResize.isResizing}
+              onReset={sidebarResize.resetWidth}
+              onResizeStart={sidebarResize.startResize}
+            />
+          )}
           <Stack
             spacing={{ xs: 1.5, md: 3 }}
             sx={{
@@ -257,7 +266,7 @@ export default function LandingPage({ onLogout }) {
                         py: 1.2,
                         position: "relative",
                         transition: "background-color 150ms ease, color 150ms ease, transform 150ms ease, box-shadow 150ms ease",
-                        whiteSpace: "nowrap",
+                        whiteSpace: sidebarCollapsed ? "nowrap" : "normal",
                         width: { xs: "auto", md: "100%" },
                         "&::before": {
                           backgroundColor: "secondary.main",

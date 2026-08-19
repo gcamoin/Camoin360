@@ -21,6 +21,7 @@ import PEClients from "./components/PEClients";
 import { EmptyState } from "./components/UiPrimitives";
 import { API_BASE_URL, getAuthHeaders } from "./auth";
 import { prefetch } from "./apiClient";
+import { SidebarResizeHandle, useResizableSidebar } from "./useResizableSidebar";
 
 const tabs = {
   marketing: {
@@ -128,6 +129,7 @@ function EmptyProspectingPanel({ title }) {
 export default function ProspectingDashboard({ onLogout }) {
   const [activeTab, setActiveTab] = useState("marketing");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const sidebarResize = useResizableSidebar("prospecting");
   const theme = useTheme();
   const currentTab = tabs[activeTab];
 
@@ -154,10 +156,10 @@ export default function ProspectingDashboard({ onLogout }) {
           display: "grid",
           gridTemplateColumns: {
             xs: "1fr",
-            md: sidebarCollapsed ? "88px minmax(0, 1fr)" : "272px minmax(0, 1fr)",
+            md: sidebarCollapsed ? "88px minmax(0, 1fr)" : `${sidebarResize.width}px minmax(0, 1fr)`,
           },
           minHeight: "100vh",
-          transition: "grid-template-columns 180ms ease",
+          transition: sidebarResize.isResizing ? "none" : "grid-template-columns 180ms ease",
         }}
       >
         <Box
@@ -174,6 +176,13 @@ export default function ProspectingDashboard({ onLogout }) {
             transition: "padding 180ms ease",
           }}
         >
+          {!sidebarCollapsed && (
+            <SidebarResizeHandle
+              isResizing={sidebarResize.isResizing}
+              onReset={sidebarResize.resetWidth}
+              onResizeStart={sidebarResize.startResize}
+            />
+          )}
           <Stack
             spacing={{ xs: 1.5, md: 3 }}
             sx={{
@@ -270,7 +279,7 @@ export default function ProspectingDashboard({ onLogout }) {
                           md: !sidebarCollapsed && tab.parent ? "calc(100% - 16px)" : "100%",
                         },
                         minWidth: { xs: "max-content", md: 0 },
-                        whiteSpace: "nowrap",
+                        whiteSpace: sidebarCollapsed ? "nowrap" : "normal",
                         "& .MuiButton-startIcon": {
                           m: sidebarCollapsed ? 0 : undefined,
                         },

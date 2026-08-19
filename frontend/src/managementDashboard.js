@@ -26,6 +26,8 @@ import DashboardDateFilters, { EMPTY_DATE_FILTERS } from "./components/Dashboard
 import RfpOverallSuccessRate from "./components/RfpOverallSuccessRate";
 import SalesOutlook from "./components/SalesOutlook";
 import SalesOutlookRfp from "./components/SalesOutlookRfp";
+import ContractBacklogSelected from "./components/ContractBacklogSelected";
+import { SidebarResizeHandle, useResizableSidebar } from "./useResizableSidebar";
 
 const graphViews = new Set([
   "economicIndicators",
@@ -39,6 +41,7 @@ const graphViews = new Set([
   "rfpOverallSuccessRate",
   "salesOutlook",
   "salesOutlookRfp",
+  "contractBacklogSelected",
 ]);
 
 const views = {
@@ -80,6 +83,12 @@ const views = {
     icon: "trending",
     title: "Sales Outlook - RFP",
     description: "Proposal and won-contract trends from live Dynamics opportunities.",
+  },
+  contractBacklogSelected: {
+    label: "Sales Outlook - Contract Backlog Selected",
+    icon: "trending",
+    title: "Sales Outlook - Contract Backlog Selected",
+    description: "Annual total contract backlog and total monthly revenue from Dynamics.",
   },
   rfpOverallSuccessRate: {
     label: "RFP Overall Success Rate",
@@ -158,6 +167,7 @@ function NavIcon({ name }) {
 export default function ManagementDashboard({ onLogout }) {
   const [activeView, setActiveView] = useState("overview");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const sidebarResize = useResizableSidebar("management");
   const [dateFiltersByView, setDateFiltersByView] = useState({});
   const theme = useTheme();
   const currentView = views[activeView];
@@ -184,10 +194,10 @@ export default function ManagementDashboard({ onLogout }) {
           display: "grid",
           gridTemplateColumns: {
             xs: "1fr",
-            md: sidebarCollapsed ? "88px minmax(0, 1fr)" : "272px minmax(0, 1fr)",
+            md: sidebarCollapsed ? "88px minmax(0, 1fr)" : `${sidebarResize.width}px minmax(0, 1fr)`,
           },
           minHeight: "100vh",
-          transition: "grid-template-columns 180ms ease",
+          transition: sidebarResize.isResizing ? "none" : "grid-template-columns 180ms ease",
         }}
       >
         <Box
@@ -204,6 +214,13 @@ export default function ManagementDashboard({ onLogout }) {
             transition: "padding 180ms ease",
           }}
         >
+          {!sidebarCollapsed && (
+            <SidebarResizeHandle
+              isResizing={sidebarResize.isResizing}
+              onReset={sidebarResize.resetWidth}
+              onResizeStart={sidebarResize.startResize}
+            />
+          )}
           <Stack
             spacing={{ xs: 1.5, md: 3 }}
             sx={{
@@ -311,7 +328,7 @@ export default function ManagementDashboard({ onLogout }) {
                         px: sidebarCollapsed ? 1 : isChild ? 2.25 : 2,
                         py: 1.25,
                         textAlign: "left",
-                        whiteSpace: !sidebarCollapsed && isChild ? "normal" : "nowrap",
+                        whiteSpace: sidebarCollapsed ? "nowrap" : "normal",
                         ml: { xs: 0, md: !sidebarCollapsed && isChild ? 2 : 0 },
                         width:
                           !sidebarCollapsed && isChild
@@ -419,6 +436,7 @@ export default function ManagementDashboard({ onLogout }) {
               {activeView === "companyFinancials" && <CompanyFinancials />}
               {activeView === "salesOutlook" && <SalesOutlook />}
               {activeView === "salesOutlookRfp" && <SalesOutlookRfp />}
+              {activeView === "contractBacklogSelected" && <ContractBacklogSelected />}
               {activeView === "serviceLineFinancials" && <ServiceLineFinancials />}
               {activeView === "rfpOverallSuccessRate" && (
                 <RfpOverallSuccessRate filters={activeDateFilters} />

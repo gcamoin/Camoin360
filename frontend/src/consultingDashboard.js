@@ -10,6 +10,7 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
+import { SidebarResizeHandle, useResizableSidebar } from "./useResizableSidebar";
 
 const iconPaths = {
   collapse:
@@ -29,6 +30,7 @@ function NavIcon({ name }) {
 
 export default function ConsultingDashboard({ onLogout }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const sidebarResize = useResizableSidebar("consulting");
   const theme = useTheme();
 
   return (
@@ -43,10 +45,10 @@ export default function ConsultingDashboard({ onLogout }) {
           display: "grid",
           gridTemplateColumns: {
             xs: "1fr",
-            md: sidebarCollapsed ? "88px minmax(0, 1fr)" : "272px minmax(0, 1fr)",
+            md: sidebarCollapsed ? "88px minmax(0, 1fr)" : `${sidebarResize.width}px minmax(0, 1fr)`,
           },
           minHeight: "100vh",
-          transition: "grid-template-columns 180ms ease",
+          transition: sidebarResize.isResizing ? "none" : "grid-template-columns 180ms ease",
         }}
       >
         <Box
@@ -63,6 +65,13 @@ export default function ConsultingDashboard({ onLogout }) {
             transition: "padding 180ms ease",
           }}
         >
+          {!sidebarCollapsed && (
+            <SidebarResizeHandle
+              isResizing={sidebarResize.isResizing}
+              onReset={sidebarResize.resetWidth}
+              onResizeStart={sidebarResize.startResize}
+            />
+          )}
           <Stack
             spacing={{ xs: 1.5, md: 3 }}
             sx={{

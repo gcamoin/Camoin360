@@ -191,6 +191,7 @@ _RFP_SUCCESS_RATE_CACHE = {"expires_at": 0, "data": None}
 _SERVICE_LINE_FINANCIALS_CACHE = {"expires_at": 0, "data": None}
 _SALES_OUTLOOK_CACHE = {"expires_at": 0, "data": None}
 _SALES_OUTLOOK_RFP_CACHE = {"expires_at": 0, "data": None}
+_CONTRACT_BACKLOG_CACHE = {"expires_at": 0, "data": None}
 
 SERVICE_LINE_FINANCIAL_GROUPS = {
     "prospecting": {
@@ -3207,6 +3208,88 @@ async def get_sales_outlook_rfp_metrics():
     }
     _SALES_OUTLOOK_RFP_CACHE["data"] = result
     _SALES_OUTLOOK_RFP_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
+    return result
+
+
+async def get_contract_backlog_metrics():
+    """Return monthly totals for the actual financial fields stored on Dynamics projects."""
+    now = time.time()
+    if _CONTRACT_BACKLOG_CACHE["data"] is not None and _CONTRACT_BACKLOG_CACHE["expires_at"] > now:
+        return _CONTRACT_BACKLOG_CACHE["data"]
+
+    token = await get_access_token()
+    headers = _dynamics_read_headers(token)
+    financial_fields = (
+        "cr73c_totalprojectfee",
+        "new_feeforcamoin",
+        "cr73c_totalsubfee",
+    )
+    first_report_year = "2022"
+    records = []
+    async with httpx.AsyncClient(timeout=120) as client:
+        url = (
+            f"{API_URL}/new_projects?"
+            f"$select=new_projectid,new_contractdate,{','.join(financial_fields)}&"
+            f"$filter=new_contractdate ge {first_report_year}-01-01&"
+            "$orderby=new_contractdate asc"
+        )
+        while url:
+            response = await client.get(url, headers=headers)
+            if response.status_code != 200:
+                raise Exception(f"Dynamics GET error: {response.text}")
+            payload = response.json()
+            records.extend(payload.get("value", []))
+            url = payload.get("@odata.nextLink")
+
+    monthly = {}
+    month_cursor = datetime(int(first_report_year), 1, 1, tzinfo=timezone.utc)
+    current_month = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    while month_cursor <= current_month:
+        monthly[month_cursor.strftime("%Y-%m")] = {
+            "total_project_fee": 0.0,
+            "fee_for_camoin": 0.0,
+            "total_sub_fee": 0.0,
+        }
+        if month_cursor.month == 12:
+            month_cursor = month_cursor.replace(year=month_cursor.year + 1, month=1)
+        else:
+            month_cursor = month_cursor.replace(month=month_cursor.month + 1)
+
+    for record in records:
+        contract_date = str(record.get("new_contractdate") or "")
+        if len(contract_date) < 7:
+            continue
+        month_key = contract_date[:7]
+        row = monthly.setdefault(
+            month_key,
+            {"total_project_fee": 0.0, "fee_for_camoin": 0.0, "total_sub_fee": 0.0},
+        )
+        row["total_project_fee"] += float(record.get("cr73c_totalprojectfee") or 0)
+        row["fee_for_camoin"] += float(record.get("new_feeforcamoin") or 0)
+        row["total_sub_fee"] += float(record.get("cr73c_totalsubfee") or 0)
+
+    result = {
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "source": "Dynamics projects",
+        "definitions": {
+            "total_project_fee": "Dynamics: Total Project Fee",
+            "fee_for_camoin": "Dynamics: Fee for Camoin",
+            "total_sub_fee": "Dynamics: Total Sub Fee",
+            "grouped_by": "Dynamics: Contract Date month",
+            "first_year": first_report_year,
+        },
+        "monthly_totals": [
+            {
+                "month_key": month_key,
+                "total_project_fee": values["total_project_fee"],
+                "fee_for_camoin": values["fee_for_camoin"],
+                "total_sub_fee": values["total_sub_fee"],
+            }
+            for month_key, values in sorted(monthly.items())
+        ],
+    }
+    _CONTRACT_BACKLOG_CACHE["data"] = result
+    _CONTRACT_BACKLOG_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
     return result
 
 

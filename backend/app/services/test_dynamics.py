@@ -7,6 +7,7 @@ from .dynamics import (
     create_pe_client,
     create_pe_client_user,
     delete_marketing_list,
+    get_contract_backlog_metrics,
     get_leadfeeder_visits,
     get_marketing_list_conversion_analysis,
     get_marketing_list_members,
@@ -430,6 +431,61 @@ class SalesOutlookRfpMetricsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(april_2022["rfp_contracts_won"], 1)
         self.assertEqual(april_2022["non_bid_signed_amount"], 30000)
         self.assertIn("actualclosedate", client.get.await_args.args[0])
+
+
+class ContractBacklogMetricsTest(unittest.IsolatedAsyncioTestCase):
+    async def test_groups_actual_project_financial_fields_by_contract_month(self):
+        records_response = MagicMock(status_code=200)
+        records_response.json.return_value = {
+            "value": [
+                {
+                    "new_projectid": "project-1",
+                    "new_contractdate": "2025-02-10T00:00:00Z",
+                    "cr73c_totalprojectfee": 120000,
+                    "new_feeforcamoin": 100000,
+                    "cr73c_totalsubfee": 20000,
+                },
+                {
+                    "new_projectid": "project-2",
+                    "new_contractdate": "2025-09-15T00:00:00Z",
+                    "cr73c_totalprojectfee": 80000,
+                    "new_feeforcamoin": 72500,
+                    "cr73c_totalsubfee": 7500,
+                },
+            ]
+        }
+        client = AsyncMock()
+        client.get.return_value = records_response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+        dynamics._CONTRACT_BACKLOG_CACHE.update({"data": None, "expires_at": 0})
+
+        with (
+            patch("backend.app.services.dynamics.get_access_token", AsyncMock(return_value="token")),
+            patch("backend.app.services.dynamics.httpx.AsyncClient", return_value=client),
+            patch("backend.app.services.dynamics.API_URL", "https://example.crm/api/data/v9.2"),
+        ):
+            result = await get_contract_backlog_metrics()
+
+        monthly_totals = {row["month_key"]: row for row in result["monthly_totals"]}
+        self.assertEqual(monthly_totals["2025-02"], {
+            "month_key": "2025-02",
+            "total_project_fee": 120000.0,
+            "fee_for_camoin": 100000.0,
+            "total_sub_fee": 20000.0,
+        })
+        self.assertEqual(monthly_totals["2025-09"], {
+            "month_key": "2025-09",
+            "total_project_fee": 80000.0,
+            "fee_for_camoin": 72500.0,
+            "total_sub_fee": 7500.0,
+        })
+        self.assertEqual(monthly_totals["2025-03"]["total_project_fee"], 0.0)
+        requested_url = client.get.await_args.args[0]
+        self.assertIn("cr73c_totalprojectfee", requested_url)
+        self.assertIn("new_feeforcamoin", requested_url)
+        self.assertIn("cr73c_totalsubfee", requested_url)
+        self.assertIn("$filter=new_contractdate ge 2022-01-01", requested_url)
 
 
 class MarketingListQueryTest(unittest.IsolatedAsyncioTestCase):
