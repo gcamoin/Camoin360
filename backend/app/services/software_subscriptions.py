@@ -28,7 +28,7 @@ def list_software_subscriptions():
             f"""
             SELECT {SOFTWARE_SUBSCRIPTION_COLUMNS}
             FROM software_subscriptions
-            ORDER BY name COLLATE NOCASE ASC
+            ORDER BY LOWER(name) ASC
             """
         ).fetchall()
 
@@ -56,6 +56,7 @@ def create_software_subscription(subscription_details: dict):
                 vendor_rep, subscribed_since, status, notes
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
             """,
             (
                 subscription_details["name"],
@@ -76,7 +77,8 @@ def create_software_subscription(subscription_details: dict):
                 subscription_details.get("notes") or "",
             ),
         )
-        row = _select_subscription_by_id(connection, cursor.lastrowid)
+        new_subscription_id = cursor.fetchone()["id"]
+        row = _select_subscription_by_id(connection, new_subscription_id)
 
     return SoftwareSubscription.from_row(row)
 

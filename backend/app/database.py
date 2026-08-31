@@ -1,21 +1,83 @@
 import os
-import sqlite3
+import re
 from contextlib import contextmanager
-from pathlib import Path
+
+import psycopg
+from psycopg.rows import dict_row
 
 
-DEFAULT_DATABASE_PATH = Path(__file__).resolve().parent / "data" / "client_management.db"
-DATABASE_PATH = Path(os.getenv("CLIENT_MANAGEMENT_DATABASE_PATH", DEFAULT_DATABASE_PATH))
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+_initialized = False
+
+_NAMED_PLACEHOLDER_PATTERN = re.compile(r":([a-zA-Z_][a-zA-Z0-9_]*)")
 
 
-def initialize_database():
-    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+def _require_database_url() -> str:
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "DATABASE_URL environment variable is not set. Set it to a PostgreSQL "
+            "connection string (Render provides this automatically in production; "
+            "for local development, point it at a local PostgreSQL instance)."
+        )
+    return DATABASE_URL
 
-    with sqlite3.connect(DATABASE_PATH) as connection:
-        connection.execute(
+
+def _connect():
+    return psycopg.connect(_require_database_url(), row_factory=dict_row)
+
+
+def _translate_placeholders(sql: str, parameters):
+    """Translate sqlite-style '?' / ':name' placeholders to psycopg's '%s' / '%(name)s'."""
+    if parameters is None:
+        return sql
+    if isinstance(parameters, dict):
+        return _NAMED_PLACEHOLDER_PATTERN.sub(r"%(\1)s", sql)
+    return sql.replace("?", "%s")
+
+
+class _CompatConnection:
+    """Wraps a psycopg connection so existing sqlite3-style call sites keep working:
+    connection.execute(sql, params).fetchone()/.fetchall() with '?' / ':name' placeholders.
+    """
+
+    def __init__(self, connection):
+        self._connection = connection
+
+    def execute(self, sql, parameters=None):
+        translated = _translate_placeholders(sql, parameters)
+        if parameters is None:
+            return self._connection.execute(translated)
+        return self._connection.execute(translated, parameters)
+
+    def executemany(self, sql, seq_of_parameters):
+        seq_of_parameters = list(seq_of_parameters)
+        if not seq_of_parameters:
+            return
+        translated = _translate_placeholders(sql, seq_of_parameters[0])
+        cursor = self._connection.cursor()
+        cursor.executemany(translated, seq_of_parameters)
+        return cursor
+
+    def commit(self):
+        self._connection.commit()
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+
+def initialize_database(force: bool = False):
+    global _initialized
+    if _initialized and not force:
+        return
+
+    connection = _connect()
+    wrapped = _CompatConnection(connection)
+    try:
+        wrapped.execute(
             """
             CREATE TABLE IF NOT EXISTS organizations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 dynamics_account_id TEXT NOT NULL UNIQUE,
                 organization_name TEXT NOT NULL,
                 city TEXT NOT NULL DEFAULT '',
@@ -27,13 +89,13 @@ def initialize_database():
             )
             """
         )
-        connection.execute(
+        wrapped.execute(
             "CREATE INDEX IF NOT EXISTS idx_organizations_name ON organizations (organization_name)"
         )
-        connection.execute(
+        wrapped.execute(
             """
             CREATE TABLE IF NOT EXISTS client_users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 organization_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 username TEXT NOT NULL UNIQUE,
@@ -45,25 +107,25 @@ def initialize_database():
             )
             """
         )
-        connection.execute(
+        wrapped.execute(
             "CREATE INDEX IF NOT EXISTS idx_client_users_organization_id ON client_users (organization_id)"
         )
-        connection.execute(
+        wrapped.execute(
             "CREATE INDEX IF NOT EXISTS idx_client_users_username ON client_users (username)"
         )
-        connection.execute(
+        wrapped.execute(
             """
             CREATE TABLE IF NOT EXISTS software_subscriptions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 description TEXT NOT NULL DEFAULT '',
                 category TEXT NOT NULL DEFAULT '',
                 department TEXT NOT NULL DEFAULT '',
                 point_of_contact TEXT NOT NULL,
                 assigned_users TEXT NOT NULL DEFAULT '',
-                cost_2024_2025 REAL,
-                cost_2025_2026 REAL,
-                cost_2026_2027 REAL,
+                cost_2024_2025 DOUBLE PRECISION,
+                cost_2025_2026 DOUBLE PRECISION,
+                cost_2026_2027 DOUBLE PRECISION,
                 billing_frequency TEXT NOT NULL DEFAULT '',
                 renewal_date TEXT NOT NULL DEFAULT '',
                 renewal_time_frame TEXT NOT NULL,
@@ -76,27 +138,21 @@ def initialize_database():
             )
             """
         )
-        software_subscription_columns = {
-            row[1]
-            for row in connection.execute("PRAGMA table_info(software_subscriptions)").fetchall()
-        }
-        if "category" not in software_subscription_columns:
-            connection.execute(
-                "ALTER TABLE software_subscriptions ADD COLUMN category TEXT NOT NULL DEFAULT ''"
-            )
-        if "department" not in software_subscription_columns:
-            connection.execute(
-                "ALTER TABLE software_subscriptions ADD COLUMN department TEXT NOT NULL DEFAULT ''"
-            )
-        if "billing_frequency" not in software_subscription_columns:
-            connection.execute(
-                "ALTER TABLE software_subscriptions ADD COLUMN billing_frequency TEXT NOT NULL DEFAULT ''"
-            )
-        if "renewal_date" not in software_subscription_columns:
-            connection.execute(
-                "ALTER TABLE software_subscriptions ADD COLUMN renewal_date TEXT NOT NULL DEFAULT ''"
-            )
-        connection.executemany(
+        # Backfills columns for any pre-existing table created before these were added.
+        # No-ops on a freshly created table since CREATE TABLE above already includes them.
+        wrapped.execute(
+            "ALTER TABLE software_subscriptions ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT ''"
+        )
+        wrapped.execute(
+            "ALTER TABLE software_subscriptions ADD COLUMN IF NOT EXISTS department TEXT NOT NULL DEFAULT ''"
+        )
+        wrapped.execute(
+            "ALTER TABLE software_subscriptions ADD COLUMN IF NOT EXISTS billing_frequency TEXT NOT NULL DEFAULT ''"
+        )
+        wrapped.execute(
+            "ALTER TABLE software_subscriptions ADD COLUMN IF NOT EXISTS renewal_date TEXT NOT NULL DEFAULT ''"
+        )
+        wrapped.executemany(
             """
             UPDATE software_subscriptions
             SET category = ?,
@@ -112,13 +168,13 @@ def initialize_database():
                 ("Design Tools", "Marketing", "Annual", "2026-12-01", "Canva Teams"),
             ],
         )
-        connection.execute(
+        wrapped.execute(
             "CREATE INDEX IF NOT EXISTS idx_software_subscriptions_status ON software_subscriptions (status)"
         )
-        connection.execute(
+        wrapped.execute(
             "CREATE INDEX IF NOT EXISTS idx_software_subscriptions_contact ON software_subscriptions (point_of_contact)"
         )
-        connection.execute(
+        wrapped.execute(
             """
             CREATE TABLE IF NOT EXISTS account_data_quality_cache (
                 accountid TEXT PRIMARY KEY,
@@ -143,22 +199,22 @@ def initialize_database():
             )
             """
         )
-        connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_account_quality_name ON account_data_quality_cache (name COLLATE NOCASE)"
+        wrapped.execute(
+            "CREATE INDEX IF NOT EXISTS idx_account_quality_name ON account_data_quality_cache (LOWER(name))"
         )
-        connection.execute(
+        wrapped.execute(
             "CREATE INDEX IF NOT EXISTS idx_account_quality_sector ON account_data_quality_cache (new_sector)"
         )
-        connection.execute(
+        wrapped.execute(
             "CREATE INDEX IF NOT EXISTS idx_account_quality_country ON account_data_quality_cache (address1_country)"
         )
-        connection.execute(
+        wrapped.execute(
             "CREATE INDEX IF NOT EXISTS idx_account_quality_state ON account_data_quality_cache (address1_stateorprovince)"
         )
-        connection.execute(
+        wrapped.execute(
             "CREATE INDEX IF NOT EXISTS idx_account_quality_city ON account_data_quality_cache (address1_city)"
         )
-        connection.execute(
+        wrapped.execute(
             """
             CREATE TABLE IF NOT EXISTS account_data_quality_sync (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -170,13 +226,14 @@ def initialize_database():
             )
             """
         )
-        connection.execute(
+        wrapped.execute(
             """
-            INSERT OR IGNORE INTO account_data_quality_sync (id, status, row_count)
+            INSERT INTO account_data_quality_sync (id, status, row_count)
             VALUES (1, 'idle', 0)
+            ON CONFLICT (id) DO NOTHING
             """
         )
-        connection.execute(
+        wrapped.execute(
             """
             CREATE TABLE IF NOT EXISTS marketing_metrics_cache (
                 range_key TEXT PRIMARY KEY,
@@ -190,7 +247,7 @@ def initialize_database():
             )
             """
         )
-        connection.execute(
+        wrapped.execute(
             """
             CREATE TABLE IF NOT EXISTS employee_productivity_cache (
                 cache_key TEXT PRIMARY KEY,
@@ -204,7 +261,7 @@ def initialize_database():
             )
             """
         )
-        connection.execute(
+        wrapped.execute(
             """
             CREATE TABLE IF NOT EXISTS service_line_marketing_cache (
                 cache_key TEXT PRIMARY KEY,
@@ -218,11 +275,11 @@ def initialize_database():
             )
             """
         )
-        subscription_count = connection.execute(
-            "SELECT COUNT(*) FROM software_subscriptions"
-        ).fetchone()[0]
+        subscription_count = wrapped.execute(
+            "SELECT COUNT(*) AS count FROM software_subscriptions"
+        ).fetchone()["count"]
         if subscription_count == 0:
-            connection.executemany(
+            wrapped.executemany(
                 """
                 INSERT INTO software_subscriptions (
                     name, description, category, department, point_of_contact, assigned_users,
@@ -308,15 +365,24 @@ def initialize_database():
                 ],
             )
 
+        connection.commit()
+    finally:
+        connection.close()
+
+    _initialized = True
+
 
 @contextmanager
 def get_database_connection():
     initialize_database()
-    connection = sqlite3.connect(DATABASE_PATH)
-    connection.row_factory = sqlite3.Row
+    connection = _connect()
+    wrapped = _CompatConnection(connection)
 
     try:
-        yield connection
+        yield wrapped
         connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
     finally:
         connection.close()

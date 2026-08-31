@@ -11,7 +11,7 @@ def list_organizations():
             SELECT id, dynamics_account_id, organization_name, city, state, user_count,
                    contract_expiration, created_at, updated_at
             FROM organizations
-            ORDER BY organization_name COLLATE NOCASE ASC
+            ORDER BY LOWER(organization_name) ASC
             """
         ).fetchall()
 
@@ -26,7 +26,7 @@ def list_manual_organizations():
                    contract_expiration, created_at, updated_at
             FROM organizations
             WHERE dynamics_account_id LIKE 'manual-%'
-            ORDER BY organization_name COLLATE NOCASE ASC
+            ORDER BY LOWER(organization_name) ASC
             """
         ).fetchall()
 

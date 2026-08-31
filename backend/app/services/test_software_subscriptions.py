@@ -1,9 +1,6 @@
-import tempfile
 import unittest
-from pathlib import Path
-from unittest.mock import patch
 
-from backend.app import database
+from backend.app.testing_support import temporary_database
 from backend.app.services.software_subscriptions import (
     create_software_subscription,
     delete_software_subscription,
@@ -15,17 +12,11 @@ from backend.app.services.software_subscriptions import (
 
 class SoftwareSubscriptionServiceTest(unittest.TestCase):
     def setUp(self):
-        self.temporary_directory = tempfile.TemporaryDirectory()
-        self.database_path_patch = patch.object(
-            database,
-            "DATABASE_PATH",
-            Path(self.temporary_directory.name) / "software-subscriptions.db",
-        )
-        self.database_path_patch.start()
+        self.database_patch = temporary_database()
+        self.database_patch.start()
 
     def tearDown(self):
-        self.database_path_patch.stop()
-        self.temporary_directory.cleanup()
+        self.database_patch.stop()
 
     def test_seeds_sample_subscriptions(self):
         subscriptions = list_software_subscriptions()

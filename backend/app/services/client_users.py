@@ -1,7 +1,8 @@
 import hashlib
 import hmac
 import secrets
-import sqlite3
+
+import psycopg
 
 from ..database import get_database_connection
 from ..models.client_user import ClientUser
@@ -79,8 +80,8 @@ def list_client_users(organization_id: int | None = None):
             FROM client_users
             JOIN organizations ON organizations.id = client_users.organization_id
             {organization_filter}
-            ORDER BY organizations.organization_name COLLATE NOCASE ASC,
-                     client_users.name COLLATE NOCASE ASC
+            ORDER BY LOWER(organizations.organization_name) ASC,
+                     LOWER(client_users.name) ASC
             """,
             parameters,
         ).fetchall()
@@ -109,6 +110,7 @@ def create_client_user(user_details: dict):
                     organization_id, name, username, password_hash, role
                 )
                 VALUES (?, ?, ?, ?, ?)
+                RETURNING id
                 """,
                 (
                     int(user_details["organization_id"]),
@@ -118,8 +120,10 @@ def create_client_user(user_details: dict):
                     user_details.get("role") or "user",
                 ),
             )
-        except sqlite3.IntegrityError as exc:
+        except psycopg.IntegrityError as exc:
             raise ValueError("Username already exists") from exc
+
+        new_user_id = cursor.fetchone()["id"]
 
         connection.execute(
             """
@@ -132,7 +136,7 @@ def create_client_user(user_details: dict):
             """,
             (int(user_details["organization_id"]), int(user_details["organization_id"])),
         )
-        row = _select_user_by_id(connection, cursor.lastrowid)
+        row = _select_user_by_id(connection, new_user_id)
 
     return ClientUser.from_row(row)
 
@@ -166,7 +170,7 @@ def update_client_user(user_id: int, user_details: dict):
                     user_id,
                 ),
             )
-        except sqlite3.IntegrityError as exc:
+        except psycopg.IntegrityError as exc:
             raise ValueError("Username already exists") from exc
 
         for organization_id in {existing_user.organization_id, next_organization_id}:

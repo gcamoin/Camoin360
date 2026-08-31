@@ -574,11 +574,13 @@ def _get_data_quality_facets(connection, where_clause: str, values: list) -> dic
     def distinct_values(column_name: str) -> list[str]:
         rows = connection.execute(
             f"""
-            SELECT DISTINCT {column_name} AS value
-            FROM account_data_quality_cache
-            {where_clause}
-              {"AND" if where_clause else "WHERE"} {column_name} != ''
-            ORDER BY {column_name} COLLATE NOCASE ASC
+            SELECT value FROM (
+                SELECT DISTINCT {column_name} AS value
+                FROM account_data_quality_cache
+                {where_clause}
+                  {"AND" if where_clause else "WHERE"} {column_name} != ''
+            ) distinct_column_values
+            ORDER BY LOWER(value) ASC
             LIMIT 1000
             """,
             values,
@@ -663,9 +665,9 @@ def _get_data_quality_facets(connection, where_clause: str, values: list) -> dic
         FROM account_data_quality_cache
         {where_clause}
           {"AND" if where_clause else "WHERE"} (
-            (',' || missing_field_keys || ',') LIKE '%,address1_city,%'
-            OR (',' || missing_field_keys || ',') LIKE '%,address1_stateorprovince,%'
-            OR (',' || missing_field_keys || ',') LIKE '%,address1_country,%'
+            (',' || missing_field_keys || ',') LIKE '%%,address1_city,%%'
+            OR (',' || missing_field_keys || ',') LIKE '%%,address1_stateorprovince,%%'
+            OR (',' || missing_field_keys || ',') LIKE '%%,address1_country,%%'
           )
         """,
         values,
@@ -738,7 +740,7 @@ def get_accounts_data_quality_page(
                    has_missing_quality_field AS hasMissingQualityField
             FROM account_data_quality_cache
             {where_clause}
-            ORDER BY {sort_column} COLLATE NOCASE {direction}, name COLLATE NOCASE ASC
+            ORDER BY LOWER({sort_column}) {direction}, LOWER(name) ASC
             LIMIT ? OFFSET ?
             """,
             [*values, page_size, offset],
