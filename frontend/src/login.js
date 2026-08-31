@@ -15,6 +15,7 @@ import {
 } from "@mui/material";
 
 import { MODULE_OPTIONS, getApiErrorMessage, getPreferredDashboardView } from "./auth";
+import { LegalFooterLinks } from "./legalPages";
 
 export default function Login({ onLogin }) {
   const [email, setEmail] = useState("");
@@ -219,6 +220,7 @@ export default function Login({ onLogin }) {
               >
                 Contact Garrett Camoin for account access.
               </Typography>
+              <LegalFooterLinks />
             </Stack>
           </Paper>
         </Box>

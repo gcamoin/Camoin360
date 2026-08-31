@@ -12,6 +12,7 @@ import {
 } from "./auth";
 import AdminDashboard from "./adminDashboard";
 import LandingPage from "./landingPage";
+import LegalPage from "./legalPages";
 import Login from "./login";
 import ConsultingDashboard from "./consultingDashboard";
 import ManagementDashboard from "./managementDashboard";
@@ -46,6 +47,14 @@ export default function App() {
     clearAuthToken();
     setIsLoggedIn(false);
     setCurrentUser(null);
+  }
+
+  if (window.location.pathname === "/terms") {
+    return <LegalPage type="terms" />;
+  }
+
+  if (window.location.pathname === "/privacy") {
+    return <LegalPage type="privacy" />;
   }
 
   if (isLoggedIn) {
