@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import axios from "axios";
 import { Button, CircularProgress, Snackbar, Alert } from "@mui/material";
+import { API_BASE_URL } from "../auth";
 
 export default function RunEnrichmentButton({ onComplete }) {
   const [loading, setLoading] = useState(false);
@@ -13,7 +14,7 @@ export default function RunEnrichmentButton({ onComplete }) {
     setSuccessMsg("");
 
     try {
-      const res = await axios.post("http://localhost:8000/accounts/enrich-all");
+      const res = await axios.post(`${API_BASE_URL}/accounts/enrich-all`);
 
       const processed = res.data?.processed || 0;
       const updated = res.data?.updated || 0;
@@ -22,8 +23,9 @@ export default function RunEnrichmentButton({ onComplete }) {
         `Enrichment complete: ${processed} processed, ${updated} updated`,
       );
 
-      // 🔥 trigger refresh in dashboard
-      if (onComplete) onComplete();
+      if (onComplete) {
+        onComplete();
+      }
     } catch (err) {
       console.error(err);
       setError("Failed to run enrichment");
