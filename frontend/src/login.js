@@ -5,7 +5,6 @@ import {
   Container,
   FormControl,
   InputLabel,
-  Link,
   MenuItem,
   Paper,
   Select,
@@ -15,17 +14,9 @@ import {
   useTheme,
 } from "@mui/material";
 
-import { getApiErrorMessage, getPreferredDashboardView } from "./auth";
+import { MODULE_OPTIONS, getApiErrorMessage, getPreferredDashboardView } from "./auth";
 
-const dashboardOptions = [
-  { value: "main", label: "Sophie Maintenance" },
-  { value: "prospecting", label: "Prospecting" },
-  { value: "consulting", label: "Consulting" },
-  { value: "management", label: "Management" },
-  { value: "consulting", label: "Consulting" },
-];
-
-export default function Login({ onLogin, onShowSignup }) {
+export default function Login({ onLogin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [dashboardView, setDashboardView] = useState(getPreferredDashboardView);
@@ -84,7 +75,7 @@ export default function Login({ onLogin, onShowSignup }) {
                   letterSpacing: "0.12em",
                 }}
               >
-                Sophie Maintenance
+                Four connected modules
               </Typography>
               <Typography
                 component="h1"
@@ -106,18 +97,18 @@ export default function Login({ onLogin, onShowSignup }) {
                 lineHeight: 1.7,
               }}
             >
-              Secure access to Seamless credit usage, Dynamics update activity,
-              and enrichment throughput in one operational view.
+              Secure access to Camoin 360 modules for maintenance workflows,
+              prospecting activity, consulting tools, and management reporting.
             </Typography>
             <Box
               sx={{
                 display: "grid",
-                gridTemplateColumns: { xs: "1fr", sm: "repeat(3, 1fr)" },
+                gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)" },
                 gap: 2,
                 maxWidth: 520,
               }}
             >
-              {["Live metrics", "Credit tracking", "Dynamics sync"].map(
+              {["Maintenance", "Prospecting", "Consulting", "Management"].map(
                 (item) => (
                   <Box
                     key={item}
@@ -195,7 +186,7 @@ export default function Login({ onLogin, onShowSignup }) {
                   onChange={(event) => setDashboardView(event.target.value)}
                   value={dashboardView}
                 >
-                  {dashboardOptions.map((option) => (
+                  {MODULE_OPTIONS.map((option) => (
                     <MenuItem key={option.value} value={option.value}>
                       {option.label}
                     </MenuItem>
@@ -226,16 +217,7 @@ export default function Login({ onLogin, onShowSignup }) {
                 sx={{ textAlign: "center" }}
                 variant="body2"
               >
-                New user?{" "}
-                <Link
-                  component="button"
-                  onClick={onShowSignup}
-                  sx={{ fontWeight: 800 }}
-                  type="button"
-                  underline="hover"
-                >
-                  Create an account
-                </Link>
+                Contact Garrett Camoin for account access.
               </Typography>
             </Stack>
           </Paper>

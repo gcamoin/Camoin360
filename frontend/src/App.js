@@ -1,81 +1,77 @@
 import { useEffect, useState } from "react";
 import {
   clearAuthToken,
+  getAllowedDashboardViews,
   getAuthToken,
-  getPreferredDashboardView,
+  getCurrentUser,
+  getDefaultDashboardView,
+  getPreferredAllowedDashboardView,
   loginUser,
   onUnauthorized,
   savePreferredDashboardView,
-  signupUser,
 } from "./auth";
+import AdminDashboard from "./adminDashboard";
 import LandingPage from "./landingPage";
 import Login from "./login";
 import ConsultingDashboard from "./consultingDashboard";
 import ManagementDashboard from "./managementDashboard";
 import ProspectingDashboard from "./prospectingDashboard";
-import SignUp from "./signup";
 
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(() => Boolean(getAuthToken()));
-  const [authView, setAuthView] = useState("login");
-  const [dashboardView, setDashboardView] = useState(getPreferredDashboardView);
+  const [currentUser, setCurrentUser] = useState(getCurrentUser);
+  const [dashboardView, setDashboardView] = useState(() => getPreferredAllowedDashboardView(getCurrentUser()));
 
   useEffect(() => {
     return onUnauthorized(() => {
       setIsLoggedIn(false);
-      setAuthView("login");
+      setCurrentUser(null);
     });
   }, []);
 
   async function handleLogin(credentials, nextDashboardView) {
-    await loginUser(credentials);
-    savePreferredDashboardView(nextDashboardView);
-    setDashboardView(nextDashboardView);
-    setIsLoggedIn(true);
-  }
+    const user = await loginUser(credentials);
+    const allowedDashboardViews = getAllowedDashboardViews(user);
+    const resolvedDashboardView = allowedDashboardViews.some((option) => option.value === nextDashboardView)
+      ? nextDashboardView
+      : getDefaultDashboardView(user);
 
-  async function handleSignup(credentials) {
-    await signupUser(credentials);
-    savePreferredDashboardView("main");
-    setDashboardView("main");
+    savePreferredDashboardView(resolvedDashboardView);
+    setCurrentUser(user);
+    setDashboardView(resolvedDashboardView);
     setIsLoggedIn(true);
   }
 
   function handleLogout() {
     clearAuthToken();
     setIsLoggedIn(false);
-    setAuthView("login");
+    setCurrentUser(null);
   }
 
   if (isLoggedIn) {
-    if (dashboardView === "management") {
+    const allowedDashboardViews = getAllowedDashboardViews(currentUser);
+    const resolvedDashboardView = allowedDashboardViews.some((option) => option.value === dashboardView)
+      ? dashboardView
+      : getDefaultDashboardView(currentUser);
+
+    if (resolvedDashboardView === "admin") {
+      return <AdminDashboard onLogout={handleLogout} />;
+    }
+
+    if (resolvedDashboardView === "management") {
       return <ManagementDashboard onLogout={handleLogout} />;
     }
 
-    if (dashboardView === "prospecting") {
+    if (resolvedDashboardView === "prospecting") {
       return <ProspectingDashboard onLogout={handleLogout} />;
     }
 
-    if (dashboardView === "consulting") {
+    if (resolvedDashboardView === "consulting") {
       return <ConsultingDashboard onLogout={handleLogout} />;
     }
 
     return <LandingPage onLogout={handleLogout} />;
   }
 
-  if (authView === "signup") {
-    return (
-      <SignUp
-        onShowLogin={() => setAuthView("login")}
-        onSignup={handleSignup}
-      />
-    );
-  }
-
-  return (
-    <Login
-      onLogin={handleLogin}
-      onShowSignup={() => setAuthView("signup")}
-    />
-  );
+  return <Login onLogin={handleLogin} />;
 }
