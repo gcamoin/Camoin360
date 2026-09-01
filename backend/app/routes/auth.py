@@ -21,6 +21,7 @@ TOKEN_TTL_SECONDS = 60 * 60 * 12
 ADMIN_EMAIL = "garrett@camoinassociates.com"
 ADMIN_NAME = "Garrett Camoin"
 ADMIN_PASSWORD = os.getenv("CAMOIN360_ADMIN_PASSWORD", "Roccky#5")
+DEFAULT_ORGANIZATION_ID = int(os.getenv("CAMOIN360_ORGANIZATION_ID", "1"))
 MODULES = {
     "main": "Sophie Maintenance",
     "prospecting": "Prospecting",
@@ -36,6 +37,7 @@ class SignupRequest(BaseModel):
     email: str = Field(min_length=3)
     password: str = Field(min_length=8)
     modules: list[str] = Field(default_factory=list)
+    organization_id: int = Field(default=DEFAULT_ORGANIZATION_ID, ge=1)
 
 
 class UpdateUserRequest(BaseModel):
@@ -62,6 +64,7 @@ class UserResponse(BaseModel):
     email: str
     role: str = "user"
     modules: list[str] = Field(default_factory=list)
+    organization_id: int = DEFAULT_ORGANIZATION_ID
 
 
 class UserListResponse(BaseModel):
@@ -106,6 +109,7 @@ def _with_admin_user(users):
             "password": _hash_password(ADMIN_PASSWORD),
             "role": "admin",
             "modules": ADMIN_MODULES,
+            "organization_id": DEFAULT_ORGANIZATION_ID,
         }
         _save_users(users)
 
@@ -122,6 +126,7 @@ def _sanitize_user(user):
         email=user["email"],
         role=user.get("role", "user"),
         modules=_normalize_modules(user.get("modules", [])),
+        organization_id=int(user.get("organization_id") or DEFAULT_ORGANIZATION_ID),
     )
 
 
@@ -186,6 +191,7 @@ def _create_auth_response(user):
             "name": sanitized_user.name,
             "role": sanitized_user.role,
             "modules": sanitized_user.modules,
+            "organization_id": sanitized_user.organization_id,
             "exp": int(time.time()) + TOKEN_TTL_SECONDS,
         }
     )
@@ -260,6 +266,7 @@ async def create_user(request: SignupRequest, _admin=Depends(require_admin_user)
         "password": _hash_password(request.password),
         "role": "user",
         "modules": _normalize_modules(request.modules),
+        "organization_id": request.organization_id,
     }
     users[email] = user
     _save_users(users)

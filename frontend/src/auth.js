@@ -71,6 +71,7 @@ export function getCurrentUser() {
       email: tokenPayload.sub,
       role: tokenPayload.role || "user",
       modules: Array.isArray(tokenPayload.modules) ? tokenPayload.modules : [],
+      organization_id: Number(tokenPayload.organization_id || 1),
     };
   }
 
@@ -88,6 +89,7 @@ export function saveCurrentUser(user) {
     email: user.email,
     role: user.role || "user",
     modules: Array.isArray(user.modules) ? user.modules : [],
+    organization_id: Number(user.organization_id || 1),
   };
   window.localStorage.setItem(AUTH_USER_STORAGE_KEY, JSON.stringify(currentUser));
 }

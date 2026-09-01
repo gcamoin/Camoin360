@@ -32,7 +32,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
+import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, getCurrentUser, handleUnauthorized } from "../auth";
 
 const API_URL = `${API_BASE_URL}/company-financials`;
 const REQUEST_TIMEOUT_MS = 60 * 1000;
@@ -184,6 +184,7 @@ export default function CompanyFinancials() {
   const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
   const [isAnalysisGenerated, setIsAnalysisGenerated] = useState(false);
   const [analysisTab, setAnalysisTab] = useState("analysis");
+  const [canManageQuickBooks, setCanManageQuickBooks] = useState(false);
   const displayRows = monthlyFinancials;
   const yearOptions = useMemo(
     () => [
@@ -219,7 +220,14 @@ export default function CompanyFinancials() {
     } catch (requestError) {
       if (!isMountedRef.current || handleUnauthorized(requestError)) return;
 
-      setError(getApiErrorMessage(requestError, "Unable to load QuickBooks company financials."));
+      if (requestError.response?.status === 409) {
+        const currentUser = getCurrentUser();
+        const userModules = Array.isArray(currentUser?.modules) ? currentUser.modules : [];
+        setCanManageQuickBooks(currentUser?.role === "admin" || userModules.includes("admin"));
+        setError("QuickBooks Online is not connected for your organization.");
+      } else {
+        setError(getApiErrorMessage(requestError, "Unable to load QuickBooks company financials."));
+      }
     } finally {
       if (isMountedRef.current) {
         setIsLoading(false);
@@ -279,9 +287,22 @@ export default function CompanyFinancials() {
     <Stack spacing={2.5}>
       {error ? (
         <Alert severity="error" sx={{ borderRadius: 2 }}>
-          {error}
+          <Stack alignItems={{ xs: "flex-start", sm: "center" }} direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1.5}>
+            <span>{error}</span>
+            {canManageQuickBooks ? (
+              <Button
+                color="inherit"
+                onClick={() => window.location.assign("/settings/integrations/quickbooks")}
+                size="small"
+                variant="outlined"
+              >
+                Manage QuickBooks Connection
+              </Button>
+            ) : null}
+          </Stack>
         </Alert>
       ) : null}
+      {!error ? (
       <Paper
         elevation={0}
         sx={{
@@ -342,6 +363,7 @@ export default function CompanyFinancials() {
           </Stack>
         </Stack>
       </Paper>
+      ) : null}
 
       {isLoading ? (
         <Paper elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 4 }}>
@@ -358,6 +380,7 @@ export default function CompanyFinancials() {
         </Alert>
       ) : null}
 
+      {!isLoading && error ? null : (
       <ChartPanel
         subtitle={`Monthly sales from ${source} (${displayRows.length.toLocaleString()} values).`}
         title="Monthly Sales"
@@ -377,7 +400,9 @@ export default function CompanyFinancials() {
           </LineChart>
         </ResponsiveContainer>
       </ChartPanel>
+      )}
 
+      {!isLoading && error ? null : (
       <Box sx={{ display: "grid", gap: 2.5, gridTemplateColumns: { xs: "1fr", xl: "1fr 1fr" } }}>
         <ChartPanel subtitle="Grouped bar chart showing QuickBooks liquidity measures." title="Cash on Hand & Current Ratio">
           <ResponsiveContainer width="100%" height="100%">
@@ -441,6 +466,7 @@ export default function CompanyFinancials() {
           </ResponsiveContainer>
         </ChartPanel>
       </Box>
+      )}
 
       <Dialog
         fullWidth

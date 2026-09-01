@@ -4,7 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from httpx import HTTPError
 
 from .auth import require_user
-from ..services.quickbooks import QuickBooksConfigurationError, get_company_financials
+from ..services.quickbooks import (
+    QuickBooksConfigurationError,
+    QuickBooksConnectionRequiredError,
+    get_company_financials,
+)
 
 router = APIRouter()
 
@@ -12,10 +16,15 @@ router = APIRouter()
 @router.get("/company-financials")
 async def fetch_company_financials(
     refresh: bool = Query(False),
-    _user=Depends(require_user),
+    user=Depends(require_user),
 ):
     try:
-        return await get_company_financials(force_refresh=refresh)
+        return await get_company_financials(user=user, force_refresh=refresh)
+    except QuickBooksConnectionRequiredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     except QuickBooksConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

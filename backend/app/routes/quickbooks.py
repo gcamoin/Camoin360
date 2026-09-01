@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 from httpx import HTTPError
 
-from .auth import require_module, require_user
+from .auth import require_module
 from ..services.quickbooks import (
     QuickBooksConfigurationError,
     QuickBooksOAuthStateError,
@@ -11,6 +11,7 @@ from ..services.quickbooks import (
     disconnect_quickbooks,
     exchange_authorization_code,
     get_connection_status,
+    get_user_organization_id,
     _get_frontend_base_url,
 )
 
@@ -28,12 +29,12 @@ def _settings_redirect(**params):
 
 
 @router.get("/status")
-async def fetch_quickbooks_status(_user=Depends(require_module("management"))):
-    return get_connection_status()
+async def fetch_quickbooks_status(user=Depends(require_module("management"))):
+    return get_connection_status(get_user_organization_id(user))
 
 
 @router.post("/oauth-state")
-async def prepare_quickbooks_connect(user=Depends(require_module("management"))):
+async def prepare_quickbooks_connect(user=Depends(require_module("admin"))):
     try:
         return create_oauth_state(user)
     except QuickBooksConfigurationError as exc:
@@ -74,9 +75,9 @@ async def quickbooks_callback(
 
 
 @router.post("/disconnect")
-async def disconnect_quickbooks_connection(_user=Depends(require_module("management"))):
+async def disconnect_quickbooks_connection(user=Depends(require_module("admin"))):
     try:
-        return await disconnect_quickbooks()
+        return await disconnect_quickbooks(get_user_organization_id(user))
     except QuickBooksConfigurationError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except HTTPError as exc:

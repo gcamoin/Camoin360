@@ -13,7 +13,7 @@ import {
   useTheme,
 } from "@mui/material";
 
-import { getApiErrorMessage } from "./auth";
+import { getApiErrorMessage, getCurrentUser } from "./auth";
 import {
   disconnectQuickBooks,
   getQuickBooksConnectUrl,
@@ -62,6 +62,11 @@ export default function QuickBooksSettings({ onLogout }) {
   const [isConnecting, setIsConnecting] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const theme = useTheme();
+  const canManageIntegration = useMemo(() => {
+    const currentUser = getCurrentUser();
+    const userModules = Array.isArray(currentUser?.modules) ? currentUser.modules : [];
+    return currentUser?.role === "admin" || userModules.includes("admin");
+  }, []);
 
   const isConnected = Boolean(status?.connected);
   const requiresReconnect = Boolean(status?.requires_reconnect);
@@ -308,8 +313,14 @@ export default function QuickBooksSettings({ onLogout }) {
                         <DetailRow label="Last updated" value={formatDate(status?.updated_at)} />
                       </Box>
 
+                      {!canManageIntegration ? (
+                        <Alert severity="info">
+                          QuickBooks Online is managed by a Camoin 360 administrator.
+                        </Alert>
+                      ) : null}
+
                       <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
-                        {!isConnected || requiresReconnect ? (
+                        {canManageIntegration && (!isConnected || requiresReconnect) ? (
                           <Button
                             disabled={isConnecting}
                             onClick={handleConnect}
@@ -323,7 +334,7 @@ export default function QuickBooksSettings({ onLogout }) {
                           </Button>
                         ) : null}
 
-                        {isConnected ? (
+                        {canManageIntegration && isConnected ? (
                           <Button
                             color="error"
                             disabled={isDisconnecting}

@@ -32,8 +32,7 @@ load_dotenv(REPO_ROOT / ".env")
 load_dotenv(BACKEND_ROOT / ".env")
 
 _cache: dict[str, Any] = {
-    "loaded_at": None,
-    "data": None,
+    "financials_by_organization": {},
 }
 
 
@@ -42,6 +41,10 @@ class QuickBooksConfigurationError(RuntimeError):
 
 
 class QuickBooksOAuthStateError(RuntimeError):
+    pass
+
+
+class QuickBooksConnectionRequiredError(RuntimeError):
     pass
 
 
@@ -76,6 +79,11 @@ def _get_organization_key() -> str:
     return _get_setting("CAMOIN360_ORGANIZATION_KEY", "QUICKBOOKS_ORGANIZATION_KEY") or DEFAULT_ORGANIZATION_KEY
 
 
+def get_user_organization_id(user: dict[str, Any] | None = None) -> int:
+    value = (user or {}).get("organization_id") or _get_setting("CAMOIN360_ORGANIZATION_ID", "QUICKBOOKS_ORGANIZATION_ID") or "1"
+    return int(value)
+
+
 def _get_frontend_base_url() -> str:
     return (_get_setting("FRONTEND_BASE_URL", "CAMOIN360_FRONTEND_URL") or DEFAULT_FRONTEND_BASE_URL).rstrip("/")
 
@@ -106,8 +114,7 @@ def _get_oauth_config(require_redirect_uri: bool = False) -> dict[str, str]:
     }
 
 
-def _get_database_report_config() -> dict[str, str] | None:
-    organization_key = _get_organization_key()
+def _get_database_report_config(organization_id: int) -> dict[str, str] | None:
     minor_version = _get_setting("QUICKBOOKS_MINOR_VERSION", "QB_MINOR_VERSION", "INTUIT_MINOR_VERSION") or DEFAULT_MINOR_VERSION
     start_year = _get_setting("QUICKBOOKS_FINANCIALS_START_YEAR", "QB_FINANCIALS_START_YEAR") or str(DEFAULT_START_YEAR)
 
@@ -115,11 +122,11 @@ def _get_database_report_config() -> dict[str, str] | None:
         with get_database_connection() as connection:
             row = connection.execute(
                 """
-                SELECT organization_key, realm_id, environment, access_token, refresh_token, access_token_expires_at
+                SELECT organization_id, organization_key, realm_id, environment, access_token, refresh_token, access_token_expires_at
                 FROM quickbooks_connections
-                WHERE organization_key = ? AND status = 'connected'
+                WHERE organization_id = ? AND status = 'connected'
                 """,
-                (organization_key,),
+                (organization_id,),
             ).fetchone()
     except RuntimeError:
         return None
@@ -136,6 +143,7 @@ def _get_database_report_config() -> dict[str, str] | None:
         "client_secret": oauth_config["client_secret"],
         "environment": row.get("environment") or oauth_config["environment"],
         "minor_version": minor_version,
+        "organization_id": row["organization_id"],
         "organization_key": row["organization_key"],
         "realm_id": row["realm_id"],
         "refresh_token": row["refresh_token"],
@@ -182,8 +190,19 @@ def _get_env_report_config() -> dict[str, str]:
     }
 
 
-def _get_report_config() -> dict[str, str]:
-    return _get_database_report_config() or _get_env_report_config()
+def _get_report_config(organization_id: int) -> dict[str, str]:
+    database_config = _get_database_report_config(organization_id)
+    if database_config:
+        return database_config
+
+    environment = (_get_setting("QUICKBOOKS_ENVIRONMENT", "QB_ENVIRONMENT", "INTUIT_ENVIRONMENT") or "sandbox").lower()
+    if environment != "production" and _get_setting("QUICKBOOKS_REFRESH_TOKEN", "QB_REFRESH_TOKEN", "INTUIT_REFRESH_TOKEN"):
+        return _get_env_report_config()
+
+    if not os.getenv("DATABASE_URL"):
+        raise QuickBooksConfigurationError("Missing QuickBooks sandbox configuration")
+
+    raise QuickBooksConnectionRequiredError("QuickBooks Online is not connected for your organization.")
 
 
 def _get_basic_auth_header(config: dict[str, str]) -> str:
@@ -197,7 +216,7 @@ def _get_quickbooks_base_url(environment: str) -> str:
 
 
 def _sanitize_connection(row: dict[str, Any] | None) -> dict[str, Any]:
-    if not row or row.get("status") != "connected":
+    if not row:
         return {
             "connected": False,
             "status": "not_connected",
@@ -206,6 +225,30 @@ def _sanitize_connection(row: dict[str, Any] | None) -> dict[str, Any]:
             "environment": (_get_setting("QUICKBOOKS_ENVIRONMENT", "QB_ENVIRONMENT", "INTUIT_ENVIRONMENT") or "sandbox").lower(),
             "connected_at": None,
             "updated_at": None,
+            "requires_reconnect": False,
+        }
+
+    if row.get("status") == "needs_reconnect":
+        return {
+            "connected": False,
+            "status": "needs_reconnect",
+            "realm_id": row.get("realm_id"),
+            "company_name": row.get("company_name") or "",
+            "environment": row.get("environment") or "sandbox",
+            "connected_at": row.get("connected_at"),
+            "updated_at": row.get("updated_at"),
+            "requires_reconnect": True,
+        }
+
+    if row.get("status") != "connected":
+        return {
+            "connected": False,
+            "status": "not_connected",
+            "realm_id": None,
+            "company_name": None,
+            "environment": row.get("environment") or (_get_setting("QUICKBOOKS_ENVIRONMENT", "QB_ENVIRONMENT", "INTUIT_ENVIRONMENT") or "sandbox").lower(),
+            "connected_at": None,
+            "updated_at": row.get("updated_at"),
             "requires_reconnect": False,
         }
 
@@ -223,16 +266,15 @@ def _sanitize_connection(row: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
-def get_connection_status() -> dict[str, Any]:
-    organization_key = _get_organization_key()
+def get_connection_status(organization_id: int) -> dict[str, Any]:
     with get_database_connection() as connection:
         row = connection.execute(
             """
-            SELECT realm_id, company_name, environment, status, connected_at, updated_at, refresh_token_expires_at
+            SELECT organization_id, realm_id, company_name, environment, status, connected_at, updated_at, refresh_token_expires_at
             FROM quickbooks_connections
-            WHERE organization_key = ?
+            WHERE organization_id = ?
             """,
-            (organization_key,),
+            (organization_id,),
         ).fetchone()
 
     return _sanitize_connection(row)
@@ -241,6 +283,7 @@ def get_connection_status() -> dict[str, Any]:
 def create_oauth_state(user: dict[str, Any]) -> dict[str, str]:
     config = _get_oauth_config(require_redirect_uri=True)
     organization_key = _get_organization_key()
+    organization_id = get_user_organization_id(user)
     state = secrets.token_urlsafe(32)
     expires_at = _utc_now().timestamp() + OAUTH_STATE_TTL_SECONDS
     user_email = str(user.get("email") or "").lower()
@@ -254,10 +297,10 @@ def create_oauth_state(user: dict[str, Any]) -> dict[str, str]:
         )
         connection.execute(
             """
-            INSERT INTO quickbooks_oauth_states (state, organization_key, user_email, environment, expires_at)
-            VALUES (?, ?, ?, ?, to_timestamp(?))
+            INSERT INTO quickbooks_oauth_states (state, organization_key, organization_id, user_email, environment, expires_at)
+            VALUES (?, ?, ?, ?, ?, to_timestamp(?))
             """,
-            (state, organization_key, user_email, config["environment"], expires_at),
+            (state, organization_key, organization_id, user_email, config["environment"], expires_at),
         )
 
     return {
@@ -300,7 +343,7 @@ async def exchange_authorization_code(code: str, realm_id: str, state: str) -> d
     with get_database_connection() as connection:
         state_row = connection.execute(
             """
-            SELECT organization_key, user_email, environment
+            SELECT organization_key, organization_id, user_email, environment
             FROM quickbooks_oauth_states
             WHERE state = ? AND consumed_at IS NULL AND expires_at > CURRENT_TIMESTAMP
             """,
@@ -339,7 +382,7 @@ async def exchange_authorization_code(code: str, realm_id: str, state: str) -> d
         )
 
     save_connection(state_row, realm_id, token_payload, company_name)
-    return get_connection_status()
+    return get_connection_status(state_row["organization_id"])
 
 
 async def _fetch_company_name(client: httpx.AsyncClient, base_url: str, realm_id: str, access_token: str) -> str:
@@ -366,12 +409,12 @@ def save_connection(state_row: dict[str, Any], realm_id: str, token_payload: dic
         connection.execute(
             """
             INSERT INTO quickbooks_connections (
-                organization_key, realm_id, company_name, environment, access_token, refresh_token,
+                organization_key, organization_id, realm_id, company_name, environment, access_token, refresh_token,
                 access_token_expires_at, refresh_token_expires_at, status, connected_at,
                 connected_by_email, disconnected_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, to_timestamp(?), to_timestamp(?), 'connected', CURRENT_TIMESTAMP, ?, NULL, CURRENT_TIMESTAMP)
-            ON CONFLICT (organization_key) DO UPDATE SET
+            VALUES (?, ?, ?, ?, ?, ?, ?, to_timestamp(?), to_timestamp(?), 'connected', CURRENT_TIMESTAMP, ?, NULL, CURRENT_TIMESTAMP)
+            ON CONFLICT (organization_id) DO UPDATE SET
                 realm_id = EXCLUDED.realm_id,
                 company_name = EXCLUDED.company_name,
                 environment = EXCLUDED.environment,
@@ -387,6 +430,7 @@ def save_connection(state_row: dict[str, Any], realm_id: str, token_payload: dic
             """,
             (
                 state_row["organization_key"],
+                state_row["organization_id"],
                 realm_id,
                 company_name,
                 state_row["environment"],
@@ -399,17 +443,16 @@ def save_connection(state_row: dict[str, Any], realm_id: str, token_payload: dic
         )
 
 
-async def disconnect_quickbooks() -> dict[str, Any]:
-    organization_key = _get_organization_key()
+async def disconnect_quickbooks(organization_id: int) -> dict[str, Any]:
     token_to_revoke = None
     with get_database_connection() as connection:
         row = connection.execute(
             """
             SELECT refresh_token
             FROM quickbooks_connections
-            WHERE organization_key = ? AND status = 'connected'
+            WHERE organization_id = ? AND status = 'connected'
             """,
-            (organization_key,),
+            (organization_id,),
         ).fetchone()
         token_to_revoke = row.get("refresh_token") if row else None
 
@@ -431,12 +474,12 @@ async def disconnect_quickbooks() -> dict[str, Any]:
                 status = 'disconnected',
                 disconnected_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE organization_key = ?
+            WHERE organization_id = ?
             """,
-            (organization_key,),
+            (organization_id,),
         )
 
-    status_payload = get_connection_status()
+    status_payload = get_connection_status(organization_id)
     status_payload["revoke_error"] = revoke_error
     return status_payload
 
@@ -594,19 +637,25 @@ async def _get_access_token(client: httpx.AsyncClient, config: dict[str, str]) -
     if config.get("access_token") and expires_at and expires_at > _utc_now():
         return config["access_token"]
 
-    response = await client.post(
-        TOKEN_ENDPOINT,
-        data={
-            "grant_type": "refresh_token",
-            "refresh_token": config["refresh_token"],
-        },
-        headers={
-            "Accept": "application/json",
-            "Authorization": _get_basic_auth_header(config),
-            "Content-Type": "application/x-www-form-urlencoded",
-        },
-    )
-    response.raise_for_status()
+    try:
+        response = await client.post(
+            TOKEN_ENDPOINT,
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": config["refresh_token"],
+            },
+            headers={
+                "Accept": "application/json",
+                "Authorization": _get_basic_auth_header(config),
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        if config.get("token_source") == "database" and exc.response.status_code in {400, 401}:
+            _mark_connection_needs_reconnect(config["organization_id"])
+            raise QuickBooksConnectionRequiredError("QuickBooks Online authorization needs to be renewed for your organization.") from exc
+        raise
     token_payload = response.json()
 
     if config.get("token_source") == "database":
@@ -634,6 +683,21 @@ async def _get_access_token(client: httpx.AsyncClient, config: dict[str, str]) -
             )
 
     return token_payload["access_token"]
+
+
+def _mark_connection_needs_reconnect(organization_id: int):
+    with get_database_connection() as connection:
+        connection.execute(
+            """
+            UPDATE quickbooks_connections
+            SET access_token = '',
+                access_token_expires_at = NULL,
+                status = 'needs_reconnect',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE organization_id = ?
+            """,
+            (organization_id,),
+        )
 
 
 async def _fetch_report(
@@ -677,8 +741,8 @@ def _iter_months(start_year: int) -> list[tuple[int, int]]:
     return months
 
 
-async def _load_live_financials() -> dict[str, Any]:
-    config = _get_report_config()
+async def _load_live_financials(organization_id: int) -> dict[str, Any]:
+    config = _get_report_config(organization_id)
     try:
         start_year = int(config["start_year"])
     except ValueError as exc:
@@ -747,21 +811,25 @@ async def _gather_reports(
     )
 
 
-async def get_company_financials(force_refresh: bool = False) -> dict[str, Any]:
-    loaded_at = _cache["loaded_at"]
+async def get_company_financials(user: dict[str, Any] | None = None, force_refresh: bool = False) -> dict[str, Any]:
+    organization_id = get_user_organization_id(user)
+    organization_cache = _cache["financials_by_organization"].get(organization_id) or {}
+    loaded_at = organization_cache.get("loaded_at")
     if (
         not force_refresh
-        and _cache["data"]
+        and organization_cache.get("data")
         and loaded_at
         and (datetime.now(timezone.utc) - loaded_at).total_seconds() < CACHE_TTL_SECONDS
     ):
-        return _cache["data"]
+        return organization_cache["data"]
 
     try:
-        data = await _load_live_financials()
+        data = await _load_live_financials(organization_id)
     except QuickBooksConfigurationError:
         data = _load_sample_financials()
 
-    _cache["loaded_at"] = datetime.now(timezone.utc)
-    _cache["data"] = data
+    _cache["financials_by_organization"][organization_id] = {
+        "loaded_at": datetime.now(timezone.utc),
+        "data": data,
+    }
     return data

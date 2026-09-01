@@ -9,17 +9,19 @@ from . import quickbooks
 
 class QuickBooksFinancialsTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        quickbooks._cache["loaded_at"] = None
-        quickbooks._cache["data"] = None
+        quickbooks._cache["financials_by_organization"] = {}
 
     async def test_missing_configuration_returns_sample_financials(self):
         env_without_quickbooks = {
             key: value
             for key, value in os.environ.items()
-            if not key.startswith(("QUICKBOOKS_", "QB_", "INTUIT_"))
+            if key != "DATABASE_URL" and not key.startswith(("QUICKBOOKS_", "QB_", "INTUIT_"))
         }
 
-        with patch.dict(os.environ, env_without_quickbooks, clear=True):
+        with (
+            patch.dict(os.environ, env_without_quickbooks, clear=True),
+            patch.object(quickbooks, "get_database_connection", side_effect=RuntimeError("DATABASE_URL is not set")),
+        ):
             result = await quickbooks.get_company_financials(force_refresh=True)
 
         self.assertEqual(result["source"], "Sample QuickBooks financials")
@@ -51,6 +53,7 @@ class QuickBooksFinancialsTest(unittest.IsolatedAsyncioTestCase):
             return_value=_fake_connection(
                 {
                     "realm_id": "12345",
+                    "organization_id": 1,
                     "company_name": "Camoin Associates",
                     "environment": "production",
                     "status": "connected",
@@ -62,7 +65,7 @@ class QuickBooksFinancialsTest(unittest.IsolatedAsyncioTestCase):
                 }
             ),
         ):
-            result = quickbooks.get_connection_status()
+            result = quickbooks.get_connection_status(1)
 
         self.assertEqual(result["status"], "connected")
         self.assertEqual(result["realm_id"], "12345")

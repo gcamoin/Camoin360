@@ -279,6 +279,7 @@ def initialize_database(force: bool = False):
             """
             CREATE TABLE IF NOT EXISTS quickbooks_connections (
                 organization_key TEXT PRIMARY KEY,
+                organization_id INTEGER NOT NULL DEFAULT 1,
                 realm_id TEXT NOT NULL,
                 company_name TEXT NOT NULL DEFAULT '',
                 environment TEXT NOT NULL DEFAULT 'sandbox',
@@ -295,10 +296,17 @@ def initialize_database(force: bool = False):
             """
         )
         wrapped.execute(
+            "ALTER TABLE quickbooks_connections ADD COLUMN IF NOT EXISTS organization_id INTEGER NOT NULL DEFAULT 1"
+        )
+        wrapped.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_quickbooks_connections_organization_id ON quickbooks_connections (organization_id)"
+        )
+        wrapped.execute(
             """
             CREATE TABLE IF NOT EXISTS quickbooks_oauth_states (
                 state TEXT PRIMARY KEY,
                 organization_key TEXT NOT NULL,
+                organization_id INTEGER NOT NULL DEFAULT 1,
                 user_email TEXT NOT NULL,
                 environment TEXT NOT NULL DEFAULT 'sandbox',
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -306,6 +314,9 @@ def initialize_database(force: bool = False):
                 consumed_at TIMESTAMPTZ
             )
             """
+        )
+        wrapped.execute(
+            "ALTER TABLE quickbooks_oauth_states ADD COLUMN IF NOT EXISTS organization_id INTEGER NOT NULL DEFAULT 1"
         )
         wrapped.execute(
             "CREATE INDEX IF NOT EXISTS idx_quickbooks_oauth_states_expires_at ON quickbooks_oauth_states (expires_at)"
