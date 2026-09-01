@@ -121,7 +121,10 @@ export default function QuickBooksSettings({ onLogout }) {
       window.location.assign(await getQuickBooksConnectUrl());
     } catch (connectError) {
       setIsConnecting(false);
-      setError(getApiErrorMessage(connectError, "Unable to start QuickBooks authorization."));
+      setError(
+        connectError.userMessage ||
+          getApiErrorMessage(connectError, connectError.message || "Unable to start QuickBooks authorization."),
+      );
     }
   }
 
