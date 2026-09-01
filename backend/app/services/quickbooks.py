@@ -155,8 +155,8 @@ def _get_env_report_config() -> dict[str, str]:
     missing = [
         label
         for label, value in {
-            "QUICKBOOKS_CLIENT_ID": client_id,
-            "QUICKBOOKS_CLIENT_SECRET": client_secret,
+            "QUICKBOOKS_CLIENT_ID": oauth_config["client_id"],
+            "QUICKBOOKS_CLIENT_SECRET": oauth_config["client_secret"],
             "QUICKBOOKS_REFRESH_TOKEN": refresh_token,
             "QUICKBOOKS_REALM_ID": realm_id,
         }.items()
