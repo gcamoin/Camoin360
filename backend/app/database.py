@@ -275,6 +275,41 @@ def initialize_database(force: bool = False):
             )
             """
         )
+        wrapped.execute(
+            """
+            CREATE TABLE IF NOT EXISTS quickbooks_connections (
+                organization_key TEXT PRIMARY KEY,
+                realm_id TEXT NOT NULL,
+                company_name TEXT NOT NULL DEFAULT '',
+                environment TEXT NOT NULL DEFAULT 'sandbox',
+                access_token TEXT NOT NULL,
+                refresh_token TEXT NOT NULL,
+                access_token_expires_at TIMESTAMPTZ,
+                refresh_token_expires_at TIMESTAMPTZ,
+                status TEXT NOT NULL DEFAULT 'connected',
+                connected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                connected_by_email TEXT NOT NULL DEFAULT '',
+                disconnected_at TIMESTAMPTZ,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        wrapped.execute(
+            """
+            CREATE TABLE IF NOT EXISTS quickbooks_oauth_states (
+                state TEXT PRIMARY KEY,
+                organization_key TEXT NOT NULL,
+                user_email TEXT NOT NULL,
+                environment TEXT NOT NULL DEFAULT 'sandbox',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMPTZ NOT NULL,
+                consumed_at TIMESTAMPTZ
+            )
+            """
+        )
+        wrapped.execute(
+            "CREATE INDEX IF NOT EXISTS idx_quickbooks_oauth_states_expires_at ON quickbooks_oauth_states (expires_at)"
+        )
         subscription_count = wrapped.execute(
             "SELECT COUNT(*) AS count FROM software_subscriptions"
         ).fetchone()["count"]

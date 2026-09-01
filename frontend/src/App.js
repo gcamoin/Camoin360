@@ -14,6 +14,7 @@ import AdminDashboard from "./adminDashboard";
 import LandingPage from "./landingPage";
 import LegalPage from "./legalPages";
 import Login from "./login";
+import QuickBooksSettings from "./QuickBooksSettings";
 import ConsultingDashboard from "./consultingDashboard";
 import ManagementDashboard from "./managementDashboard";
 import ProspectingDashboard from "./prospectingDashboard";
@@ -58,6 +59,10 @@ export default function App() {
   }
 
   if (isLoggedIn) {
+    if (window.location.pathname === "/settings/integrations/quickbooks") {
+      return <QuickBooksSettings onLogout={handleLogout} />;
+    }
+
     const allowedDashboardViews = getAllowedDashboardViews(currentUser);
     const resolvedDashboardView = allowedDashboardViews.some((option) => option.value === dashboardView)
       ? dashboardView

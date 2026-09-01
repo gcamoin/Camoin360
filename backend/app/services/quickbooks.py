@@ -1,12 +1,16 @@
 import asyncio
 import base64
 import os
+import secrets
+from urllib.parse import urlencode
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import httpx
 from dotenv import load_dotenv
+
+from ..database import get_database_connection
 
 
 CACHE_TTL_SECONDS = 60 * 15
@@ -15,6 +19,12 @@ DEFAULT_MINOR_VERSION = "75"
 DEFAULT_START_YEAR = 2021
 MAX_CONCURRENT_REPORT_MONTHS = 2
 MAX_REPORT_RETRIES = 3
+OAUTH_STATE_TTL_SECONDS = 10 * 60
+DEFAULT_FRONTEND_BASE_URL = "https://camoin360.com"
+DEFAULT_ORGANIZATION_KEY = "camoin360"
+AUTHORIZATION_ENDPOINT = "https://appcenter.intuit.com/connect/oauth2"
+TOKEN_ENDPOINT = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
+REVOCATION_ENDPOINT = "https://developer.api.intuit.com/v2/oauth2/tokens/revoke"
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 REPO_ROOT = BACKEND_ROOT.parent
 
@@ -31,6 +41,10 @@ class QuickBooksConfigurationError(RuntimeError):
     pass
 
 
+class QuickBooksOAuthStateError(RuntimeError):
+    pass
+
+
 def _get_setting(*names: str) -> str | None:
     for name in names:
         value = os.getenv(name)
@@ -39,12 +53,102 @@ def _get_setting(*names: str) -> str | None:
     return None
 
 
-def _get_config() -> dict[str, str]:
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _format_datetime(value: datetime | None) -> str | None:
+    return value.astimezone(timezone.utc).isoformat() if value else None
+
+
+def _get_organization_key() -> str:
+    return _get_setting("CAMOIN360_ORGANIZATION_KEY", "QUICKBOOKS_ORGANIZATION_KEY") or DEFAULT_ORGANIZATION_KEY
+
+
+def _get_frontend_base_url() -> str:
+    return (_get_setting("FRONTEND_BASE_URL", "CAMOIN360_FRONTEND_URL") or DEFAULT_FRONTEND_BASE_URL).rstrip("/")
+
+
+def _get_oauth_config(require_redirect_uri: bool = False) -> dict[str, str]:
     client_id = _get_setting("QUICKBOOKS_CLIENT_ID", "QB_CLIENT_ID", "INTUIT_CLIENT_ID")
     client_secret = _get_setting("QUICKBOOKS_CLIENT_SECRET", "QB_CLIENT_SECRET", "INTUIT_CLIENT_SECRET")
+    redirect_uri = _get_setting("QUICKBOOKS_REDIRECT_URI", "QB_REDIRECT_URI", "INTUIT_REDIRECT_URI")
+    environment = (_get_setting("QUICKBOOKS_ENVIRONMENT", "QB_ENVIRONMENT", "INTUIT_ENVIRONMENT") or "sandbox").lower()
+
+    missing = [
+        label
+        for label, value in {
+            "QUICKBOOKS_CLIENT_ID": client_id,
+            "QUICKBOOKS_CLIENT_SECRET": client_secret,
+            "QUICKBOOKS_REDIRECT_URI": redirect_uri if require_redirect_uri else "not-required",
+        }.items()
+        if not value
+    ]
+    if missing:
+        raise QuickBooksConfigurationError("Missing QuickBooks OAuth configuration: " + ", ".join(missing))
+
+    return {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "environment": environment,
+        "redirect_uri": redirect_uri or "",
+    }
+
+
+def _get_database_report_config() -> dict[str, str] | None:
+    organization_key = _get_organization_key()
+    minor_version = _get_setting("QUICKBOOKS_MINOR_VERSION", "QB_MINOR_VERSION", "INTUIT_MINOR_VERSION") or DEFAULT_MINOR_VERSION
+    start_year = _get_setting("QUICKBOOKS_FINANCIALS_START_YEAR", "QB_FINANCIALS_START_YEAR") or str(DEFAULT_START_YEAR)
+
+    try:
+        with get_database_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT organization_key, realm_id, environment, access_token, refresh_token, access_token_expires_at
+                FROM quickbooks_connections
+                WHERE organization_key = ? AND status = 'connected'
+                """,
+                (organization_key,),
+            ).fetchone()
+    except RuntimeError:
+        return None
+
+    if not row or not row.get("refresh_token"):
+        return None
+
+    oauth_config = _get_oauth_config(require_redirect_uri=False)
+    return {
+        "access_token": row.get("access_token") or "",
+        "access_token_expires_at": row.get("access_token_expires_at") or "",
+        "base_url": _get_quickbooks_base_url(row.get("environment") or oauth_config["environment"]),
+        "client_id": oauth_config["client_id"],
+        "client_secret": oauth_config["client_secret"],
+        "environment": row.get("environment") or oauth_config["environment"],
+        "minor_version": minor_version,
+        "organization_key": row["organization_key"],
+        "realm_id": row["realm_id"],
+        "refresh_token": row["refresh_token"],
+        "start_year": start_year,
+        "token_source": "database",
+    }
+
+
+def _get_env_report_config() -> dict[str, str]:
+    oauth_config = _get_oauth_config(require_redirect_uri=False)
     refresh_token = _get_setting("QUICKBOOKS_REFRESH_TOKEN", "QB_REFRESH_TOKEN", "INTUIT_REFRESH_TOKEN")
     realm_id = _get_setting("QUICKBOOKS_REALM_ID", "QB_REALM_ID", "INTUIT_REALM_ID", "QUICKBOOKS_COMPANY_ID")
-    environment = (_get_setting("QUICKBOOKS_ENVIRONMENT", "QB_ENVIRONMENT", "INTUIT_ENVIRONMENT") or "sandbox").lower()
+    environment = oauth_config["environment"]
     minor_version = _get_setting("QUICKBOOKS_MINOR_VERSION", "QB_MINOR_VERSION", "INTUIT_MINOR_VERSION") or DEFAULT_MINOR_VERSION
     start_year = _get_setting("QUICKBOOKS_FINANCIALS_START_YEAR", "QB_FINANCIALS_START_YEAR") or str(DEFAULT_START_YEAR)
 
@@ -67,13 +171,289 @@ def _get_config() -> dict[str, str]:
 
     return {
         "base_url": base_url,
-        "client_id": client_id,
-        "client_secret": client_secret,
+        "client_id": oauth_config["client_id"],
+        "client_secret": oauth_config["client_secret"],
+        "environment": environment,
         "minor_version": minor_version,
         "realm_id": realm_id,
         "refresh_token": refresh_token,
         "start_year": start_year,
+        "token_source": "environment",
     }
+
+
+def _get_report_config() -> dict[str, str]:
+    return _get_database_report_config() or _get_env_report_config()
+
+
+def _get_basic_auth_header(config: dict[str, str]) -> str:
+    credentials = f"{config['client_id']}:{config['client_secret']}".encode("utf-8")
+    encoded_credentials = base64.b64encode(credentials).decode("ascii")
+    return f"Basic {encoded_credentials}"
+
+
+def _get_quickbooks_base_url(environment: str) -> str:
+    return "https://sandbox-quickbooks.api.intuit.com" if environment == "sandbox" else "https://quickbooks.api.intuit.com"
+
+
+def _sanitize_connection(row: dict[str, Any] | None) -> dict[str, Any]:
+    if not row or row.get("status") != "connected":
+        return {
+            "connected": False,
+            "status": "not_connected",
+            "realm_id": None,
+            "company_name": None,
+            "environment": (_get_setting("QUICKBOOKS_ENVIRONMENT", "QB_ENVIRONMENT", "INTUIT_ENVIRONMENT") or "sandbox").lower(),
+            "connected_at": None,
+            "updated_at": None,
+            "requires_reconnect": False,
+        }
+
+    refresh_expires_at = _parse_datetime(row.get("refresh_token_expires_at"))
+    requires_reconnect = bool(refresh_expires_at and refresh_expires_at <= _utc_now())
+    return {
+        "connected": not requires_reconnect,
+        "status": "needs_reconnect" if requires_reconnect else "connected",
+        "realm_id": row.get("realm_id"),
+        "company_name": row.get("company_name") or "",
+        "environment": row.get("environment") or "sandbox",
+        "connected_at": row.get("connected_at"),
+        "updated_at": row.get("updated_at"),
+        "requires_reconnect": requires_reconnect,
+    }
+
+
+def get_connection_status() -> dict[str, Any]:
+    organization_key = _get_organization_key()
+    with get_database_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT realm_id, company_name, environment, status, connected_at, updated_at, refresh_token_expires_at
+            FROM quickbooks_connections
+            WHERE organization_key = ?
+            """,
+            (organization_key,),
+        ).fetchone()
+
+    return _sanitize_connection(row)
+
+
+def create_oauth_state(user: dict[str, Any]) -> dict[str, str]:
+    config = _get_oauth_config(require_redirect_uri=True)
+    organization_key = _get_organization_key()
+    state = secrets.token_urlsafe(32)
+    expires_at = _utc_now().timestamp() + OAUTH_STATE_TTL_SECONDS
+    user_email = str(user.get("email") or "").lower()
+
+    if not user_email:
+        raise QuickBooksOAuthStateError("Authenticated user email is required")
+
+    with get_database_connection() as connection:
+        connection.execute(
+            "DELETE FROM quickbooks_oauth_states WHERE expires_at < CURRENT_TIMESTAMP OR consumed_at IS NOT NULL"
+        )
+        connection.execute(
+            """
+            INSERT INTO quickbooks_oauth_states (state, organization_key, user_email, environment, expires_at)
+            VALUES (?, ?, ?, ?, to_timestamp(?))
+            """,
+            (state, organization_key, user_email, config["environment"], expires_at),
+        )
+
+    return {
+        "connect_url": f"/quickbooks/connect?state={state}",
+        "state": state,
+    }
+
+
+def build_authorization_url(state: str) -> str:
+    config = _get_oauth_config(require_redirect_uri=True)
+
+    with get_database_connection() as connection:
+        state_row = connection.execute(
+            """
+            SELECT state
+            FROM quickbooks_oauth_states
+            WHERE state = ? AND consumed_at IS NULL AND expires_at > CURRENT_TIMESTAMP
+            """,
+            (state,),
+        ).fetchone()
+
+    if not state_row:
+        raise QuickBooksOAuthStateError("QuickBooks authorization state is invalid or expired")
+
+    query = urlencode(
+        {
+            "client_id": config["client_id"],
+            "response_type": "code",
+            "scope": "com.intuit.quickbooks.accounting",
+            "redirect_uri": config["redirect_uri"],
+            "state": state,
+        }
+    )
+    return f"{AUTHORIZATION_ENDPOINT}?{query}"
+
+
+async def exchange_authorization_code(code: str, realm_id: str, state: str) -> dict[str, Any]:
+    config = _get_oauth_config(require_redirect_uri=True)
+
+    with get_database_connection() as connection:
+        state_row = connection.execute(
+            """
+            SELECT organization_key, user_email, environment
+            FROM quickbooks_oauth_states
+            WHERE state = ? AND consumed_at IS NULL AND expires_at > CURRENT_TIMESTAMP
+            """,
+            (state,),
+        ).fetchone()
+
+        if not state_row:
+            raise QuickBooksOAuthStateError("QuickBooks authorization state is invalid or expired")
+
+        connection.execute(
+            "UPDATE quickbooks_oauth_states SET consumed_at = CURRENT_TIMESTAMP WHERE state = ?",
+            (state,),
+        )
+
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT_SECONDS) as client:
+        token_response = await client.post(
+            TOKEN_ENDPOINT,
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": config["redirect_uri"],
+            },
+            headers={
+                "Accept": "application/json",
+                "Authorization": _get_basic_auth_header(config),
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+        token_response.raise_for_status()
+        token_payload = token_response.json()
+        company_name = await _fetch_company_name(
+            client,
+            _get_quickbooks_base_url(state_row["environment"]),
+            realm_id,
+            token_payload["access_token"],
+        )
+
+    save_connection(state_row, realm_id, token_payload, company_name)
+    return get_connection_status()
+
+
+async def _fetch_company_name(client: httpx.AsyncClient, base_url: str, realm_id: str, access_token: str) -> str:
+    response = await client.get(
+        f"{base_url}/v3/company/{realm_id}/companyinfo/{realm_id}",
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"Bearer {access_token}",
+        },
+        params={"minorversion": DEFAULT_MINOR_VERSION},
+    )
+    if response.status_code >= 400:
+        return ""
+
+    company_info = response.json().get("CompanyInfo") or {}
+    return company_info.get("CompanyName") or company_info.get("LegalName") or ""
+
+
+def save_connection(state_row: dict[str, Any], realm_id: str, token_payload: dict[str, Any], company_name: str):
+    now = _utc_now()
+    access_token_expires_at = now.timestamp() + int(token_payload.get("expires_in") or 3600)
+    refresh_token_expires_at = now.timestamp() + int(token_payload.get("x_refresh_token_expires_in") or 0)
+    with get_database_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO quickbooks_connections (
+                organization_key, realm_id, company_name, environment, access_token, refresh_token,
+                access_token_expires_at, refresh_token_expires_at, status, connected_at,
+                connected_by_email, disconnected_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, to_timestamp(?), to_timestamp(?), 'connected', CURRENT_TIMESTAMP, ?, NULL, CURRENT_TIMESTAMP)
+            ON CONFLICT (organization_key) DO UPDATE SET
+                realm_id = EXCLUDED.realm_id,
+                company_name = EXCLUDED.company_name,
+                environment = EXCLUDED.environment,
+                access_token = EXCLUDED.access_token,
+                refresh_token = EXCLUDED.refresh_token,
+                access_token_expires_at = EXCLUDED.access_token_expires_at,
+                refresh_token_expires_at = EXCLUDED.refresh_token_expires_at,
+                status = 'connected',
+                connected_at = CURRENT_TIMESTAMP,
+                connected_by_email = EXCLUDED.connected_by_email,
+                disconnected_at = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                state_row["organization_key"],
+                realm_id,
+                company_name,
+                state_row["environment"],
+                token_payload["access_token"],
+                token_payload["refresh_token"],
+                access_token_expires_at,
+                refresh_token_expires_at,
+                state_row["user_email"],
+            ),
+        )
+
+
+async def disconnect_quickbooks() -> dict[str, Any]:
+    organization_key = _get_organization_key()
+    token_to_revoke = None
+    with get_database_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT refresh_token
+            FROM quickbooks_connections
+            WHERE organization_key = ? AND status = 'connected'
+            """,
+            (organization_key,),
+        ).fetchone()
+        token_to_revoke = row.get("refresh_token") if row else None
+
+    revoke_error = False
+    if token_to_revoke:
+        try:
+            await revoke_token(token_to_revoke)
+        except httpx.HTTPError:
+            revoke_error = True
+
+    with get_database_connection() as connection:
+        connection.execute(
+            """
+            UPDATE quickbooks_connections
+            SET access_token = '',
+                refresh_token = '',
+                access_token_expires_at = NULL,
+                refresh_token_expires_at = NULL,
+                status = 'disconnected',
+                disconnected_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE organization_key = ?
+            """,
+            (organization_key,),
+        )
+
+    status_payload = get_connection_status()
+    status_payload["revoke_error"] = revoke_error
+    return status_payload
+
+
+async def revoke_token(token: str):
+    config = _get_oauth_config(require_redirect_uri=False)
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT_SECONDS) as client:
+        response = await client.post(
+            REVOCATION_ENDPOINT,
+            json={"token": token},
+            headers={
+                "Accept": "application/json",
+                "Authorization": _get_basic_auth_header(config),
+                "Content-Type": "application/json",
+            },
+        )
+        response.raise_for_status()
 
 
 def _to_number(value: Any) -> float:
@@ -210,22 +590,50 @@ def _build_month_row(year: int, month: int, profit_loss: dict[str, Any], balance
 
 
 async def _get_access_token(client: httpx.AsyncClient, config: dict[str, str]) -> str:
-    credentials = f"{config['client_id']}:{config['client_secret']}".encode("utf-8")
-    encoded_credentials = base64.b64encode(credentials).decode("ascii")
+    expires_at = _parse_datetime(config.get("access_token_expires_at"))
+    if config.get("access_token") and expires_at and expires_at > _utc_now():
+        return config["access_token"]
+
     response = await client.post(
-        "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+        TOKEN_ENDPOINT,
         data={
             "grant_type": "refresh_token",
             "refresh_token": config["refresh_token"],
         },
         headers={
             "Accept": "application/json",
-            "Authorization": f"Basic {encoded_credentials}",
+            "Authorization": _get_basic_auth_header(config),
             "Content-Type": "application/x-www-form-urlencoded",
         },
     )
     response.raise_for_status()
-    return response.json()["access_token"]
+    token_payload = response.json()
+
+    if config.get("token_source") == "database":
+        now = _utc_now()
+        access_token_expires_at = now.timestamp() + int(token_payload.get("expires_in") or 3600)
+        refresh_token_expires_at = now.timestamp() + int(token_payload.get("x_refresh_token_expires_in") or 0)
+        with get_database_connection() as connection:
+            connection.execute(
+                """
+                UPDATE quickbooks_connections
+                SET access_token = ?,
+                    refresh_token = ?,
+                    access_token_expires_at = to_timestamp(?),
+                    refresh_token_expires_at = to_timestamp(?),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE organization_key = ?
+                """,
+                (
+                    token_payload["access_token"],
+                    token_payload.get("refresh_token") or config["refresh_token"],
+                    access_token_expires_at,
+                    refresh_token_expires_at,
+                    config["organization_key"],
+                ),
+            )
+
+    return token_payload["access_token"]
 
 
 async def _fetch_report(
@@ -270,7 +678,7 @@ def _iter_months(start_year: int) -> list[tuple[int, int]]:
 
 
 async def _load_live_financials() -> dict[str, Any]:
-    config = _get_config()
+    config = _get_report_config()
     try:
         start_year = int(config["start_year"])
     except ValueError as exc:
@@ -289,7 +697,7 @@ async def _load_live_financials() -> dict[str, Any]:
     return {
         "cache_ttl_seconds": CACHE_TTL_SECONDS,
         "rows": rows,
-        "source": "QuickBooks Online sandbox",
+        "source": f"QuickBooks Online {config['environment']}",
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
