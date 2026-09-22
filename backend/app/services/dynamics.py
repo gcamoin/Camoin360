@@ -34,7 +34,6 @@ load_dotenv(BACKEND_ROOT / ".env")
 
 API_URL = os.getenv("DYNAMICS_API_URL")
 DATA_QUALITY_CACHE_TTL_SECONDS = 300
-DATA_QUALITY_ACCOUNT_LIMIT = int(os.getenv("DATA_QUALITY_ACCOUNT_LIMIT", "100000"))
 SUMMARY_CACHE_TTL_SECONDS = 600
 DATA_QUALITY_REQUEST_TIMEOUT_SECONDS = 300
 DATA_QUALITY_SYNC_STALE_SECONDS = int(os.getenv("DATA_QUALITY_SYNC_STALE_SECONDS", "3600"))
@@ -334,22 +333,25 @@ def _prepare_data_quality_cache_row(account: dict, synced_at: str) -> dict:
 
 
 async def _fetch_accounts_data_quality_from_dynamics(limit: int | None = None):
-    account_limit = max(1, min(limit or DATA_QUALITY_ACCOUNT_LIMIT, DATA_QUALITY_ACCOUNT_LIMIT))
+    account_limit = max(1, limit) if limit is not None else None
     now = time.time()
     if (
         _DATA_QUALITY_CACHE["data"] is not None
         and _DATA_QUALITY_CACHE["expires_at"] > now
-        and _DATA_QUALITY_CACHE["limit"] >= account_limit
+        and (
+            _DATA_QUALITY_CACHE["limit"] is None
+            or (account_limit is not None and _DATA_QUALITY_CACHE["limit"] >= account_limit)
+        )
     ):
-        return _DATA_QUALITY_CACHE["data"][:account_limit]
+        return _DATA_QUALITY_CACHE["data"][:account_limit] if account_limit is not None else _DATA_QUALITY_CACHE["data"]
 
     token = await get_access_token()
 
     url = (
         f"{API_URL}/accounts?"
         "$select=accountid,name,address1_stateorprovince,address1_country,address1_city,new_sector,new_subsector,new_naicstext,description,websiteurl,telephone1,new_datasource,new_employees&"
-        "$orderby=name asc&"
-        f"$top={account_limit}"
+        "$orderby=name asc"
+        + (f"&$top={account_limit}" if account_limit is not None else "")
     )
 
     headers = {
@@ -366,7 +368,7 @@ async def _fetch_accounts_data_quality_from_dynamics(limit: int | None = None):
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            while next_url and len(accounts) < account_limit:
+            while next_url and (account_limit is None or len(accounts) < account_limit):
                 response = await client.get(next_url, headers=headers)
 
                 if response.status_code != 200:
@@ -380,7 +382,8 @@ async def _fetch_accounts_data_quality_from_dynamics(limit: int | None = None):
             f"Dynamics request timed out after {DATA_QUALITY_REQUEST_TIMEOUT_SECONDS} seconds while loading data quality accounts"
         ) from exc
 
-    accounts = accounts[:account_limit]
+    if account_limit is not None:
+        accounts = accounts[:account_limit]
     _DATA_QUALITY_CACHE["data"] = accounts
     _DATA_QUALITY_CACHE["limit"] = account_limit
     _DATA_QUALITY_CACHE["expires_at"] = now + DATA_QUALITY_CACHE_TTL_SECONDS
@@ -424,7 +427,6 @@ def _is_data_quality_cache_stale(sync_status: dict) -> bool:
 
 
 async def refresh_accounts_data_quality_cache(limit: int | None = None) -> dict:
-    account_limit = max(1, min(limit or DATA_QUALITY_ACCOUNT_LIMIT, DATA_QUALITY_ACCOUNT_LIMIT))
     started_at = datetime.now(timezone.utc).isoformat()
     with get_database_connection() as connection:
         connection.execute(
@@ -439,7 +441,7 @@ async def refresh_accounts_data_quality_cache(limit: int | None = None) -> dict:
         )
 
     try:
-        accounts = await _fetch_accounts_data_quality_from_dynamics(account_limit)
+        accounts = await _fetch_accounts_data_quality_from_dynamics(limit)
         synced_at = datetime.now(timezone.utc).isoformat()
         prepared_rows = [_prepare_data_quality_cache_row(account, synced_at) for account in accounts if account.get("accountid")]
 
@@ -568,6 +570,124 @@ def _rows_to_data_quality_accounts(rows) -> list[dict]:
         account["selectionId"] = account.get("accountid") or f"{account.get('name') or 'account'}-{index}"
         accounts.append(account)
     return accounts
+
+
+def _dynamics_data_quality_filter(
+    *, search: str = "", sector: str = "all", missing_field: str = "all",
+    states: list[str] | None = None, country: str = "all", cities: list[str] | None = None,
+    needs_attention: bool = False, column_filters: dict[str, str] | None = None,
+) -> str:
+    def literal(value: str) -> str:
+        return "'" + str(value).strip().replace("'", "''") + "'"
+
+    def missing(field: str) -> str:
+        if field == "new_employees":
+            return f"{field} eq null"
+        return f"({field} eq null or {field} eq '')"
+
+    clauses = []
+    searchable = [field for field, _ in DATA_QUALITY_FIELDS if field != "new_employees"]
+    if search.strip():
+        clauses.append("(" + " or ".join(f"contains({field},{literal(search)})" for field in searchable) + ")")
+    if sector != "all":
+        clauses.append(f"new_sector eq {literal(sector)}")
+    if country != "all":
+        country_aliases = {
+            "unitedstates": ["United States", "United States of America", "USA", "US"],
+            "canada": ["Canada", "CA", "CAN"],
+        }
+        options = country_aliases.get(_normalize_data_quality_country(country), [country])
+        clauses.append("(" + " or ".join(f"address1_country eq {literal(value)}" for value in options) + ")")
+    if states:
+        choices = [missing("address1_stateorprovince") if value == MISSING_STATE_PROVINCE_FILTER_VALUE
+                   else f"address1_stateorprovince eq {literal(value)}" for value in states]
+        clauses.append("(" + " or ".join(choices) + ")")
+    if cities:
+        clauses.append("(" + " or ".join(f"address1_city eq {literal(value)}" for value in cities) + ")")
+    if missing_field == "incomplete_location":
+        clauses.append("(" + " or ".join(missing(field) for field in DATA_QUALITY_LOCATION_FIELDS) + ")")
+    elif missing_field in dict(DATA_QUALITY_FIELDS):
+        clauses.append(missing(missing_field))
+    if needs_attention:
+        clauses.append("(" + " or ".join(missing(field) for field, _ in DATA_QUALITY_FIELDS) + ")")
+    for field, value in (column_filters or {}).items():
+        if field in searchable and str(value or "").strip():
+            clauses.append(f"contains({field},{literal(value)})")
+    return " and ".join(clauses)
+
+
+def _matches_data_quality_missing_filter(
+    account: dict, missing_field: str = "all", needs_attention: bool = False
+) -> bool:
+    """Validate missing-field results after Dynamics applies the OData filter."""
+    if missing_field == "incomplete_location":
+        matches_selected_field = any(
+            _is_missing_data_quality_value(account.get(field))
+            for field in DATA_QUALITY_LOCATION_FIELDS
+        )
+    elif missing_field in dict(DATA_QUALITY_FIELDS):
+        matches_selected_field = _is_missing_data_quality_value(account.get(missing_field))
+    else:
+        matches_selected_field = True
+
+    if not matches_selected_field:
+        return False
+    if needs_attention:
+        return any(
+            _is_missing_data_quality_value(account.get(field))
+            for field, _label in DATA_QUALITY_FIELDS
+        )
+    return True
+
+
+async def search_accounts_data_quality_from_dynamics(
+    *, page: int = 0, page_size: int = 25, sort_key: str = "", sort_direction: str = "asc", **filters,
+) -> dict:
+    """Read only the Dynamics pages needed for the requested result page."""
+    page = max(0, page)
+    page_size = max(1, min(page_size, 250))
+    where = _dynamics_data_quality_filter(**filters)
+    select = "accountid," + ",".join(field for field, _ in DATA_QUALITY_FIELDS)
+    sort_field = sort_key if sort_key in DATA_QUALITY_FILTERABLE_COLUMNS and sort_key not in {"missing_fields_summary", "data_quality_score", "new_employees"} else "name"
+    direction = "desc" if sort_direction == "desc" else "asc"
+    url = f"{API_URL}/accounts?$select={select}&$orderby={sort_field} {direction},accountid asc"
+    if where:
+        url += f"&$filter={quote(where, safe='')}"
+    headers = {
+        "Authorization": f"Bearer {await get_access_token()}",
+        "Accept": "application/json",
+        "OData-Version": "4.0",
+        "Prefer": "odata.maxpagesize=250",
+    }
+    target = (page + 1) * page_size
+    accounts = []
+    next_url = url
+    async with httpx.AsyncClient(timeout=httpx.Timeout(DATA_QUALITY_REQUEST_TIMEOUT_SECONDS)) as client:
+        while next_url and len(accounts) <= target:
+            response = await client.get(next_url, headers=headers)
+            if response.status_code != 200:
+                raise Exception(f"Dynamics GET error: {response.text}")
+            payload = response.json()
+            accounts.extend(
+                account
+                for account in payload.get("value", [])
+                if _matches_data_quality_missing_filter(
+                    account,
+                    missing_field=filters.get("missing_field", "all"),
+                    needs_attention=filters.get("needs_attention", False),
+                )
+            )
+            next_url = payload.get("@odata.nextLink")
+    start = page * page_size
+    selected = accounts[start:target]
+    prepared = [_prepare_data_quality_cache_row(account, "") for account in selected]
+    return {
+        "data": _rows_to_data_quality_accounts(prepared),
+        "count": len(selected),
+        "page": page,
+        "page_size": page_size,
+        "has_more": bool(next_url or len(accounts) > target),
+    }
 
 
 def _get_data_quality_facets(connection, where_clause: str, values: list) -> dict:
@@ -766,7 +886,7 @@ def get_accounts_data_quality_page(
 
 async def get_accounts_data_quality(limit: int | None = None):
     await refresh_accounts_data_quality_cache(limit)
-    return get_accounts_data_quality_page(page_size=min(limit or DATA_QUALITY_ACCOUNT_LIMIT, 250))["data"]
+    return get_accounts_data_quality_page(page_size=min(limit or 250, 250))["data"]
 
 
 def get_cached_accounts_data_quality():
@@ -3067,14 +3187,26 @@ async def get_sales_outlook_metrics():
 
     token = await get_access_token()
     headers = _dynamics_read_headers(token)
-    url = (
-        f"{API_URL}/new_projects?"
-        "$select=new_projectid,createdon,new_contractdate,new_feeforcamoin&"
-        "$filter=createdon ge 2020-01-01T00:00:00Z or new_contractdate ge 2020-01-01T00:00:00Z&"
-        "$orderby=createdon asc"
-    )
     records = []
     async with httpx.AsyncClient(timeout=120) as client:
+        metadata_response = await client.get(
+            f"{API_URL}/EntityDefinitions(LogicalName='new_project')?$select=PrimaryNameAttribute",
+            headers=headers,
+        )
+        primary_name_field = (
+            metadata_response.json().get("PrimaryNameAttribute")
+            if metadata_response.status_code == 200
+            else None
+        )
+        select_fields = ["new_projectid", "createdon", "new_contractdate", "new_feeforcamoin"]
+        if primary_name_field:
+            select_fields.append(primary_name_field)
+        url = (
+            f"{API_URL}/new_projects?"
+            f"$select={','.join(select_fields)}&"
+            "$filter=createdon ge 2020-01-01T00:00:00Z or new_contractdate ge 2020-01-01T00:00:00Z&"
+            "$orderby=createdon asc"
+        )
         while url:
             response = await client.get(url, headers=headers)
             if response.status_code != 200:
@@ -3086,6 +3218,7 @@ async def get_sales_outlook_metrics():
     current_time = datetime.now(timezone.utc)
     annual_contracts = {str(year): 0.0 for year in range(2020, current_time.year + 1)}
     monthly_projects = {}
+    project_details = []
     cursor = datetime(2021, 1, 1, tzinfo=timezone.utc)
     current_month = datetime(current_time.year, current_time.month, 1, tzinfo=timezone.utc)
     while cursor <= current_month:
@@ -3106,6 +3239,12 @@ async def get_sales_outlook_metrics():
         created_date = str(record.get("createdon") or "")
         if len(created_date) >= 7 and created_date[:7] in monthly_projects:
             monthly_projects[created_date[:7]] += 1
+            project_details.append({
+                "project_id": record.get("new_projectid") or "",
+                "project_name": record.get(primary_name_field) if primary_name_field else "",
+                "fee_for_camoin": round(float(record.get("new_feeforcamoin") or 0), 2),
+                "created_on": created_date,
+            })
 
     result = {
         "updated_at": current_time.isoformat(),
@@ -3120,6 +3259,11 @@ async def get_sales_outlook_metrics():
             {"month_key": month_key, "projects": projects}
             for month_key, projects in monthly_projects.items()
         ],
+        "project_details": sorted(
+            project_details,
+            key=lambda project: (project["created_on"], project["project_name"] or ""),
+            reverse=True,
+        ),
     }
     _SALES_OUTLOOK_CACHE["data"] = result
     _SALES_OUTLOOK_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
@@ -4333,6 +4477,16 @@ async def enrich_one_account(account_id: str) -> dict[str, object]:
 async def enrich_single_account_test(account_id: str):
     account = await get_account(account_id, "name,emailaddress1,telephone1")
 
+    if "name" not in matched_fields:
+        return {
+            "account_id": account_id,
+            "updated": False,
+            "skipped": True,
+            "reason": "No sufficiently similar company name found",
+            "confidence_score": confidence_score,
+            "matched_fields": matched_fields,
+        }
+
     updates = {}
 
     if not account.get("telephone1"):
@@ -4400,6 +4554,9 @@ async def enrich_account(account_id: str, fields_to_update: list[str] | None = N
     company_name = account.get("name")
     sector = account.get("new_sector") or ""
 
+    if not company_name or not str(company_name).strip():
+        return {"account_id": account_id, "updated": False, "skipped": True, "reason": "Account has no company name"}
+
     print(f"🔍 Enriching: {company_name}")
     print(f"🏭 Sector: {sector}")
     print("✅ Proceeding with enrichment")
@@ -4426,16 +4583,6 @@ async def enrich_account(account_id: str, fields_to_update: list[str] | None = N
 
     confidence_score = int(seamless_data.get("confidence_score", 0))
     matched_fields = seamless_data.get("matched_fields", [])
-    if confidence_score < 60 or not seamless_data.get("meets_confidence_threshold", False):
-        return {
-            "account_id": account_id,
-            "updated": False,
-            "skipped": True,
-            "reason": "Match confidence below 60%",
-            "confidence_score": confidence_score,
-            "matched_fields": matched_fields,
-        }
-
     updates = {}
 
     # WEBSITE

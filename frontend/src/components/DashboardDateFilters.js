@@ -48,31 +48,42 @@ export default function DashboardDateFilters({ value, onChange }) {
             Use the same calendar filters across every chart in this tab.
           </Typography>
         </Box>
-        <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} useFlexGap flexWrap="wrap">
-          <FormControl size="small" sx={{ minWidth: 140 }}>
+        <Box
+          sx={{
+            display: "grid",
+            gap: 1.5,
+            gridTemplateColumns: {
+              xs: "minmax(0, 1fr)",
+              sm: "repeat(2, minmax(0, 1fr))",
+              lg: "repeat(5, minmax(0, 1fr))",
+            },
+            width: "100%",
+          }}
+        >
+          <FormControl fullWidth size="small">
             <InputLabel id="dashboard-year-filter-label">Year</InputLabel>
             <Select label="Year" labelId="dashboard-year-filter-label" onChange={(event) => update("year", event.target.value)} value={value.year}>
               <MenuItem value={ALL}>All years</MenuItem>
               {years.map((year) => <MenuItem key={year} value={String(year)}>{year}</MenuItem>)}
             </Select>
           </FormControl>
-          <FormControl size="small" sx={{ minWidth: 140 }}>
+          <FormControl fullWidth size="small">
             <InputLabel id="dashboard-quarter-filter-label">Quarter</InputLabel>
             <Select label="Quarter" labelId="dashboard-quarter-filter-label" onChange={(event) => update("quarter", event.target.value)} value={value.quarter}>
               <MenuItem value={ALL}>All quarters</MenuItem>
               {[1, 2, 3, 4].map((quarter) => <MenuItem key={quarter} value={String(quarter)}>Q{quarter}</MenuItem>)}
             </Select>
           </FormControl>
-          <FormControl size="small" sx={{ minWidth: 160 }}>
+          <FormControl fullWidth size="small">
             <InputLabel id="dashboard-month-filter-label">Month</InputLabel>
             <Select label="Month" labelId="dashboard-month-filter-label" onChange={(event) => update("month", event.target.value)} value={value.month}>
               <MenuItem value={ALL}>All months</MenuItem>
               {MONTHS.map((month, index) => <MenuItem key={month} value={String(index + 1)}>{month}</MenuItem>)}
             </Select>
           </FormControl>
-          <TextField InputLabelProps={{ shrink: true }} label="Start date" onChange={(event) => update("startDate", event.target.value)} size="small" type="date" value={value.startDate} />
-          <TextField InputLabelProps={{ shrink: true }} inputProps={{ min: value.startDate || undefined }} label="End date" onChange={(event) => update("endDate", event.target.value)} size="small" type="date" value={value.endDate} />
-        </Stack>
+          <TextField fullWidth InputLabelProps={{ shrink: true }} label="Start date" onChange={(event) => update("startDate", event.target.value)} size="small" type="date" value={value.startDate} />
+          <TextField fullWidth InputLabelProps={{ shrink: true }} inputProps={{ min: value.startDate || undefined }} label="End date" onChange={(event) => update("endDate", event.target.value)} size="small" type="date" value={value.endDate} />
+        </Box>
         {hasInvalidRange ? <Alert severity="error">End date must be on or after the start date.</Alert> : null}
       </Stack>
     </Paper>

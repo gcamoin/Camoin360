@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
-import { Alert, Box, CircularProgress, Paper, Stack, Typography } from "@mui/material";
+import { Alert, Box, CircularProgress, Paper, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from "@mui/material";
 import {
   Bar,
   BarChart,
@@ -68,6 +68,7 @@ function ChartCard({ children, description, title }) {
 export default function SalesOutlook() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
+  const [projectSearch, setProjectSearch] = useState("");
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -84,6 +85,14 @@ export default function SalesOutlook() {
   }, []);
 
   const monthlyData = useMemo(() => data?.monthly_projects || [], [data]);
+  const filteredProjectDetails = useMemo(() => {
+    const query = projectSearch.trim().toLocaleLowerCase();
+    const projects = data?.project_details || [];
+    if (!query) return projects;
+    return projects.filter((project) =>
+      String(project.project_name || "").toLocaleLowerCase().includes(query)
+    );
+  }, [data, projectSearch]);
 
   if (error) return <Alert severity="error">{error}</Alert>;
   if (!data) return <Box sx={{ display: "grid", minHeight: 320, placeItems: "center" }}><CircularProgress /></Box>;
@@ -133,6 +142,43 @@ export default function SalesOutlook() {
             </Box>
           </Box>
         </Box>
+        <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, maxHeight: 360, mt: 2 }}>
+          <Table size="small" stickyHeader>
+            <TableHead>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 800 }}>
+                  <Box sx={{ alignItems: "center", display: "flex", gap: 2, justifyContent: "space-between" }}>
+                    <Typography component="span" fontWeight={800}>Project Name</Typography>
+                    <TextField
+                      aria-label="Search projects"
+                      onChange={(event) => setProjectSearch(event.target.value)}
+                      placeholder="Search projects"
+                      size="small"
+                      sx={{ maxWidth: 280, width: "100%" }}
+                      value={projectSearch}
+                    />
+                  </Box>
+                </TableCell>
+                <TableCell align="right" sx={{ fontWeight: 800 }}>Fee for Camoin</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {filteredProjectDetails.map((project) => (
+                <TableRow hover key={project.project_id}>
+                  <TableCell>{project.project_name || "Unnamed project"}</TableCell>
+                  <TableCell align="right">{formatCurrency(project.fee_for_camoin)}</TableCell>
+                </TableRow>
+              ))}
+              {!filteredProjectDetails.length ? (
+                <TableRow>
+                  <TableCell align="center" colSpan={2} sx={{ color: "text.secondary", py: 4 }}>
+                    {projectSearch.trim() ? "No projects match your search." : "No project details are available."}
+                  </TableCell>
+                </TableRow>
+              ) : null}
+            </TableBody>
+          </Table>
+        </TableContainer>
       </ChartCard>
     </Stack>
   );

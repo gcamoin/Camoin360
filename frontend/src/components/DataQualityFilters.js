@@ -1,16 +1,5 @@
 import React from "react";
-import {
-  Autocomplete,
-  Button,
-  Checkbox,
-  FormControl,
-  FormControlLabel,
-  InputLabel,
-  MenuItem,
-  Select,
-  Stack,
-  TextField,
-} from "@mui/material";
+import { Autocomplete, Button, Checkbox, FormControl, FormControlLabel, InputLabel, MenuItem, Select, Stack, TextField } from "@mui/material";
 
 export default function DataQualityFilters({
   activeFilterCount,
@@ -21,6 +10,7 @@ export default function DataQualityFilters({
   onCityChange,
   onCountryChange,
   onSearchChange,
+  onSubmitSearch,
   onSectorChange,
   onStateChange,
   cities,
@@ -72,7 +62,6 @@ export default function DataQualityFilters({
       options: cities,
       value: selectedCities,
       onChange: onCityChange,
-      disabled: !selectedStates.length,
       multiple: true,
     },
   ];
@@ -94,6 +83,7 @@ export default function DataQualityFilters({
       <TextField
         label="Search accounts"
         onChange={(event) => onSearchChange(event.target.value)}
+        onKeyDown={(event) => { if (event.key === "Enter") onSubmitSearch(); }}
         placeholder="Name, sector, website, state, country, city..."
         size="small"
         sx={{ flex: { lg: "0 1 260px" }, maxWidth: { lg: 260 }, minWidth: { lg: 0 } }}
@@ -101,8 +91,10 @@ export default function DataQualityFilters({
       />
       {locationFilters.map((filter) => (
         <Autocomplete
+          autoSelect
           key={filter.label}
           disabled={filter.disabled}
+          freeSolo
           getOptionLabel={filter.getOptionLabel}
           groupBy={filter.groupBy}
           isOptionEqualToValue={(option, value) => option === value}
@@ -126,22 +118,17 @@ export default function DataQualityFilters({
           value={filter.multiple ? filter.value : filter.value === "all" ? null : filter.value}
         />
       ))}
-      <FormControl size="small" sx={compactControlSx}>
-        <InputLabel id="sector-filter-label">Sector</InputLabel>
-        <Select
-          label="Sector"
-          labelId="sector-filter-label"
-          onChange={(event) => onSectorChange(event.target.value)}
-          value={selectedSector}
-        >
-          <MenuItem value="all">All sectors</MenuItem>
-          {sectors.map((sector) => (
-            <MenuItem key={sector} value={sector}>
-              {sector}
-            </MenuItem>
-          ))}
-        </Select>
-      </FormControl>
+      <Autocomplete
+        autoSelect
+        freeSolo
+        onChange={(_event, value) => onSectorChange(value || "all")}
+        onInputChange={(_event, value, reason) => { if (reason === "input") onSectorChange(value || "all"); }}
+        options={sectors}
+        renderInput={(params) => <TextField {...params} label="Sector" size="small" />}
+        size="small"
+        sx={compactControlSx}
+        value={selectedSector === "all" ? null : selectedSector}
+      />
       <FormControl size="small" sx={compactControlSx}>
         <InputLabel id="missing-field-filter-label">Missing Field</InputLabel>
         <Select
@@ -169,6 +156,14 @@ export default function DataQualityFilters({
         label="Needs attention"
         sx={{ flex: { lg: "0 0 auto" }, m: 0, minHeight: 40, whiteSpace: "nowrap" }}
       />
+      <Button
+        onClick={onSubmitSearch}
+        size="small"
+        sx={{ borderRadius: 1, fontWeight: 800, minHeight: 40 }}
+        variant="contained"
+      >
+        Search Dynamics
+      </Button>
       <Button
         disabled={!activeFilterCount}
         onClick={onResetFilters}

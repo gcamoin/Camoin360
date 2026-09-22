@@ -18,6 +18,7 @@ import DataQualityTable, {
   getStateProvinceOptions,
   getStateProvinceRequestValues,
   getStateProvinceSelectionSummary,
+  prepareAccountRows,
 } from "./DataQualityTable";
 
 const SEARCH_DEBOUNCE_MS = 200;
@@ -159,6 +160,40 @@ describe("DataQualityTable pagination edge cases", () => {
     jest.runOnlyPendingTimers();
     jest.useRealTimers();
     document.body.innerHTML = "";
+  });
+
+  it("shows the Dynamics search controls while filter metadata loads", async () => {
+    let resolveMetadata;
+    axios.get.mockReturnValueOnce(new Promise((resolve) => { resolveMetadata = resolve; }));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<DataQualityTable />);
+    });
+
+    expect(container.textContent).toContain("Search Dynamics");
+    expect(container.textContent).toContain("Ready to search");
+    expect(container.querySelector('[role="progressbar"]')).toBeNull();
+
+    await act(async () => {
+      resolveMetadata({ data: { facets: {} } });
+      await Promise.resolve();
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("keeps only blank websites and shows Website first for a missing website search", () => {
+    const rows = prepareAccountRows([
+      makeAccount(1, { websiteurl: "https://example.com", new_sector: "" }),
+      makeAccount(2, { websiteurl: "", new_sector: "" }),
+    ], "websiteurl");
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].accountid).toBe("account-2");
+    expect(rows[0].missingFieldsSummary).toMatch(/^Website/);
   });
 
   it("renders 25 rows by default and reports the filtered total", async () => {

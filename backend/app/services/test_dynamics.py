@@ -1,4 +1,5 @@
 import unittest
+from urllib.parse import unquote
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -31,6 +32,147 @@ class FakeDynamicsResponse:
 
     def json(self):
         return self._payload
+
+
+class DataQualityAccountFetchTest(unittest.IsolatedAsyncioTestCase):
+    async def test_fetches_every_dynamics_page_without_top_limit(self):
+        requested_urls = []
+
+        class Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def get(self, url, headers):
+                requested_urls.append(url)
+                if len(requested_urls) == 1:
+                    return FakeDynamicsResponse({"value": [{"accountid": "first"}], "@odata.nextLink": "https://crm.example/next"})
+                return FakeDynamicsResponse({"value": [{"accountid": "second"}]})
+
+        with (
+            patch.object(dynamics, "API_URL", "https://crm.example"),
+            patch.object(dynamics, "get_access_token", new=AsyncMock(return_value="token")),
+            patch.object(dynamics.httpx, "AsyncClient", Client),
+            patch.dict(dynamics._DATA_QUALITY_CACHE, {"expires_at": 0, "data": None, "limit": 0}),
+        ):
+            accounts = await dynamics._fetch_accounts_data_quality_from_dynamics()
+
+        self.assertEqual([account["accountid"] for account in accounts], ["first", "second"])
+        self.assertNotIn("$top=", requested_urls[0])
+        self.assertEqual(requested_urls[1], "https://crm.example/next")
+
+
+class SparseAccountEnrichmentTest(unittest.IsolatedAsyncioTestCase):
+    async def test_name_only_match_can_update_empty_field(self):
+        with (
+            patch.object(dynamics, "get_account", new=AsyncMock(return_value={"name": "Acme"})),
+            patch.object(dynamics, "increment_processed"),
+            patch.object(dynamics, "load_usage", return_value={"credits_used": 0}),
+            patch.object(dynamics, "can_make_request", return_value=True),
+            patch.object(dynamics, "enrich_with_seamless", new=AsyncMock(return_value={
+                "websiteurl": "https://acme.example", "confidence_score": 20, "matched_fields": ["name"],
+            })),
+            patch.object(dynamics, "update_account", new=AsyncMock()) as update,
+            patch.object(dynamics, "increment_usage", return_value={"credits_used": 1}),
+            patch.object(dynamics, "log_update"),
+        ):
+            result = await dynamics.enrich_account("account-1", ["websiteurl"])
+
+        self.assertTrue(result["updated"])
+        update.assert_awaited_once_with("account-1", {"websiteurl": "https://acme.example"})
+
+
+class DataQualityLiveSearchTest(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_website_search_excludes_populated_websites(self):
+        class Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def get(self, url, headers):
+                return FakeDynamicsResponse({"value": [
+                    {"accountid": "populated", "name": "Has Website", "websiteurl": "https://example.com", "address1_country": "USA"},
+                    {"accountid": "missing", "name": "Missing Website", "websiteurl": None, "address1_country": "USA"},
+                ]})
+
+        with (
+            patch.object(dynamics, "API_URL", "https://crm.example"),
+            patch.object(dynamics, "get_access_token", new=AsyncMock(return_value="token")),
+            patch.object(dynamics.httpx, "AsyncClient", Client),
+        ):
+            result = await dynamics.search_accounts_data_quality_from_dynamics(
+                country="United States", missing_field="websiteurl", page_size=25
+            )
+
+        self.assertEqual([account["accountid"] for account in result["data"]], ["missing"])
+
+    async def test_filters_dynamics_before_reading_results(self):
+        requested_urls = []
+
+        class Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def get(self, url, headers):
+                requested_urls.append(unquote(url))
+                return FakeDynamicsResponse({"value": [{"accountid": "1", "name": "O'Brien Company"}]})
+
+        with (
+            patch.object(dynamics, "API_URL", "https://crm.example"),
+            patch.object(dynamics, "get_access_token", new=AsyncMock(return_value="token")),
+            patch.object(dynamics.httpx, "AsyncClient", Client),
+        ):
+            result = await dynamics.search_accounts_data_quality_from_dynamics(search="O'Brien", page_size=25)
+
+        self.assertEqual(result["count"], 1)
+        self.assertFalse(result["has_more"])
+        self.assertIn("contains(name,'O''Brien')", requested_urls[0])
+        self.assertNotIn("$top=100000", requested_urls[0])
+
+    async def test_reads_next_link_for_later_page(self):
+        urls = []
+
+        class Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def get(self, url, headers):
+                urls.append(url)
+                if len(urls) == 1:
+                    return FakeDynamicsResponse({"value": [{"accountid": "1", "name": "A"}], "@odata.nextLink": "https://crm.example/next"})
+                return FakeDynamicsResponse({"value": [{"accountid": "2", "name": "B"}]})
+
+        with (
+            patch.object(dynamics, "API_URL", "https://crm.example"),
+            patch.object(dynamics, "get_access_token", new=AsyncMock(return_value="token")),
+            patch.object(dynamics.httpx, "AsyncClient", Client),
+        ):
+            result = await dynamics.search_accounts_data_quality_from_dynamics(page=1, page_size=1)
+
+        self.assertEqual(result["data"][0]["accountid"], "2")
+        self.assertEqual(urls[1], "https://crm.example/next")
 
 
 class FakeAsyncClient:
@@ -382,6 +524,45 @@ class ProjectCreationMetricsTest(unittest.IsolatedAsyncioTestCase):
         requested_urls = "\n".join(call.args[0] for call in client.get.await_args_list)
         self.assertIn("$select=new_projectid,new_feeforcamoin,new_contractdate", requested_urls)
         self.assertIn("$select=opportunityid,name,new_feeforcamoin,cr73c_dateproposed", requested_urls)
+
+
+class SalesOutlookMetricsTest(unittest.IsolatedAsyncioTestCase):
+    async def test_returns_project_names_and_fee_for_camoin(self):
+        async def get_response(url, headers):
+            response = MagicMock(status_code=200)
+            if "EntityDefinitions" in url:
+                response.json.return_value = {"PrimaryNameAttribute": "new_name"}
+            else:
+                response.json.return_value = {"value": [{
+                    "new_projectid": "project-1",
+                    "new_name": "Downtown Market Study",
+                    "createdon": "2025-03-10T00:00:00Z",
+                    "new_contractdate": "2025-03-15T00:00:00Z",
+                    "new_feeforcamoin": 42500,
+                }]}
+            return response
+
+        client = AsyncMock()
+        client.get.side_effect = get_response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+        dynamics._SALES_OUTLOOK_CACHE.update({"data": None, "expires_at": 0})
+
+        with (
+            patch("backend.app.services.dynamics.get_access_token", AsyncMock(return_value="token")),
+            patch("backend.app.services.dynamics.httpx.AsyncClient", return_value=client),
+            patch("backend.app.services.dynamics.API_URL", "https://example.crm/api/data/v9.2"),
+        ):
+            result = await dynamics.get_sales_outlook_metrics()
+
+        self.assertEqual(result["project_details"], [{
+            "project_id": "project-1",
+            "project_name": "Downtown Market Study",
+            "fee_for_camoin": 42500.0,
+            "created_on": "2025-03-10T00:00:00Z",
+        }])
+        project_url = client.get.await_args_list[1].args[0]
+        self.assertIn("new_name", project_url)
 
 
 class SalesOutlookRfpMetricsTest(unittest.IsolatedAsyncioTestCase):

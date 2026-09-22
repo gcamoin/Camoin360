@@ -1,6 +1,6 @@
 {
-  "accounts_processed": 100,
-  "accounts_updated": 34,
+  "accounts_processed": 108,
+  "accounts_updated": 38,
   "updates_log": [
     {
       "company": "Adler Pelzer Group",
@@ -672,6 +672,76 @@
       "changes": {
         "description": "BMM Logistics, Inc. is a fast growing Chicago based business. We are a third-party logistics provider servicing the United States, Mexico and Canada. BMM is the bridge between businesses that need products shipped and transportation companies that need to keep their drivers moving.\nDriven by our dedicated sales team, BMM ensures to provide the best customer service to our customers, a pleasurable experience for our carriers and a relaxed, fun, energetic environment for our employees. We've grown year after year since 2008 and we are looking to keep growing and moving forward. BMM Logistics, Inc. is a family-owned business where young professionals can jump start their careers and love what they do. It all starts here!"
       }
+    },
+    {
+      "company": "3d Research",
+      "timestamp": "2026-09-22T17:37:05.832186",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": null,
+          "new": "https://esu.edu"
+        }
+      ]
+    },
+    {
+      "company": "A Plus Fire Protection",
+      "timestamp": "2026-09-22T17:42:31.517954",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": null,
+          "new": "https://afireprotectionplus.com"
+        }
+      ]
+    },
+    {
+      "company": "13 Marketing Group, Inc.",
+      "timestamp": "2026-09-22T17:45:50.951807",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": null,
+          "new": "https://1351marketinggroup.com"
+        }
+      ]
+    },
+    {
+      "company": "14 South Networks Inc.",
+      "timestamp": "2026-09-22T17:46:39.771496",
+      "changes": [
+        {
+          "field": "websiteurl",
+          "old": null,
+          "new": "https://14south.com"
+        }
+      ]
+    }
+  ],
+  "processed_log": [
+    {
+      "timestamp": "2026-09-22T17:33:10.223518"
+    },
+    {
+      "timestamp": "2026-09-22T17:35:02.470835"
+    },
+    {
+      "timestamp": "2026-09-22T17:37:01.709660"
+    },
+    {
+      "timestamp": "2026-09-22T17:39:51.181121"
+    },
+    {
+      "timestamp": "2026-09-22T17:40:21.537882"
+    },
+    {
+      "timestamp": "2026-09-22T17:42:27.383522"
+    },
+    {
+      "timestamp": "2026-09-22T17:45:46.583389"
+    },
+    {
+      "timestamp": "2026-09-22T17:46:36.226529"
     }
   ]
 }

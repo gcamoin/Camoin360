@@ -1,18 +1,19 @@
 import logging
 import os
 import re
+from difflib import SequenceMatcher
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 from dotenv import load_dotenv
 from .locations import normalize_state_province
+from .usage import update_total_credits_remaining
 
 load_dotenv()
 
 SEAMLESS_API_URL = "https://api.seamless.ai/api/client/v1/search/companies"
 SEAMLESS_API_KEY = os.getenv("SEAMLESS_API_KEY")
-MATCH_CONFIDENCE_THRESHOLD = 60
 
 COMPANY_SUFFIXES = {"co", "company", "corp", "corporation", "inc", "incorporated", "llc", "ltd", "limited", "plc"}
 COUNTRY_ALIASES = {
@@ -30,6 +31,28 @@ def normalize_company_name(value):
     while tokens and tokens[-1] in COMPANY_SUFFIXES:
         tokens.pop()
     return " ".join(tokens)
+
+
+def company_names_match(source_name, candidate_name):
+    """Allow common name variations without accepting a different company."""
+    source = normalize_company_name(source_name)
+    candidate = normalize_company_name(candidate_name)
+    if not source or not candidate:
+        return False
+    if source == candidate:
+        return True
+
+    source_tokens = source.split()
+    candidate_tokens = candidate.split()
+    shared_tokens = set(source_tokens) & set(candidate_tokens)
+    shorter_tokens = min(len(source_tokens), len(candidate_tokens))
+
+    # Multiword legal or branding extensions are safe when every word in the
+    # shorter name is present. A single shared word is not enough by itself.
+    if shorter_tokens >= 2 and len(shared_tokens) == shorter_tokens:
+        return True
+
+    return SequenceMatcher(None, source, candidate).ratio() >= 0.90
 
 
 def normalize_website(value):
@@ -84,6 +107,7 @@ def get_match_confidence(company, candidate):
         field: bool(source_values[field] and candidate_values[field] and source_values[field] == candidate_values[field])
         for field in source_values
     }
+    checks["name"] = company_names_match(company.get("name"), candidate.get("name"))
     matched_fields = [field for field, matched in checks.items() if matched]
 
     return {
@@ -99,7 +123,7 @@ logger = logging.getLogger(__name__)
 async def enrich_with_seamless(company: dict[str, Any] | None) -> dict[str, Any]:
     """Search Seamless for a company and return Dynamics logical field names.
 
-    An empty dictionary means that no sufficiently confident match was found.
+    An empty dictionary means that Seamless returned no usable company result.
     Transport/API failures intentionally raise so callers can distinguish a failed
     lookup from a genuine no-match result.
     """
@@ -174,6 +198,14 @@ async def enrich_with_seamless(company: dict[str, Any] | None) -> dict[str, Any]
         async with httpx.AsyncClient() as client:
             response = await client.post(SEAMLESS_API_URL, headers=headers, json=payload)
 
+        response_headers = getattr(response, "headers", {})
+        remaining_credits = (
+            response_headers.get("X-PublicAPI-Credits")
+            or response_headers.get("X-Credits-Remaining")
+        )
+        if remaining_credits is not None:
+            update_total_credits_remaining(remaining_credits)
+
         if response.status_code != 200:
             raise RuntimeError(f"Seamless API error ({response.status_code}): {response.text}")
 
@@ -211,6 +243,9 @@ async def enrich_with_seamless(company: dict[str, Any] | None) -> dict[str, Any]
         score = score_match(company, item)
         confidence = get_match_confidence(company, item)
 
+        if not confidence["match_checks"]["name"]:
+            continue
+
         candidate_rank = (confidence["confidence_score"], score)
         best_rank = (best_confidence["confidence_score"], best_score) if best_confidence else (-1, -1)
         if candidate_rank > best_rank:
@@ -219,15 +254,6 @@ async def enrich_with_seamless(company: dict[str, Any] | None) -> dict[str, Any]
             best_confidence = confidence
 
     if not best_match:
-        return {}
-
-    if best_confidence["confidence_score"] < MATCH_CONFIDENCE_THRESHOLD:
-        logger.info(
-            "Seamless result for %s rejected due to low confidence (%s%%; score %s)",
-            company_name,
-            best_confidence["confidence_score"],
-            best_score,
-        )
         return {}
 
     domain = best_match.get("domain")
@@ -249,7 +275,6 @@ async def enrich_with_seamless(company: dict[str, Any] | None) -> dict[str, Any]
 
     return {
         **best_confidence,
-        "meets_confidence_threshold": True,
         "websiteurl": domain or None,
         "telephone1": phone or None,
         "description": description or None,

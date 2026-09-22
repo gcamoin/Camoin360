@@ -30,6 +30,7 @@ from ..services.dynamics import (
     create_pe_client,
     create_pe_client_user,
     refresh_accounts_data_quality_cache,
+    search_accounts_data_quality_from_dynamics,
     invalidate_account_read_caches,
     enrich_one_account,
     enrich_account,
@@ -134,7 +135,7 @@ async def fetch_accounts_data_quality(
     sort_key: str = Query(default=""),
     sort_direction: str = Query(default="asc", pattern="^(asc|desc)$"),
     refresh: bool = Query(default=False),
-    limit: int = Query(default=100000, ge=100, le=100000),
+    metadata_only: bool = Query(default=False),
     _user=Depends(require_user),
 ):
     try:
@@ -160,8 +161,12 @@ async def fetch_accounts_data_quality(
             sort_key=sort_key,
             sort_direction=sort_direction,
         )
+        if metadata_only:
+            result["data"] = []
+            result["count"] = 0
+            return result
         if result["sync"]["status"] != "syncing" and (refresh or result["sync"]["is_stale"] or result["total_count"] == 0):
-            background_tasks.add_task(refresh_accounts_data_quality_cache, limit)
+            background_tasks.add_task(refresh_accounts_data_quality_cache)
     except Exception as exc:
         if isinstance(exc, HTTPException):
             raise
@@ -171,6 +176,39 @@ async def fetch_accounts_data_quality(
         ) from exc
 
     return result
+
+
+@router.get("/accounts/data-quality/search")
+async def search_accounts_data_quality(
+    page: int = Query(default=0, ge=0),
+    page_size: int = Query(default=25, ge=1, le=250),
+    search: str = Query(default=""),
+    sector: str = Query(default="all"),
+    missing_field: str = Query(default="all"),
+    states: str = Query(default=""),
+    country: str = Query(default="all"),
+    cities: str = Query(default=""),
+    needs_attention: bool = Query(default=False),
+    column_filters: str = Query(default="{}"),
+    sort_key: str = Query(default=""),
+    sort_direction: str = Query(default="asc", pattern="^(asc|desc)$"),
+    _user=Depends(require_user),
+):
+    try:
+        parsed_filters = json.loads(column_filters or "{}")
+        if not isinstance(parsed_filters, dict):
+            raise ValueError("column_filters must be an object")
+        return await search_accounts_data_quality_from_dynamics(
+            page=page, page_size=page_size, search=search, sector=sector,
+            missing_field=missing_field, states=[value for value in states.split("|") if value],
+            country=country, cities=[value for value in cities.split("|") if value],
+            needs_attention=needs_attention, column_filters=parsed_filters,
+            sort_key=sort_key, sort_direction=sort_direction,
+        )
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Unable to search Dynamics accounts: {exc}") from exc
 
 
 async def get_duplicate_account_response(limit: int):

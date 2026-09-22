@@ -20,7 +20,7 @@ function getSeverityColor(pct) {
   return { accent: "#2e7d32", bg: "#f5fbf5", barBg: "rgba(46,125,50,0.12)" };
 }
 
-export default function DataQualitySummary({ filteredAccountCount, missingCounts }) {
+export default function DataQualitySummary({ filteredAccountCount, missingCounts, scopeLabel = "filtered accounts" }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -43,7 +43,7 @@ export default function DataQualitySummary({ filteredAccountCount, missingCounts
             Missing data stats
           </Typography>
           <Typography color="text.secondary" variant="caption">
-            {filteredAccountCount?.toLocaleString()} accounts
+            {filteredAccountCount?.toLocaleString()} {scopeLabel}
           </Typography>
         </Box>
         <Tooltip arrow title="View missing data breakdown">
@@ -74,7 +74,7 @@ export default function DataQualitySummary({ filteredAccountCount, missingCounts
       <Dialog fullWidth maxWidth="md" onClose={() => setOpen(false)} open={open}>
         <ModalTitle
           onClose={() => setOpen(false)}
-          subtitle={`Across ${filteredAccountCount?.toLocaleString()} filtered accounts`}
+          subtitle={`Across ${filteredAccountCount?.toLocaleString()} ${scopeLabel}`}
         >
           Missing Data Breakdown
         </ModalTitle>

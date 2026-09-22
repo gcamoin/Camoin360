@@ -1,6 +1,11 @@
+from pathlib import Path
+
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from .database import initialize_database
 from .routes.accounts import router as accounts_router
