@@ -1,3 +1,4 @@
+import { filterReportingRows } from "../reportingPeriod";
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { Alert, Box, CircularProgress, Paper, Typography } from "@mui/material";
@@ -29,7 +30,7 @@ const formatMonth = (monthKey) => {
     .format(new Date(year, month - 1, 1));
 };
 
-export default function ContractBacklogSelected() {
+export default function ContractBacklogSelected({ filters } = {}) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
 
@@ -56,7 +57,7 @@ export default function ContractBacklogSelected() {
       </Typography>
       <Box sx={{ height: 380, minWidth: 0 }}>
         <ResponsiveContainer height="100%" width="100%">
-          <LineChart data={data.monthly_totals || []} margin={{ top: 12, right: 24, bottom: 8, left: 14 }}>
+          <LineChart data={filterReportingRows(data.monthly_totals, filters)} margin={{ top: 12, right: 24, bottom: 8, left: 14 }}>
             <CartesianGrid stroke="#eef2f7" strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="month_key" tick={{ fontSize: 12 }} tickFormatter={formatMonth} />
             <YAxis tick={{ fontSize: 11 }} tickFormatter={formatCurrency} width={78} />

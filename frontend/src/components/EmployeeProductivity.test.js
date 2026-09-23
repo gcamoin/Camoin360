@@ -117,3 +117,11 @@ test("renders proposal prep below utilization with a meaningful empty state", as
   );
   expect(container.textContent).toContain("No proposal preparation hours match these filters.");
 });
+
+test("changing reporting period refetches with all selected date constraints", async () => {
+  axios.get.mockResolvedValue({ data: { employees: [], sync: { status: "idle" } } });
+  await act(async () => root.render(<EmployeeProductivity filters={{ year: "2024", quarter: "1", month: "all", startDate: "2024-02-15", endDate: "2024-03-20" }} />));
+  expect(axios.get.mock.calls[0][1].params).toEqual({ year: "2024", quarter: "1", start_date: "2024-02-15", end_date: "2024-03-20" });
+  await act(async () => root.render(<EmployeeProductivity filters={{ year: "2023", quarter: "all", month: "all" }} />));
+  expect(axios.get.mock.calls[1][1].params).toEqual({ year: "2023" });
+});

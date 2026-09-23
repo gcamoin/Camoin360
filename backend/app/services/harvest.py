@@ -10,6 +10,7 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 from ..database import get_database_connection
+from .reporting_period import reporting_days, matches_reporting_date
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -177,7 +178,7 @@ async def _fetch_time_entries(start_date, end_date):
     return time_entries
 
 
-async def _load_employee_weekly_hours_from_harvest(year=None, month=None):
+async def _load_employee_weekly_hours_from_harvest(year=None, month=None, reporting_filters=None):
     if year and month:
         start_date = date(year, month, 1)
         end_date = date(year, month, monthrange(year, month)[1])
@@ -188,12 +189,20 @@ async def _load_employee_weekly_hours_from_harvest(year=None, month=None):
         end_date = date.today()
         start_date = HARVEST_HISTORY_START_DATE
 
-    average_weeks = max((end_date - start_date).days + 1, 1) / 7
+    days = None
+    if reporting_filters:
+        days = reporting_days(HARVEST_HISTORY_START_DATE, year=year, month=month, **reporting_filters)
+        if not days:
+            return _employee_productivity_empty_payload(year, month, reporting_filters)
+        start_date, end_date = days[0], days[-1]
+    average_weeks = max(len(days) if days is not None else (end_date - start_date).days + 1, 1) / 7
     hours_by_employee = defaultdict(lambda: {"billable": 0.0, "non_billable": 0.0})
     utilization_hours_by_employee = defaultdict(lambda: {"billable": 0.0, "non_billable": 0.0})
     proposal_prep_hours_by_employee = defaultdict(lambda: {"billable": 0.0, "non_billable": 0.0})
 
     for time_entry in await _fetch_time_entries(start_date, end_date):
+        if reporting_filters and not matches_reporting_date(time_entry.get("spent_date"), year=year, month=month, **reporting_filters):
+            continue
         employee_name = _get_user_name(time_entry)
         hours = float(time_entry.get("hours") or 0)
         project_name = _get_nested_name(time_entry, "project")
@@ -229,11 +238,12 @@ async def _load_employee_weekly_hours_from_harvest(year=None, month=None):
     }
 
 
-def _employee_productivity_cache_key(year=None, month=None) -> str:
-    return f"{year or 'history'}:{month or 'all'}"
+def _employee_productivity_cache_key(year=None, month=None, reporting_filters=None) -> str:
+    base = f"{year or 'history'}:{month or 'all'}"
+    return f"{base}:{json.dumps(reporting_filters, sort_keys=True, default=str)}" if reporting_filters else base
 
 
-def _employee_productivity_empty_payload(year=None, month=None) -> dict:
+def _employee_productivity_empty_payload(year=None, month=None, reporting_filters=None) -> dict:
     if year and month:
         start_date = date(year, month, 1)
         end_date = date(year, month, monthrange(year, month)[1])
@@ -244,14 +254,17 @@ def _employee_productivity_empty_payload(year=None, month=None) -> dict:
         end_date = date.today()
         start_date = HARVEST_HISTORY_START_DATE
 
+    days = reporting_days(HARVEST_HISTORY_START_DATE, year=year, month=month, **reporting_filters) if reporting_filters else None
+    if days:
+        start_date, end_date = days[0], days[-1]
     return {
         "employees": [],
         "utilization_employees": [],
         "proposal_prep_employees": [],
         "proposal_prep_version": 1,
-        "from": start_date.isoformat(),
-        "to": end_date.isoformat(),
-        "weeks": round(max((end_date - start_date).days + 1, 1) / 7, 2),
+        "from": start_date.isoformat() if days != [] else "",
+        "to": end_date.isoformat() if days != [] else "",
+        "weeks": round(max(len(days) if days is not None else (end_date - start_date).days + 1, 1) / 7, 2),
         "scope": "consulting",
         "excluded_scope": "prospect_engage",
         "updated_at": "",
@@ -306,16 +319,16 @@ def _is_employee_productivity_sync_active(cache_row: dict | None) -> bool:
     return (datetime.now(timezone.utc) - started_time).total_seconds() <= EMPLOYEE_PRODUCTIVITY_SYNC_LEASE_SECONDS
 
 
-def get_employee_weekly_hours(year=None, month=None):
-    cache_key = _employee_productivity_cache_key(year, month)
+def get_employee_weekly_hours(year=None, month=None, reporting_filters=None):
+    cache_key = _employee_productivity_cache_key(year, month, reporting_filters)
     cache_row = _get_employee_productivity_cache_row(cache_key)
     if cache_row:
         try:
             payload = json.loads(cache_row.get("payload") or "{}")
         except json.JSONDecodeError:
-            payload = _employee_productivity_empty_payload(year, month)
+            payload = _employee_productivity_empty_payload(year, month, reporting_filters)
     else:
-        payload = _employee_productivity_empty_payload(year, month)
+        payload = _employee_productivity_empty_payload(year, month, reporting_filters)
 
     sync_status = cache_row.get("status") if cache_row else "idle"
     last_error = cache_row.get("last_error") if cache_row else ""
@@ -337,8 +350,8 @@ def get_employee_weekly_hours(year=None, month=None):
     }
 
 
-async def refresh_employee_weekly_hours_cache(year=None, month=None) -> dict:
-    cache_key = _employee_productivity_cache_key(year, month)
+async def refresh_employee_weekly_hours_cache(year=None, month=None, reporting_filters=None) -> dict:
+    cache_key = _employee_productivity_cache_key(year, month, reporting_filters)
     started_at = datetime.now(timezone.utc).isoformat()
     expired_before = (datetime.now(timezone.utc) - timedelta(seconds=EMPLOYEE_PRODUCTIVITY_SYNC_LEASE_SECONDS)).isoformat()
     with get_database_connection() as connection:
@@ -358,15 +371,15 @@ async def refresh_employee_weekly_hours_cache(year=None, month=None) -> dict:
                 OR employee_productivity_cache.last_started_at < ?
             RETURNING cache_key
             """,
-            (cache_key, json.dumps(_employee_productivity_empty_payload(year, month)), started_at, expired_before),
+            (cache_key, json.dumps(_employee_productivity_empty_payload(year, month, reporting_filters)), started_at, expired_before),
         ).fetchone()
 
     if not claimed:
-        return get_employee_weekly_hours(year=year, month=month)
+        return get_employee_weekly_hours(year=year, month=month, reporting_filters=reporting_filters)
 
     try:
         payload = await asyncio.wait_for(
-            _load_employee_weekly_hours_from_harvest(year=year, month=month),
+            _load_employee_weekly_hours_from_harvest(year=year, month=month, **({"reporting_filters": reporting_filters} if reporting_filters else {})),
             timeout=EMPLOYEE_PRODUCTIVITY_SYNC_TIMEOUT_SECONDS,
         )
         completed_at = datetime.now(timezone.utc).isoformat()
@@ -383,7 +396,7 @@ async def refresh_employee_weekly_hours_cache(year=None, month=None) -> dict:
                 """,
                 (json.dumps(payload), completed_at, cache_key, started_at),
             )
-        return get_employee_weekly_hours(year=year, month=month)
+        return get_employee_weekly_hours(year=year, month=month, reporting_filters=reporting_filters)
     except Exception as exc:
         with get_database_connection() as connection:
             connection.execute(
@@ -399,10 +412,10 @@ async def refresh_employee_weekly_hours_cache(year=None, month=None) -> dict:
         raise
 
 
-def run_employee_weekly_hours_refresh(year=None, month=None):
+def run_employee_weekly_hours_refresh(year=None, month=None, reporting_filters=None):
     # A synchronous background task runs in FastAPI's thread pool, isolating
     # database access and large JSON responses from HTTP request handling.
-    return asyncio.run(refresh_employee_weekly_hours_cache(year, month))
+    return asyncio.run(refresh_employee_weekly_hours_cache(year, month, reporting_filters))
 
 
 async def get_billable_breakdown(year, month=None):

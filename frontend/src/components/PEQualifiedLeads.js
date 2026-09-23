@@ -1,3 +1,4 @@
+import { filterReportingRows, reportingParams } from "../reportingPeriod";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import {
@@ -61,8 +62,9 @@ const tooltipStyle = {
   },
 };
 
-export default function PEQualifiedLeads() {
+export default function PEQualifiedLeads({ filters } = {}) {
   const isMountedRef = useRef(true);
+  const latestRequestIdRef = useRef(0);
   const [selectedYear, setSelectedYear] = useState(ALL_TIME_YEAR_VALUE);
   const [selectedMonth, setSelectedMonth] = useState("");
   const [leads, setLeads] = useState([]);
@@ -75,11 +77,12 @@ export default function PEQualifiedLeads() {
   const fetchLeads = useCallback(async () => {
     if (!isMountedRef.current) return;
 
+    const requestId = ++latestRequestIdRef.current;
     setIsLoading(true);
     setError("");
 
     try {
-      const params = {};
+      const params = reportingParams(filters);
       if (selectedYear !== ALL_TIME_YEAR_VALUE) {
         params.year = selectedYear;
       }
@@ -92,29 +95,29 @@ export default function PEQualifiedLeads() {
         params,
       });
 
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || requestId !== latestRequestIdRef.current) return;
 
       setLeads(response.data?.data || []);
       setRollups(response.data?.rollups || []);
-      setYearlyRollups(response.data?.yearly_rollups || []);
+      setYearlyRollups(filterReportingRows(response.data?.yearly_rollups, filters));
       setStatusLabel(response.data?.status || "Qualified");
     } catch (fetchError) {
       if (handleUnauthorized(fetchError)) {
         return;
       }
 
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || requestId !== latestRequestIdRef.current) return;
 
       setError(getApiErrorMessage(fetchError, "Unable to load ProspectEngage qualified leads."));
       setLeads([]);
       setRollups([]);
       setYearlyRollups([]);
     } finally {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || requestId !== latestRequestIdRef.current) return;
 
       setIsLoading(false);
     }
-  }, [selectedMonth, selectedYear]);
+  }, [selectedMonth, selectedYear, filters]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -129,16 +132,17 @@ export default function PEQualifiedLeads() {
     if (selectedYear === ALL_TIME_YEAR_VALUE && selectedMonth) {
       setSelectedMonth("");
     }
-  }, [selectedMonth, selectedYear]);
+  }, [selectedMonth, selectedYear, filters]);
 
   const periodLabel = useMemo(() => {
+    if (filters && Object.keys(reportingParams(filters)).length) return "the selected reporting period";
     if (selectedYear === ALL_TIME_YEAR_VALUE) {
       return "all time";
     }
 
     const month = MONTH_OPTIONS.find((option) => option.value === selectedMonth);
     return selectedMonth ? `${month?.label || ""} ${selectedYear}` : selectedYear;
-  }, [selectedMonth, selectedYear]);
+  }, [selectedMonth, selectedYear, filters]);
   const leadsByClient = useMemo(() => {
     if (rollups.length) {
       return rollups;

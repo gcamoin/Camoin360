@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import DateRange, Dimension, Metric, RunReportRequest
 from ..database import get_database_connection
+from .reporting_period import matches_reporting_date
 from .auth import get_access_token
 from .metrics import increment_processed, log_update
 from .seamless import enrich_with_seamless
@@ -3549,7 +3550,7 @@ def _build_pe_lead_yearly_rollups(rows: list[dict]) -> list[dict]:
     ]
 
 
-async def get_pe_qualified_leads(year: int | None = None, month: int | None = None, limit: int = PE_QUALIFIED_LEAD_DEFAULT_LIMIT):
+async def get_pe_qualified_leads(year: int | None = None, month: int | None = None, limit: int = PE_QUALIFIED_LEAD_DEFAULT_LIMIT, reporting_filters=None):
     token = await get_access_token()
     if year:
         start_date, end_date = _month_date_window(year, month)
@@ -3575,6 +3576,8 @@ async def get_pe_qualified_leads(year: int | None = None, month: int | None = No
 
             payload = response.json()
             for record in payload.get("value", []):
+                if reporting_filters and not matches_reporting_date(record.get("createdon"), year=year, month=month, **reporting_filters):
+                    continue
                 if not _matches_pe_qualified_status(record):
                     continue
 

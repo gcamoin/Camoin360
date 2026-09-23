@@ -1,3 +1,4 @@
+import { reportingParams } from "../reportingPeriod";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import {
@@ -104,7 +105,7 @@ export function buildProposalPrepRows(employees, selectedEmployee, selectedBilli
     .sort((a, b) => b.hours - a.hours || a.employee.localeCompare(b.employee));
 }
 
-export default function EmployeeProductivity() {
+export default function EmployeeProductivity({ filters } = {}) {
   const isMountedRef = useRef(true);
   const activeFetchKeyRef = useRef("");
   const latestRequestIdRef = useRef(0);
@@ -131,7 +132,7 @@ export default function EmployeeProductivity() {
   const fetchMetrics = useCallback(async ({ refresh = false, background = false } = {}) => {
     if (!isMountedRef.current) return;
 
-    const requestKey = `${selectedYear}:${selectedMonth || "all"}:${refresh ? "refresh" : "read"}`;
+    const requestKey = `${JSON.stringify(reportingParams(filters))}:${selectedYear}:${selectedMonth || "all"}:${refresh ? "refresh" : "read"}`;
     if (activeFetchKeyRef.current === requestKey) {
       return;
     }
@@ -150,7 +151,7 @@ export default function EmployeeProductivity() {
     }
 
     try {
-      const params = {};
+      const params = reportingParams(filters);
       if (selectedYear) {
         params.year = selectedYear;
       }
@@ -199,7 +200,7 @@ export default function EmployeeProductivity() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [selectedMonth, selectedYear]);
+  }, [selectedMonth, selectedYear, filters]);
 
   useEffect(() => {
     isMountedRef.current = true;

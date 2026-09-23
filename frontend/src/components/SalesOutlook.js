@@ -1,3 +1,4 @@
+import { filterReportingRows } from "../reportingPeriod";
 import { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { Alert, Box, CircularProgress, Paper, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from "@mui/material";
@@ -65,7 +66,7 @@ function ChartCard({ children, description, title }) {
   );
 }
 
-export default function SalesOutlook() {
+export default function SalesOutlook({ filters } = {}) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [projectSearch, setProjectSearch] = useState("");
@@ -84,15 +85,15 @@ export default function SalesOutlook() {
     return () => { active = false; };
   }, []);
 
-  const monthlyData = useMemo(() => data?.monthly_projects || [], [data]);
+  const monthlyData = useMemo(() => filterReportingRows(data?.monthly_projects, filters), [data, filters]);
   const filteredProjectDetails = useMemo(() => {
     const query = projectSearch.trim().toLocaleLowerCase();
-    const projects = data?.project_details || [];
+    const projects = filterReportingRows(data?.project_details, filters);
     if (!query) return projects;
     return projects.filter((project) =>
       String(project.project_name || "").toLocaleLowerCase().includes(query)
     );
-  }, [data, projectSearch]);
+  }, [data, projectSearch, filters]);
 
   if (error) return <Alert severity="error">{error}</Alert>;
   if (!data) return <Box sx={{ display: "grid", minHeight: 320, placeItems: "center" }}><CircularProgress /></Box>;
@@ -105,7 +106,7 @@ export default function SalesOutlook() {
       >
         <Box sx={{ height: 340, minWidth: 0 }}>
           <ResponsiveContainer height="100%" width="100%">
-            <LineChart data={data.annual_contracts} margin={{ top: 12, right: 24, bottom: 8, left: 14 }}>
+            <LineChart data={filterReportingRows(data.annual_contracts, filters)} margin={{ top: 12, right: 24, bottom: 8, left: 14 }}>
               <CartesianGrid stroke="#eef2f7" strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="year" tick={{ fontSize: 12 }} />
               <YAxis tick={{ fontSize: 11 }} tickFormatter={formatCurrency} width={78} />

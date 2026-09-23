@@ -2,6 +2,7 @@ import hmac
 import json
 import os
 from uuid import UUID
+from typing import Annotated
 
 from datetime import date
 
@@ -354,10 +355,21 @@ async def fetch_pe_qualified_leads(
     year: int | None = Query(default=None, ge=2000, le=2100),
     month: int | None = Query(default=None, ge=1, le=12),
     limit: int = Query(default=1000, ge=1, le=5000),
+    quarter: Annotated[int | None, Query(ge=1, le=4)] = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
     _user=Depends(require_user),
 ):
+    reporting_filters = {key: value for key, value in {
+        "quarter": quarter,
+        "start_date": start_date.isoformat() if start_date else None,
+        "end_date": end_date.isoformat() if end_date else None,
+    }.items() if value is not None}
+    if month and not year:
+        reporting_filters["quarter"] = quarter or (month - 1) // 3 + 1
+    kwargs = {"reporting_filters": reporting_filters} if reporting_filters else {}
     try:
-        return await get_pe_qualified_leads(year=year, month=month, limit=limit)
+        return await get_pe_qualified_leads(year=year, month=month, limit=limit, **kwargs)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

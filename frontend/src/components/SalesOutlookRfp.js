@@ -1,3 +1,4 @@
+import { filterReportingRows } from "../reportingPeriod";
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { Alert, Box, CircularProgress, Paper, Typography } from "@mui/material";
@@ -52,7 +53,7 @@ function MonthlyBar({ color, data, dataKey, name, valueFormatter = (value) => Nu
   </Box>;
 }
 
-export default function SalesOutlookRfp() {
+export default function SalesOutlookRfp({ filters } = {}) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -62,8 +63,8 @@ export default function SalesOutlookRfp() {
     });
     return () => { active = false; };
   }, []);
-  const monthly = useMemo(() => data?.monthly_contracts || [], [data]);
-  const annualProposals = useMemo(() => addLinearTrend(data?.annual_proposals || []), [data]);
+  const monthly = useMemo(() => filterReportingRows(data?.monthly_contracts, filters), [data, filters]);
+  const annualProposals = useMemo(() => addLinearTrend(filterReportingRows(data?.annual_proposals, filters)), [data, filters]);
   if (error) return <Alert severity="error">{error}</Alert>;
   if (!data) return <Box sx={{ display: "grid", minHeight: 320, placeItems: "center" }}><CircularProgress /></Box>;
 

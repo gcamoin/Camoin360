@@ -1666,3 +1666,26 @@ class PEQualifiedLeadQueryTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PEReportingPeriodTest(unittest.IsolatedAsyncioTestCase):
+    async def test_period_filters_apply_before_totals_and_display_limit(self):
+        def record(day):
+            return {
+                "new_client": "Example Client",
+                "cr73c_leadstatus@OData.Community.Display.V1.FormattedValue": "Qualified",
+                "createdon": day,
+            }
+        client = AsyncMock()
+        client.get.side_effect = [
+            FakeDynamicsResponse({"value": [record("2024-01-15"), record("2024-04-15")], "@odata.nextLink": "https://example.crm/page2"}),
+            FakeDynamicsResponse({"value": [record("2024-04-16"), record("2024-05-20")]}),
+        ]
+        with patch.object(dynamics, "get_access_token", new=AsyncMock(return_value="token")), patch.object(dynamics.httpx, "AsyncClient") as factory:
+            factory.return_value.__aenter__.return_value = client
+            result = await get_pe_qualified_leads(limit=1, reporting_filters={"quarter": 2, "end_date": "2024-04-30"})
+        self.assertEqual(result["total_count"], 2)
+        self.assertEqual(len(result["data"]), 1)
+        self.assertEqual(result["rollups"][0]["qualified_leads"], 2)
+        self.assertEqual(result["yearly_rollups"][0], {"year": 2024, "qualified_leads": 2})
+        self.assertEqual(sum(row["qualified_leads"] for row in result["yearly_rollups"]), 2)

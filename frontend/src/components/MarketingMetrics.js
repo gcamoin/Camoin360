@@ -1,3 +1,4 @@
+import { filterReportingRows, matchesReportingPeriod } from "../reportingPeriod";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import {
@@ -98,11 +99,11 @@ function SeoTooltip({ active, payload, label }) {
   );
 }
 
-export function MarketingOverview() {
-  return <MarketingMetrics showOverview showServiceLines={false} />;
+export function MarketingOverview({ filters } = {}) {
+  return <MarketingMetrics filters={filters} showOverview showServiceLines={false} />;
 }
 
-export default function MarketingMetrics({ showOverview = false, showServiceLines = true } = {}) {
+export default function MarketingMetrics({ filters, showOverview = false, showServiceLines = true } = {}) {
   const isMountedRef = useRef(true);
   const [metrics, setMetrics] = useState({
     bucket_grain: "month",
@@ -335,10 +336,10 @@ export default function MarketingMetrics({ showOverview = false, showServiceLine
         if (yearFilter !== "all" && month.year !== yearFilter) return false;
         if (monthFilter !== "all" && month.month !== monthFilter) return false;
         if (quarterFilter !== "all" && Math.ceil(month.month / 3) !== quarterFilter) return false;
-        return true;
+        return matchesReportingPeriod(month, filters);
       }),
     }));
-  }, [serviceLineMetrics.service_lines, yearFilter, monthFilter, quarterFilter]);
+  }, [serviceLineMetrics.service_lines, yearFilter, monthFilter, quarterFilter, filters]);
 
   const serviceLineUpdatedLabel = serviceLineMetrics.updated_at
     ? `Updated ${new Intl.DateTimeFormat(undefined, {
@@ -464,7 +465,7 @@ export default function MarketingMetrics({ showOverview = false, showServiceLine
           </Stack>
           <Box sx={{ height: 320, minWidth: 0 }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={metrics.months} margin={{ top: 8, right: 18, bottom: 0, left: -12 }}>
+              <BarChart data={filterReportingRows(metrics.months, filters)} margin={{ top: 8, right: 18, bottom: 0, left: -12 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                 <XAxis dataKey="period" tick={{ fontSize: 11 }} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
@@ -495,7 +496,7 @@ export default function MarketingMetrics({ showOverview = false, showServiceLine
           </Stack>
           <Box sx={{ height: 320, minWidth: 0 }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={metrics.months} margin={{ top: 8, right: 18, bottom: 0, left: -12 }}>
+              <BarChart data={filterReportingRows(metrics.months, filters)} margin={{ top: 8, right: 18, bottom: 0, left: -12 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                 <XAxis dataKey="period" tick={{ fontSize: 11 }} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
@@ -514,7 +515,7 @@ export default function MarketingMetrics({ showOverview = false, showServiceLine
             </ResponsiveContainer>
           </Box>
           <Typography color="text.secondary" sx={{ mt: 1.5 }} variant="body2">
-            {metrics.target_total_visitors.toLocaleString()} target-industry Leadfeeder visit records
+            {filterReportingRows(metrics.months, filters).reduce((total, row) => total + Number(row.target_visitors || 0), 0).toLocaleString()} target-industry Leadfeeder visit records
           </Typography>
         </Paper>
       </Box>
@@ -555,7 +556,7 @@ export default function MarketingMetrics({ showOverview = false, showServiceLine
           {seoMetrics.months.length ? (
             <Box sx={{ height: 340, minWidth: 0 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={seoMetrics.months} margin={{ top: 8, right: 24, bottom: 0, left: -4 }}>
+                <ComposedChart data={filterReportingRows(seoMetrics.months, filters)} margin={{ top: 8, right: 24, bottom: 0, left: -4 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                   <XAxis dataKey="period" tick={{ fontSize: 11 }} />
                   <YAxis yAxisId="clicks" allowDecimals={false} tick={{ fontSize: 11 }} />

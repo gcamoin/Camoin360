@@ -439,25 +439,25 @@ export default function ManagementDashboard({ onLogout }) {
                 />
               ) : null}
 
-              {activeView === "economicIndicators" && <EconomicIndicators />}
-              {activeView === "companyFinancials" && <CompanyFinancials />}
-              {activeView === "salesOutlook" && <SalesOutlook />}
-              {activeView === "salesOutlookRfp" && <SalesOutlookRfp />}
-              {activeView === "contractBacklogSelected" && <ContractBacklogSelected />}
-              {activeView === "serviceLineFinancials" && <ServiceLineFinancials />}
+              {activeView === "economicIndicators" && <EconomicIndicators filters={activeDateFilters} />}
+              {activeView === "companyFinancials" && <CompanyFinancials filters={activeDateFilters} />}
+              {activeView === "salesOutlook" && <SalesOutlook filters={activeDateFilters} />}
+              {activeView === "salesOutlookRfp" && <SalesOutlookRfp filters={activeDateFilters} />}
+              {activeView === "contractBacklogSelected" && <ContractBacklogSelected filters={activeDateFilters} />}
+              {activeView === "serviceLineFinancials" && <ServiceLineFinancials filters={activeDateFilters} />}
               {activeView === "rfpOverallSuccessRate" && (
                 <RfpOverallSuccessRate filters={activeDateFilters} />
               )}
-              {activeView === "marketing" && <MarketingOverview />}
-              {activeView === "marketingMetrics" && <MarketingMetrics />}
+              {activeView === "marketing" && <MarketingOverview filters={activeDateFilters} />}
+              {activeView === "marketingMetrics" && <MarketingMetrics filters={activeDateFilters} />}
               {activeView === "marketingSource" && <MarketingSource />}
-              {activeView === "pe" && <PEQualifiedLeads />}
+              {activeView === "pe" && <PEQualifiedLeads filters={activeDateFilters} />}
               {activeView === "productivityProjects" && (
-                <ProductivityProjects />
+                <ProductivityProjects filters={activeDateFilters} />
               )}
               {activeView === "softwareInventory" && <SoftwareInventory />}
               {activeView === "employeeProductivity" && (
-                <EmployeeProductivity />
+                <EmployeeProductivity filters={activeDateFilters} />
               )}
               {activeView === "overview" && (
                 <Paper

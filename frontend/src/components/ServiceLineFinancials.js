@@ -1,3 +1,4 @@
+import { filterReportingRows } from "../reportingPeriod";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import {
@@ -192,7 +193,7 @@ function FinancialBarChart({ color, data, dataKey, title }) {
   );
 }
 
-export default function ServiceLineFinancials() {
+export default function ServiceLineFinancials({ filters } = {}) {
   const theme = useTheme();
   const [financials, setFinancials] = useState({ months: [], service_lines: [], record_counts: {} });
   const [error, setError] = useState("");
@@ -205,7 +206,7 @@ export default function ServiceLineFinancials() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState(null);
   const [analysisTab, setAnalysisTab] = useState("analysis");
-  const monthlyRows = financials.months;
+  const monthlyRows = useMemo(() => filterReportingRows(financials.months, filters), [financials.months, filters]);
   const serviceLines = financials.service_lines;
   const yearOptions = useMemo(() => [
     { label: "All Years", value: ALL_VALUE },
@@ -337,6 +338,7 @@ export default function ServiceLineFinancials() {
       </Paper>
 
       <Paper elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2 }}>
+        {!filters && (
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} useFlexGap flexWrap="wrap">
           <FormControl size="small" sx={{ minWidth: 140 }}>
             <InputLabel id="service-line-year-label">Year</InputLabel>
@@ -357,6 +359,7 @@ export default function ServiceLineFinancials() {
             </Select>
           </FormControl>
         </Stack>
+        )}
         <Typography color="text.secondary" sx={{ mt: 1.25 }} variant="caption">
           {financials.record_counts?.included?.toLocaleString() || 0} mapped contracted projects included. Values use Fee for Camoin and Contract Date from Dynamics; subcontractor fees are excluded.
         </Typography>

@@ -1,6 +1,7 @@
 import {
   Alert,
   Box,
+  Button,
   FormControl,
   InputLabel,
   MenuItem,
@@ -27,7 +28,7 @@ export const EMPTY_DATE_FILTERS = {
 
 export default function DashboardDateFilters({ value, onChange }) {
   const currentYear = new Date().getFullYear();
-  const years = Array.from({ length: 8 }, (_item, index) => currentYear - index);
+  const years = Array.from({ length: currentYear - 1999 }, (_item, index) => currentYear - index);
   const hasInvalidRange =
     Boolean(value.startDate && value.endDate) && value.startDate > value.endDate;
 
@@ -35,6 +36,10 @@ export default function DashboardDateFilters({ value, onChange }) {
     const next = { ...value, [field]: nextValue };
     if (field === "month" && nextValue !== ALL) {
       next.quarter = String(Math.ceil(Number(nextValue) / 3));
+    }
+    if (field === "quarter" && nextValue !== ALL && next.month !== ALL &&
+        Math.ceil(Number(next.month) / 3) !== Number(nextValue)) {
+      next.month = ALL;
     }
     onChange(next);
   }
@@ -45,7 +50,7 @@ export default function DashboardDateFilters({ value, onChange }) {
         <Box>
           <Typography fontWeight={800}>Reporting period</Typography>
           <Typography color="text.secondary" variant="body2">
-            Use the same calendar filters across every chart in this tab.
+            Filter every chart in this tab. Monthly, quarterly, and annual observations include the full period when it overlaps your selection.
           </Typography>
         </Box>
         <Box
@@ -84,6 +89,7 @@ export default function DashboardDateFilters({ value, onChange }) {
           <TextField fullWidth InputLabelProps={{ shrink: true }} label="Start date" onChange={(event) => update("startDate", event.target.value)} size="small" type="date" value={value.startDate} />
           <TextField fullWidth InputLabelProps={{ shrink: true }} inputProps={{ min: value.startDate || undefined }} label="End date" onChange={(event) => update("endDate", event.target.value)} size="small" type="date" value={value.endDate} />
         </Box>
+        <Button onClick={() => onChange({ ...EMPTY_DATE_FILTERS })} size="small" sx={{ alignSelf: "flex-start" }}>Reset period</Button>
         {hasInvalidRange ? <Alert severity="error">End date must be on or after the start date.</Alert> : null}
       </Stack>
     </Paper>

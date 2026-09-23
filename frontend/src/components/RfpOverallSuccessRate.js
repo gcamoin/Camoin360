@@ -1,3 +1,4 @@
+import { matchesReportingPeriod } from "../reportingPeriod";
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { Alert, Box, CircularProgress, FormControl, InputLabel, MenuItem, Paper, Select, Stack, Tooltip, Typography } from "@mui/material";
@@ -38,8 +39,7 @@ export default function RfpOverallSuccessRate({ filters }) {
   const data = useMemo(() => {
     const matchingRows = (metrics.series || []).filter(
         (row) =>
-          (!filters || filters.year === "all" || row.year === filters.year) &&
-          (!filters || filters.quarter === "all" || row.quarter === filters.quarter) &&
+          matchesReportingPeriod(row, filters) &&
           (serviceLine === ALL_SERVICE_LINES || row.service_line === serviceLine)
       );
     const byPeriod = new Map();

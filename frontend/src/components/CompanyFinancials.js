@@ -1,3 +1,4 @@
+import { filterReportingRows } from "../reportingPeriod";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import {
@@ -168,7 +169,7 @@ function InsightCard({ label, value }) {
   );
 }
 
-export default function CompanyFinancials() {
+export default function CompanyFinancials({ filters } = {}) {
   const isMountedRef = useRef(true);
   const theme = useTheme();
   const brandBlue = theme.palette.primary.main;
@@ -201,7 +202,7 @@ export default function CompanyFinancials() {
       setError(connectError.userMessage || getApiErrorMessage(connectError, "Unable to start QuickBooks authorization."));
     }
   }
-  const displayRows = monthlyFinancials;
+  const displayRows = useMemo(() => filterReportingRows(monthlyFinancials, filters), [monthlyFinancials, filters]);
   const yearOptions = useMemo(
     () => [
       { label: "All Years", value: ALL_VALUE },
@@ -270,7 +271,7 @@ export default function CompanyFinancials() {
       ),
     [displayRows, selectedMonth, selectedQuarter, selectedYear]
   );
-  const chartRows = filteredRows.length ? filteredRows : displayRows;
+  const chartRows = filteredRows;
   const salesYearTicks = useMemo(
     () =>
       Array.from(

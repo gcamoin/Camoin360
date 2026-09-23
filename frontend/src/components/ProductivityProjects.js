@@ -1,3 +1,4 @@
+import { filterReportingRows } from "../reportingPeriod";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import {
@@ -169,7 +170,7 @@ function FinancialFeeChart({ barColor, data, dateDescription, title }) {
   );
 }
 
-export default function ProductivityProjects() {
+export default function ProductivityProjects({ filters } = {}) {
   const isMountedRef = useRef(true);
   const [metrics, setMetrics] = useState({
     contracted_projects: [],
@@ -257,8 +258,8 @@ export default function ProductivityProjects() {
     [metrics.months]
   );
   const filteredMonths = useMemo(
-    () => filterMonths(metrics.months, timeFilters),
-    [metrics.months, timeFilters]
+    () => filterReportingRows(filterMonths(metrics.months, timeFilters), filters),
+    [metrics.months, timeFilters, filters]
   );
   const filteredTotalProjects = useMemo(
     () => filteredMonths.reduce((sum, month) => sum + month.projects, 0),
@@ -272,7 +273,15 @@ export default function ProductivityProjects() {
       ),
     [filteredMonths]
   );
-  const maxServiceLineProjects = Math.max(...metrics.service_lines.map((serviceLine) => serviceLine.projects), 1);
+  const visibleServiceLines = useMemo(() => {
+    const totals = new Map();
+    filteredMonths.forEach((month) => (month.service_lines || []).forEach((line) => {
+      totals.set(line.service_line, (totals.get(line.service_line) || 0) + line.projects);
+    }));
+    return Array.from(totals, ([service_line, projects]) => ({ service_line, projects }))
+      .sort((a, b) => b.projects - a.projects);
+  }, [filteredMonths]);
+  const maxServiceLineProjects = Math.max(...visibleServiceLines.map((serviceLine) => serviceLine.projects), 1);
   const contractedProjectFeeData = useMemo(
     () => buildMonthlyFeeData(filteredMonths, metrics.contracted_projects),
     [filteredMonths, metrics.contracted_projects]
@@ -444,12 +453,12 @@ export default function ProductivityProjects() {
             Service Line Popularity
           </Typography>
           <Typography color="text.secondary" variant="body2">
-            Ranked by projects created over the last 12 months.
+            Ranked by projects created in the selected period.
           </Typography>
         </Stack>
 
         <Stack spacing={1.25}>
-          {metrics.service_lines.map((serviceLine, index) => {
+          {visibleServiceLines.map((serviceLine, index) => {
             const width = `${Math.max((serviceLine.projects / maxServiceLineProjects) * 100, 4)}%`;
             return (
               <Box key={serviceLine.service_line}>

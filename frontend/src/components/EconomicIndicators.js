@@ -1,3 +1,4 @@
+import { filterReportingRows } from "../reportingPeriod";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import {
@@ -185,7 +186,7 @@ function InflationTable({ rows }) {
   );
 }
 
-export default function EconomicIndicators() {
+export default function EconomicIndicators({ filters } = {}) {
   const isMountedRef = useRef(true);
   const [range, setRange] = useState("All Years");
   const [series, setSeries] = useState(EMPTY_SERIES);
@@ -253,10 +254,10 @@ export default function EconomicIndicators() {
     };
   }, [fetchIndicators]);
 
-  const sentiment = useMemo(() => filterByRange(series.sentiment, years), [series.sentiment, years]);
-  const gdp = useMemo(() => filterByRange(series.gdp, years), [series.gdp, years]);
-  const treasury = useMemo(() => filterByRange(series.treasury, years), [series.treasury, years]);
-  const housing = useMemo(() => filterByRange(series.housing, years), [series.housing, years]);
+  const sentiment = useMemo(() => filterReportingRows(filterByRange(series.sentiment, years), filters), [series.sentiment, years, filters]);
+  const gdp = useMemo(() => filterReportingRows(filterByRange(series.gdp, years), filters), [series.gdp, years, filters]);
+  const treasury = useMemo(() => filterReportingRows(filterByRange(series.treasury, years), filters), [series.treasury, years, filters]);
+  const housing = useMemo(() => filterReportingRows(filterByRange(series.housing, years), filters), [series.housing, years, filters]);
   const xInterval = (len) => Math.max(0, Math.floor(len / 6) - 1);
   const updatedLabel = updatedAt
     ? `Updated ${new Intl.DateTimeFormat(undefined, {
@@ -443,7 +444,7 @@ export default function EconomicIndicators() {
       </Box>
 
       {/* Inflation Index Table */}
-      <InflationTable rows={cpiTable} />
+      <InflationTable rows={filterReportingRows(cpiTable, filters)} />
     </Stack>
   );
 }

@@ -1,5 +1,5 @@
-from typing import Optional
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from starlette.concurrency import run_in_threadpool
@@ -181,13 +181,25 @@ async def fetch_employee_weekly_hours(
     year: Optional[int] = Query(None, ge=2000, le=2100),
     month: Optional[int] = Query(None, ge=1, le=12),
     refresh: bool = Query(False),
+    quarter: Annotated[Optional[int], Query(ge=1, le=4)] = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
     _user=Depends(require_user),
 ):
+    reporting_filters = {key: value for key, value in {
+        "quarter": quarter,
+        "start_date": start_date.isoformat() if start_date else None,
+        "end_date": end_date.isoformat() if end_date else None,
+    }.items() if value is not None}
+    if month and not year:
+        # Apply recurring month selections across all years.
+        reporting_filters["quarter"] = quarter or (month - 1) // 3 + 1
+    kwargs = {"reporting_filters": reporting_filters} if reporting_filters else {}
     try:
-        result = await run_in_threadpool(get_employee_weekly_hours, year=year, month=month)
+        result = await run_in_threadpool(get_employee_weekly_hours, year=year, month=month, **kwargs)
         sync_status = result["sync"]["status"]
         if sync_status != "syncing" and (refresh or (sync_status == "idle" and result["sync"]["is_stale"])):
-            background_tasks.add_task(run_employee_weekly_hours_refresh, year, month)
+            background_tasks.add_task(run_employee_weekly_hours_refresh, year, month, **kwargs)
             result["sync"] = {**result["sync"], "status": "syncing", "last_error": ""}
         return result
     except Exception as exc:
