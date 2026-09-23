@@ -17,6 +17,7 @@ import { EmptyState } from "./components/UiPrimitives";
 import CompanyFinancials from "./components/CompanyFinancials";
 import EmployeeProductivity from "./components/EmployeeProductivity";
 import MarketingMetrics, { MarketingOverview } from "./components/MarketingMetrics";
+import MarketingSource from "./components/MarketingSource";
 import PEQualifiedLeads from "./components/PEQualifiedLeads";
 import ProductivityProjects from "./components/ProductivityProjects";
 import ServiceLineFinancials from "./components/ServiceLineFinancials";
@@ -107,6 +108,12 @@ const views = {
     icon: "campaign",
     title: "Marketing Metrics",
     description: "Marketing performance and campaign metrics across accounts.",
+  },
+  marketingSource: {
+    label: "Marketing Source",
+    icon: "campaign",
+    title: "Marketing Source",
+    description: "Website traffic sources by service line and month from Google Analytics.",
   },
   productivityProjects: {
     label: "Service Lines & Projects",
@@ -414,6 +421,12 @@ export default function ManagementDashboard({ onLogout }) {
                 </Typography>
               </Box>
 
+              <AiChatBox
+                context={analystContext}
+                placeholder={`Ask the AI Analyst about ${currentView.title.toLowerCase()}...`}
+                section={currentView.title}
+              />
+
               {graphViews.has(activeView) ? (
                 <DashboardDateFilters
                   onChange={(nextFilters) =>
@@ -426,12 +439,6 @@ export default function ManagementDashboard({ onLogout }) {
                 />
               ) : null}
 
-              <AiChatBox
-                context={analystContext}
-                placeholder={`Ask the AI Analyst about ${currentView.title.toLowerCase()}...`}
-                section={currentView.title}
-              />
-
               {activeView === "economicIndicators" && <EconomicIndicators />}
               {activeView === "companyFinancials" && <CompanyFinancials />}
               {activeView === "salesOutlook" && <SalesOutlook />}
@@ -443,6 +450,7 @@ export default function ManagementDashboard({ onLogout }) {
               )}
               {activeView === "marketing" && <MarketingOverview />}
               {activeView === "marketingMetrics" && <MarketingMetrics />}
+              {activeView === "marketingSource" && <MarketingSource />}
               {activeView === "pe" && <PEQualifiedLeads />}
               {activeView === "productivityProjects" && (
                 <ProductivityProjects />

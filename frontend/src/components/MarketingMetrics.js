@@ -17,7 +17,9 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  ComposedChart,
   Legend,
+  Line,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -27,6 +29,7 @@ import {
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
 
 const API_URL = `${API_BASE_URL}/marketing/website-visits`;
+const SEO_API_URL = `${API_BASE_URL}/marketing/seo-results`;
 const SERVICE_LINE_API_URL = `${API_BASE_URL}/marketing/service-line-metrics`;
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 const RANGE_OPTIONS = [
@@ -71,6 +74,30 @@ const tooltipStyle = {
   },
 };
 
+export function formatSeoTooltipMetrics(row = {}) {
+  return {
+    clicks: (row.clicks || 0).toLocaleString(),
+    averagePosition: (row.average_position || 0).toFixed(2),
+    impressions: (row.impressions || 0).toLocaleString(),
+    ctr: `${((row.ctr || 0) * 100).toFixed(2)}%`,
+  };
+}
+
+function SeoTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  const row = payload[0]?.payload || {};
+  const values = formatSeoTooltipMetrics(row);
+  return (
+    <Paper elevation={3} sx={{ border: "1px solid", borderColor: "divider", p: 1.25 }}>
+      <Typography fontSize="0.75rem" fontWeight={800} sx={{ mb: 0.5 }}>{label}</Typography>
+      <Typography fontSize="0.75rem">Clicks: {values.clicks}</Typography>
+      <Typography fontSize="0.75rem">Average position: {values.averagePosition}</Typography>
+      <Typography fontSize="0.75rem">Impressions: {values.impressions}</Typography>
+      <Typography fontSize="0.75rem">CTR: {values.ctr}</Typography>
+    </Paper>
+  );
+}
+
 export function MarketingOverview() {
   return <MarketingMetrics showOverview showServiceLines={false} />;
 }
@@ -85,12 +112,17 @@ export default function MarketingMetrics({ showOverview = false, showServiceLine
     target_total_visitors: 0,
     total_visitors: 0,
     updated_at: "",
+    warnings: [],
   });
   const [range, setRange] = useState("since_2022");
   const [isLoading, setIsLoading] = useState(showOverview);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
   const [error, setError] = useState("");
+  const [seoMetrics, setSeoMetrics] = useState({ months: [], updated_at: "" });
+  const [seoSyncStatus, setSeoSyncStatus] = useState(null);
+  const [seoError, setSeoError] = useState("");
+  const [isSeoRefreshing, setIsSeoRefreshing] = useState(false);
 
   const fetchMetrics = useCallback(async ({ refresh = false, silent = false } = {}) => {
     if (!isMountedRef.current) return;
@@ -118,6 +150,7 @@ export default function MarketingMetrics({ showOverview = false, showServiceLine
         target_total_visitors: response.data?.target_total_visitors || 0,
         total_visitors: response.data?.total_visitors || 0,
         updated_at: response.data?.updated_at || "",
+        warnings: response.data?.warnings || [],
       });
       setSyncStatus(response.data?.sync || null);
     } catch (fetchError) {
@@ -136,6 +169,29 @@ export default function MarketingMetrics({ showOverview = false, showServiceLine
     }
   }, [range]);
 
+  const fetchSeoMetrics = useCallback(async ({ refresh = false } = {}) => {
+    if (!isMountedRef.current) return;
+    setIsSeoRefreshing(true);
+    setSeoError("");
+    try {
+      const response = await axios.get(SEO_API_URL, {
+        headers: getAuthHeaders(),
+        params: { range, refresh },
+      });
+      if (!isMountedRef.current) return;
+      setSeoMetrics({
+        months: response.data?.months || [],
+        updated_at: response.data?.updated_at || "",
+      });
+      setSeoSyncStatus(response.data?.sync || null);
+    } catch (fetchError) {
+      if (handleUnauthorized(fetchError) || !isMountedRef.current) return;
+      setSeoError(getApiErrorMessage(fetchError, "Unable to load Search Console metrics."));
+    } finally {
+      if (isMountedRef.current) setIsSeoRefreshing(false);
+    }
+  }, [range]);
+
   useEffect(() => {
     if (!showOverview) {
       return undefined;
@@ -143,16 +199,18 @@ export default function MarketingMetrics({ showOverview = false, showServiceLine
 
     isMountedRef.current = true;
     fetchMetrics();
+    fetchSeoMetrics();
 
     const intervalId = setInterval(() => {
       fetchMetrics({ silent: true });
+      fetchSeoMetrics();
     }, REFRESH_INTERVAL_MS);
 
     return () => {
       isMountedRef.current = false;
       clearInterval(intervalId);
     };
-  }, [fetchMetrics, showOverview]);
+  }, [fetchMetrics, fetchSeoMetrics, showOverview]);
 
   useEffect(() => {
     if (!showOverview) {
@@ -171,6 +229,12 @@ export default function MarketingMetrics({ showOverview = false, showServiceLine
       window.clearTimeout(pollTimer);
     };
   }, [fetchMetrics, showOverview, syncStatus]);
+
+  useEffect(() => {
+    if (!showOverview || seoSyncStatus?.status !== "syncing") return undefined;
+    const pollTimer = window.setTimeout(() => fetchSeoMetrics(), 5000);
+    return () => window.clearTimeout(pollTimer);
+  }, [fetchSeoMetrics, seoSyncStatus, showOverview]);
 
   const [serviceLineMetrics, setServiceLineMetrics] = useState({ service_lines: [], updated_at: "" });
   const [isServiceLineLoading, setIsServiceLineLoading] = useState(showServiceLines);
@@ -287,14 +351,6 @@ export default function MarketingMetrics({ showOverview = false, showServiceLine
       ? "Syncing Google Analytics & Leadfeeder data..."
       : serviceLineUpdatedLabel || "Service line marketing metrics";
 
-  const peakMonth = useMemo(
-    () =>
-      metrics.months.reduce(
-        (peak, month) => (month.visitors > peak.visitors ? month : peak),
-        { month: "None", visitors: 0 }
-      ),
-    [metrics.months]
-  );
   const updatedLabel = metrics.updated_at
     ? `Updated ${new Intl.DateTimeFormat(undefined, {
         dateStyle: "medium",
@@ -325,6 +381,16 @@ export default function MarketingMetrics({ showOverview = false, showServiceLine
       {showOverview ? (
         <>
           {error ? <Alert severity="error">{error}</Alert> : null}
+          {seoError ? <Alert severity="warning">{seoError}</Alert> : null}
+          {syncStatus?.status === "error" && syncStatus.last_error ? (
+            <Alert severity="error">{syncStatus.last_error}</Alert>
+          ) : null}
+          {(metrics.warnings || []).map((warning) => (
+            <Alert key={warning} severity="warning">{warning}</Alert>
+          ))}
+          {seoSyncStatus?.status === "error" && seoSyncStatus.last_error ? (
+            <Alert severity="warning">Search Console metrics are unavailable: {seoSyncStatus.last_error}</Alert>
+          ) : null}
 
           <Stack
             direction={{ xs: "column", sm: "row" }}
@@ -370,43 +436,6 @@ export default function MarketingMetrics({ showOverview = false, showServiceLine
               </Button>
             </Stack>
           </Stack>
-
-      <Box
-        sx={{
-          display: "grid",
-          gap: 2,
-          gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
-        }}
-      >
-        <Paper
-          elevation={0}
-          sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2.5 }}
-        >
-          <Typography color="text.secondary" variant="overline">
-            {metrics.range_label}
-          </Typography>
-          <Typography color="primary.main" sx={{ fontSize: "2.35rem", fontWeight: 800, lineHeight: 1.1, mt: 0.75 }}>
-            {metrics.total_visitors.toLocaleString()}
-          </Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.75 }} variant="body2">
-            Total GA4 website sessions
-          </Typography>
-        </Paper>
-        <Paper
-          elevation={0}
-          sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2.5 }}
-        >
-          <Typography color="text.secondary" variant="overline">
-            Peak Month
-          </Typography>
-          <Typography color="primary.main" sx={{ fontSize: "2.35rem", fontWeight: 800, lineHeight: 1.1, mt: 0.75 }}>
-            {peakMonth.month}
-          </Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.75 }} variant="body2">
-            {peakMonth.visitors.toLocaleString()} GA4 sessions
-          </Typography>
-        </Paper>
-      </Box>
 
       <Box
         sx={{
@@ -489,6 +518,86 @@ export default function MarketingMetrics({ showOverview = false, showServiceLine
           </Typography>
         </Paper>
       </Box>
+
+        <Paper
+          elevation={0}
+          sx={{
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: 2,
+            p: { xs: 2, md: 2.5 },
+            backgroundColor: "common.white",
+          }}
+        >
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            justifyContent="space-between"
+            alignItems={{ xs: "flex-start", sm: "center" }}
+            spacing={1}
+            sx={{ mb: 2 }}
+          >
+            <Stack spacing={0.5}>
+              <Typography fontWeight={800} color="text.primary">SEO Results</Typography>
+              <Typography color="text.secondary" variant="body2">
+                Google Search clicks and average search position by month.
+              </Typography>
+            </Stack>
+            <Button
+              disabled={isSeoRefreshing || seoSyncStatus?.status === "syncing"}
+              onClick={() => fetchSeoMetrics({ refresh: true })}
+              size="small"
+              variant="outlined"
+              sx={{ borderRadius: 1, fontSize: "0.75rem", fontWeight: 700 }}
+            >
+              {isSeoRefreshing || seoSyncStatus?.status === "syncing" ? "Refreshing" : "Refresh SEO"}
+            </Button>
+          </Stack>
+          {seoMetrics.months.length ? (
+            <Box sx={{ height: 340, minWidth: 0 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={seoMetrics.months} margin={{ top: 8, right: 24, bottom: 0, left: -4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                  <XAxis dataKey="period" tick={{ fontSize: 11 }} />
+                  <YAxis yAxisId="clicks" allowDecimals={false} tick={{ fontSize: 11 }} />
+                  <YAxis
+                    yAxisId="position"
+                    orientation="right"
+                    reversed
+                    domain={[1, "auto"]}
+                    tick={{ fontSize: 11 }}
+                  />
+                  <Tooltip content={<SeoTooltip />} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Bar
+                    yAxisId="clicks"
+                    dataKey="clicks"
+                    name="Google Search Clicks"
+                    fill="#2563eb"
+                    fillOpacity={0.84}
+                    radius={[3, 3, 0, 0]}
+                    maxBarSize={42}
+                  />
+                  <Line
+                    yAxisId="position"
+                    dataKey="average_position"
+                    name="Average Search Position"
+                    type="monotone"
+                    stroke="#d97706"
+                    strokeWidth={2.5}
+                    dot={{ r: 3 }}
+                    activeDot={{ r: 5 }}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </Box>
+          ) : (
+            <Box sx={{ alignItems: "center", display: "flex", justifyContent: "center", minHeight: 220 }}>
+              <Typography color="text.secondary" variant="body2">
+                {seoSyncStatus?.status === "syncing" ? "Syncing Search Console data..." : "No SEO data is available."}
+              </Typography>
+            </Box>
+          )}
+        </Paper>
         </>
       ) : null}
 
@@ -557,27 +666,37 @@ export default function MarketingMetrics({ showOverview = false, showServiceLine
                 </Stack>
                 <Box sx={{ height: 320, minWidth: 0 }}>
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={line.months} margin={{ top: 8, right: 18, bottom: 0, left: -12 }}>
+                    <ComposedChart data={line.months} margin={{ top: 8, right: 18, bottom: 0, left: -12 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                       <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-                      <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                      <YAxis yAxisId="ga" allowDecimals={false} tick={{ fontSize: 11 }} />
+                      <YAxis
+                        yAxisId="leadfeeder"
+                        allowDecimals={false}
+                        orientation="right"
+                        tick={{ fontSize: 11 }}
+                      />
                       <Tooltip {...tooltipStyle} formatter={(value, name) => [value.toLocaleString(), name]} />
                       <Legend wrapperStyle={{ fontSize: 12 }} />
                       <Bar
+                        yAxisId="ga"
                         dataKey="ga_visits"
                         name="Google Analytics Visits"
                         fill={GA_VISITS_COLOR}
                         radius={[3, 3, 0, 0]}
                         maxBarSize={28}
                       />
-                      <Bar
+                      <Line
+                        yAxisId="leadfeeder"
                         dataKey="leadfeeder_visits"
                         name="Leadfeeder Visits"
-                        fill={LEADFEEDER_VISITS_COLOR}
-                        radius={[3, 3, 0, 0]}
-                        maxBarSize={28}
+                        type="monotone"
+                        stroke={LEADFEEDER_VISITS_COLOR}
+                        strokeWidth={2.5}
+                        dot={{ r: 3 }}
+                        activeDot={{ r: 5 }}
                       />
-                    </BarChart>
+                    </ComposedChart>
                   </ResponsiveContainer>
                 </Box>
               </Paper>

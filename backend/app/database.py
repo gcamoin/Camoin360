@@ -249,6 +249,40 @@ def initialize_database(force: bool = False):
         )
         wrapped.execute(
             """
+            CREATE TABLE IF NOT EXISTS search_console_monthly_metrics (
+                month_key TEXT PRIMARY KEY,
+                clicks DOUBLE PRECISION NOT NULL DEFAULT 0,
+                impressions DOUBLE PRECISION NOT NULL DEFAULT 0,
+                ctr DOUBLE PRECISION NOT NULL DEFAULT 0,
+                average_position DOUBLE PRECISION NOT NULL DEFAULT 0,
+                data_through_date TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        wrapped.execute(
+            """
+            CREATE TABLE IF NOT EXISTS search_console_sync (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                status TEXT NOT NULL DEFAULT 'idle',
+                last_started_at TEXT,
+                last_completed_at TEXT,
+                last_error TEXT NOT NULL DEFAULT '',
+                earliest_available_date TEXT,
+                latest_available_date TEXT
+            )
+            """
+        )
+        wrapped.execute(
+            """
+            INSERT INTO search_console_sync (id, status)
+            VALUES (1, 'idle')
+            ON CONFLICT (id) DO NOTHING
+            """
+        )
+        wrapped.execute(
+            """
             CREATE TABLE IF NOT EXISTS employee_productivity_cache (
                 cache_key TEXT PRIMARY KEY,
                 payload TEXT NOT NULL,

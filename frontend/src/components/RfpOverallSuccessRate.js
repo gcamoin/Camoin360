@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
-import { Alert, Box, CircularProgress, FormControl, InputLabel, MenuItem, Paper, Select, Stack, Typography } from "@mui/material";
+import { Alert, Box, CircularProgress, FormControl, InputLabel, MenuItem, Paper, Select, Stack, Tooltip, Typography } from "@mui/material";
 import {
   CartesianGrid,
   Legend,
   Line,
   LineChart,
   ResponsiveContainer,
-  Tooltip,
+  Tooltip as ChartTooltip,
   XAxis,
   YAxis,
 } from "recharts";
@@ -81,7 +81,9 @@ export default function RfpOverallSuccessRate({ filters }) {
         }}
       >
         <Paper elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2.5 }}>
-          <Typography color="text.secondary" variant="overline">$$$ Success Rate</Typography>
+          <Tooltip arrow title="Dollar-based win rate: the Fee for Camoin value of won RFPs divided by the total value of won and lost RFPs. Larger proposals have more influence on this rate.">
+            <Typography component="span" color="text.secondary" sx={{ borderBottom: "1px dotted", cursor: "help" }} variant="overline">$$$ Success Rate</Typography>
+          </Tooltip>
           <Typography color="primary.main" sx={{ fontSize: "2.35rem", fontWeight: 800, lineHeight: 1.1, mt: 0.75 }}>
             {percent(overall.dollarRate)}
           </Typography>
@@ -90,7 +92,9 @@ export default function RfpOverallSuccessRate({ filters }) {
           </Typography>
         </Paper>
         <Paper elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2.5 }}>
-          <Typography color="text.secondary" variant="overline"># RFP Success Rate</Typography>
+          <Tooltip arrow title="Count-based win rate: the number of won RFPs divided by the total number of won and lost RFPs. Every proposal counts equally regardless of value.">
+            <Typography component="span" color="text.secondary" sx={{ borderBottom: "1px dotted", cursor: "help" }} variant="overline"># RFP Success Rate</Typography>
+          </Tooltip>
           <Typography color="secondary.main" sx={{ fontSize: "2.35rem", fontWeight: 800, lineHeight: 1.1, mt: 0.75 }}>
             {percent(overall.rfpRate)}
           </Typography>
@@ -128,7 +132,7 @@ export default function RfpOverallSuccessRate({ filters }) {
                 <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="period" tick={{ fontSize: 11 }} tickMargin={10} />
                 <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} tickFormatter={percent} width={48} />
-                <Tooltip formatter={(value, name) => [percent(value), name]} />
+                <ChartTooltip formatter={(value, name) => [percent(value), name]} />
                 <Legend verticalAlign="top" height={36} />
                 <Line dataKey="dollar_success_rate" name="$$$ Success Rate" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
                 <Line dataKey="count_success_rate" name="# RFP Success Rate" stroke="#0f766e" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />

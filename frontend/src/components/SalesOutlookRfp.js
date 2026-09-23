@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
-import { Alert, Box, CircularProgress, Paper, Stack, Typography } from "@mui/material";
+import { Alert, Box, CircularProgress, Paper, Typography } from "@mui/material";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
@@ -23,6 +23,19 @@ function ChartCard({ children, description, title }) {
   return <Paper elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, minWidth: 0, p: { xs: 2, md: 2.5 } }}>
     <Typography fontWeight={800}>{title}</Typography><Typography color="text.secondary" sx={{ mb: 2 }} variant="body2">{description}</Typography>{children}
   </Paper>;
+}
+
+function addLinearTrend(rows) {
+  if (!rows.length) return [];
+  const count = rows.length;
+  const sumX = rows.reduce((sum, _row, index) => sum + index, 0);
+  const sumY = rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const sumXY = rows.reduce((sum, row, index) => sum + index * Number(row.amount || 0), 0);
+  const sumXX = rows.reduce((sum, _row, index) => sum + index * index, 0);
+  const denominator = count * sumXX - sumX * sumX;
+  const slope = denominator ? (count * sumXY - sumX * sumY) / denominator : 0;
+  const intercept = (sumY - slope * sumX) / count;
+  return rows.map((row, index) => ({ ...row, trend: Math.max(0, intercept + slope * index) }));
 }
 
 function MonthlyBar({ color, data, dataKey, name, valueFormatter = (value) => Number(value).toLocaleString() }) {
@@ -50,18 +63,21 @@ export default function SalesOutlookRfp() {
     return () => { active = false; };
   }, []);
   const monthly = useMemo(() => data?.monthly_contracts || [], [data]);
+  const annualProposals = useMemo(() => addLinearTrend(data?.annual_proposals || []), [data]);
   if (error) return <Alert severity="error">{error}</Alert>;
   if (!data) return <Box sx={{ display: "grid", minHeight: 320, placeItems: "center" }}><CircularProgress /></Box>;
 
-  return <Stack spacing={3}>
-    <ChartCard title="$ amount of proposals submitted (month)" description="Annual sum of Fee for Camoin for proposals submitted since 2016.">
-      <Box sx={{ height: 340 }}><ResponsiveContainer height="100%" width="100%"><LineChart data={data.annual_proposals} margin={{ top: 12, right: 24, bottom: 8, left: 14 }}>
+  return <Box sx={{ display: "grid", gap: 3, gridTemplateColumns: { xs: "minmax(0, 1fr)", lg: "repeat(2, minmax(0, 1fr))" } }}>
+    <ChartCard title="$ amount of proposals submitted (month)" description="Annual sum of Fee for Camoin for proposals submitted since 2016. The dotted line shows the overall trend.">
+      <Box sx={{ height: 340 }}><ResponsiveContainer height="100%" width="100%"><LineChart data={annualProposals} margin={{ top: 12, right: 24, bottom: 8, left: 14 }}>
         <CartesianGrid stroke="#eef2f7" strokeDasharray="3 3" vertical={false} /><XAxis dataKey="year" tick={{ fontSize: 12 }} /><YAxis tick={{ fontSize: 11 }} tickFormatter={formatCurrency} width={78} />
-        <Tooltip {...tooltipStyle} formatter={(value) => [formatCurrency(value), "Fee for Camoin"]} /><Line dataKey="amount" dot={{ r: 4 }} activeDot={{ r: 6 }} name="Fee for Camoin" stroke="#0f766e" strokeWidth={3} type="monotone" />
+        <Tooltip {...tooltipStyle} formatter={(value, name) => [formatCurrency(value), name]} />
+        <Line dataKey="amount" dot={{ r: 4 }} activeDot={{ r: 6 }} name="Fee for Camoin" stroke="#0f766e" strokeWidth={3} type="monotone" />
+        <Line dataKey="trend" dot={false} name="Trend" stroke="#64748b" strokeDasharray="7 6" strokeWidth={2.5} type="linear" />
       </LineChart></ResponsiveContainer></Box>
     </ChartCard>
     <ChartCard title="$ of RFP Contracts Signed" description="Monthly Fee for Camoin for won RFP opportunities by Actual Close Date, starting in 2020."><MonthlyBar color="#2563eb" data={monthly} dataKey="rfp_signed_amount" name="Fee for Camoin" valueFormatter={formatCurrency} /></ChartCard>
     <ChartCard title="# of RFP contracts won" description="Monthly count of won RFP opportunities by Actual Close Date, starting in 2020."><MonthlyBar color="#0f766e" data={monthly} dataKey="rfp_contracts_won" name="RFP Contracts Won" /></ChartCard>
     <ChartCard title="$ of non-bid contracts signed" description="Monthly Fee for Camoin for won non-bid opportunities by Actual Close Date, starting in 2020."><MonthlyBar color="#7c3aed" data={monthly} dataKey="non_bid_signed_amount" name="Fee for Camoin" valueFormatter={formatCurrency} /></ChartCard>
-  </Stack>;
+  </Box>;
 }

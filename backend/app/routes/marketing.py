@@ -1,4 +1,5 @@
 from typing import Optional
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 
@@ -18,8 +19,51 @@ from ..services.service_line_metrics import (
     get_service_line_marketing_metrics,
     refresh_service_line_marketing_metrics_cache,
 )
+from ..services.search_console import (
+    get_search_console_metrics,
+    refresh_search_console_metrics_cache,
+)
 
 router = APIRouter()
+
+
+def _sync_is_ready_to_retry(sync: dict) -> bool:
+    if sync.get("status") not in {"error", "syncing"} or not sync.get("last_started_at"):
+        return False
+    try:
+        started_at = datetime.fromisoformat(str(sync["last_started_at"]).replace("Z", "+00:00"))
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - started_at).total_seconds() >= 300
+    except ValueError:
+        return True
+
+
+@router.get("/marketing/seo-results")
+async def fetch_search_console_metrics(
+    background_tasks: BackgroundTasks,
+    range: str = Query("since_2022"),
+    refresh: bool = Query(False),
+    _user=Depends(require_user),
+):
+    try:
+        result = get_search_console_metrics(range)
+        sync = result["sync"]
+        should_refresh = (
+            refresh and sync["status"] != "syncing"
+        ) or (
+            sync["is_stale"]
+            and (sync["status"] == "idle" or _sync_is_ready_to_retry(sync))
+        )
+        if should_refresh:
+            background_tasks.add_task(refresh_search_console_metrics_cache)
+            result["sync"] = {**sync, "status": "syncing"}
+        return result
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Unable to load Search Console metrics: {exc}",
+        ) from exc
 
 
 @router.get("/marketing/website-visits")
@@ -31,7 +75,10 @@ async def fetch_website_visit_metrics(
 ):
     try:
         result = get_website_visit_metrics(range)
-        if result["sync"]["status"] != "syncing" and (refresh or result["sync"]["is_stale"]):
+        if refresh or (
+            result["sync"]["is_stale"]
+            and (result["sync"]["status"] == "idle" or _sync_is_ready_to_retry(result["sync"]))
+        ):
             background_tasks.add_task(refresh_website_visit_metrics_cache, range)
             result["sync"] = {**result["sync"], "status": "syncing"}
         return result

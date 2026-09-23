@@ -2745,19 +2745,43 @@ async def _load_website_visit_metrics_from_dynamics(range_key: str = "since_2022
 
     timeout = httpx.Timeout(MARKETING_METRICS_REQUEST_TIMEOUT_SECONDS)
     async with httpx.AsyncClient(timeout=timeout) as client:
-        ga4_site_traffic, target_naics_codes = await asyncio.gather(
+        ga4_result, target_naics_result = await asyncio.gather(
             _fetch_ga4_total_site_traffic(window),
             _fetch_target_industry_naics_codes(client, headers),
+            return_exceptions=True,
         )
-        leadfeeder_visit_counts = await _count_website_visits(
-            client,
-            website_visits_url,
-            headers,
-            buckets,
-            window["bucket_key"],
-            window["bucket_grain"],
-            target_naics_codes,
-        )
+        warnings = []
+        if isinstance(ga4_result, Exception):
+            warnings.append(f"GA4 sessions are unavailable: {ga4_result}")
+            ga4_site_traffic = {bucket[window["bucket_key"]]: 0 for bucket in buckets}
+        else:
+            ga4_site_traffic = ga4_result
+
+        if isinstance(target_naics_result, Exception):
+            warnings.append(f"Target-industry configuration is unavailable: {target_naics_result}")
+            leadfeeder_visit_counts = {
+                "target_counts_by_bucket": {bucket[window["bucket_key"]]: 0 for bucket in buckets},
+                "target_total": 0,
+                "landing_pages": [],
+            }
+        else:
+            try:
+                leadfeeder_visit_counts = await _count_website_visits(
+                    client,
+                    website_visits_url,
+                    headers,
+                    buckets,
+                    window["bucket_key"],
+                    window["bucket_grain"],
+                    target_naics_result,
+                )
+            except Exception as exc:
+                warnings.append(f"Leadfeeder visits are unavailable: {exc}")
+                leadfeeder_visit_counts = {
+                    "target_counts_by_bucket": {bucket[window["bucket_key"]]: 0 for bucket in buckets},
+                    "target_total": 0,
+                    "landing_pages": [],
+                }
 
     visit_buckets = [
         {
@@ -2781,6 +2805,7 @@ async def _load_website_visit_metrics_from_dynamics(range_key: str = "since_2022
         "target_total_visitors": leadfeeder_visit_counts["target_total"],
         "months": visit_buckets,
         "landing_pages": leadfeeder_visit_counts["landing_pages"],
+        "warnings": warnings,
     }
     cached_data[cache_key] = result
     _MARKETING_METRICS_CACHE["data"] = cached_data
@@ -2816,6 +2841,7 @@ def _marketing_metrics_empty_payload(range_key: str) -> dict:
             for bucket in window["buckets"]
         ],
         "landing_pages": [],
+        "warnings": [],
     }
 
 

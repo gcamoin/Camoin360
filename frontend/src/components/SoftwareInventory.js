@@ -1320,19 +1320,57 @@ export default function SoftwareInventory() {
             </Typography>
           </Box>
           <Stack
-            alignItems={{ xs: "stretch", md: "center" }}
-            direction={{ xs: "column", md: "row" }}
+            direction={{ xs: "column", sm: "row" }}
             flexWrap="wrap"
-            gap={1.25}
+            gap={1}
+            sx={{ flexShrink: 0 }}
           >
+            <Button disabled={isRefreshing} onClick={() => fetchSubscriptions({ silent: true })} variant="outlined">
+              {isRefreshing ? "Refreshing" : "Refresh"}
+            </Button>
+            <Button disabled={sortedRows.length === 0} onClick={exportInventoryCsv} variant="outlined">
+              Export CSV
+            </Button>
+            <Button onClick={openCreateDialog} variant="contained">
+              Add Subscription
+            </Button>
+          </Stack>
+        </Stack>
+
+        <Stack spacing={2} sx={{ borderBottom: "1px solid", borderColor: "divider", p: { xs: 2, md: 2.5 } }}>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
             <TextField
-              label="Search"
+              fullWidth
+              label="Search inventory"
+              placeholder="Search software, vendors, categories, departments, or notes"
               onChange={(event) => setQuery(event.target.value)}
               size="small"
-              sx={{ minWidth: { xs: "100%", md: 240 } }}
               value={query}
             />
-            <FormControl size="small" sx={{ minWidth: { xs: "100%", md: 160 } }}>
+            <Button
+              disabled={!hasActiveFilters}
+              onClick={clearFilters}
+              variant="text"
+              sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+            >
+              Clear Filters
+            </Button>
+          </Stack>
+          <Box
+            sx={{
+              display: "grid",
+              gap: 2,
+              gridTemplateColumns: {
+                xs: "minmax(0, 1fr)",
+                sm: "repeat(2, minmax(0, 1fr))",
+                md: "repeat(3, minmax(0, 1fr))",
+              },
+              "@media (min-width: 1800px)": {
+                gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+              },
+            }}
+          >
+            <FormControl fullWidth size="small" sx={{ minWidth: 0 }}>
               <InputLabel id="software-status-filter-label">Status</InputLabel>
               <Select
                 label="Status"
@@ -1348,7 +1386,7 @@ export default function SoftwareInventory() {
                 ))}
               </Select>
             </FormControl>
-            <FormControl size="small" sx={{ minWidth: { xs: "100%", md: 170 } }}>
+            <FormControl fullWidth size="small" sx={{ minWidth: 0 }}>
               <InputLabel id="software-category-filter-label">Category</InputLabel>
               <Select
                 label="Category"
@@ -1364,7 +1402,7 @@ export default function SoftwareInventory() {
                 ))}
               </Select>
             </FormControl>
-            <FormControl size="small" sx={{ minWidth: { xs: "100%", md: 170 } }}>
+            <FormControl fullWidth size="small" sx={{ minWidth: 0 }}>
               <InputLabel id="software-department-filter-label">Department</InputLabel>
               <Select
                 label="Department"
@@ -1380,7 +1418,7 @@ export default function SoftwareInventory() {
                 ))}
               </Select>
             </FormControl>
-            <FormControl size="small" sx={{ minWidth: { xs: "100%", md: 170 } }}>
+            <FormControl fullWidth size="small" sx={{ minWidth: 0 }}>
               <InputLabel id="software-billing-filter-label">Billing</InputLabel>
               <Select
                 label="Billing"
@@ -1396,7 +1434,7 @@ export default function SoftwareInventory() {
                 ))}
               </Select>
             </FormControl>
-            <FormControl size="small" sx={{ minWidth: { xs: "100%", md: 190 } }}>
+            <FormControl fullWidth size="small" sx={{ minWidth: 0 }}>
               <InputLabel id="software-renewal-filter-label">Renewal Time Frame</InputLabel>
               <Select
                 label="Renewal Time Frame"
@@ -1412,7 +1450,7 @@ export default function SoftwareInventory() {
                 ))}
               </Select>
             </FormControl>
-            <FormControl size="small" sx={{ minWidth: { xs: "100%", md: 190 } }}>
+            <FormControl fullWidth size="small" sx={{ minWidth: 0 }}>
               <InputLabel id="software-quick-filter-label">Missing Info</InputLabel>
               <Select
                 label="Missing Info"
@@ -1428,21 +1466,7 @@ export default function SoftwareInventory() {
                 ))}
               </Select>
             </FormControl>
-            <Button disabled={isRefreshing} onClick={() => fetchSubscriptions({ silent: true })} variant="outlined">
-              {isRefreshing ? "Refreshing" : "Refresh"}
-            </Button>
-            {hasActiveFilters ? (
-              <Button onClick={clearFilters} variant="outlined">
-                Clear Filters
-              </Button>
-            ) : null}
-            <Button disabled={sortedRows.length === 0} onClick={exportInventoryCsv} variant="outlined">
-              Export CSV
-            </Button>
-            <Button onClick={openCreateDialog} variant="contained">
-              Add Subscription
-            </Button>
-          </Stack>
+          </Box>
         </Stack>
 
         {!hasSubscriptions ? (

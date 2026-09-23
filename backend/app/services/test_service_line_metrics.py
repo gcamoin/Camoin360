@@ -37,6 +37,14 @@ class ServiceLineMetricsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated_payload["service_lines"][0]["key"], "prospect_engage")
         self.assertEqual(updated_payload["service_lines"][0]["months"], [{"period": "Jan '26"}])
 
+    def test_normalizes_ga4_source_labels(self):
+        self.assertEqual(service_line_metrics._normalize_traffic_source("(direct)"), "Direct")
+        self.assertEqual(service_line_metrics._normalize_traffic_source("(not set)"), "Unknown")
+        self.assertEqual(service_line_metrics._normalize_traffic_source("google"), "google")
+
+    def test_marketing_source_history_starts_in_2024(self):
+        self.assertEqual(service_line_metrics.MARKETING_SOURCE_START_YEAR, 2024)
+
     async def test_refresh_records_error_without_raising(self):
         connection = self._fake_connection()
         with (

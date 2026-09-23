@@ -98,7 +98,7 @@ export default function SalesOutlook() {
   if (!data) return <Box sx={{ display: "grid", minHeight: 320, placeItems: "center" }}><CircularProgress /></Box>;
 
   return (
-    <Stack spacing={3}>
+    <Box sx={{ display: "grid", gap: 3, gridTemplateColumns: { xs: "minmax(0, 1fr)", lg: "repeat(2, minmax(0, 1fr))" } }}>
       <ChartCard
         title="$ of all contracts signed"
         description="Annual Fee for Camoin totals by contract date, starting in 2020."
@@ -142,24 +142,37 @@ export default function SalesOutlook() {
             </Box>
           </Box>
         </Box>
-        <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, maxHeight: 360, mt: 2 }}>
-          <Table size="small" stickyHeader>
+      </ChartCard>
+
+      <Paper
+        elevation={0}
+        sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, gridColumn: "1 / -1", minWidth: 0, p: { xs: 2, md: 2.5 } }}
+      >
+        <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, maxHeight: 360 }}>
+          <Table size="small" stickyHeader sx={{ minWidth: 760 }}>
             <TableHead>
               <TableRow>
-                <TableCell sx={{ fontWeight: 800 }}>
-                  <Box sx={{ alignItems: "center", display: "flex", gap: 2, justifyContent: "space-between" }}>
+                <TableCell colSpan={2} sx={{ fontWeight: 800 }}>
+                  <Box
+                    sx={{
+                      alignItems: "center",
+                      display: "grid",
+                      gap: 2,
+                      gridTemplateColumns: "minmax(150px, 1fr) minmax(360px, 2fr) minmax(150px, 1fr)",
+                    }}
+                  >
                     <Typography component="span" fontWeight={800}>Project Name</Typography>
                     <TextField
                       aria-label="Search projects"
                       onChange={(event) => setProjectSearch(event.target.value)}
                       placeholder="Search projects"
                       size="small"
-                      sx={{ maxWidth: 280, width: "100%" }}
+                      sx={{ width: "100%" }}
                       value={projectSearch}
                     />
+                    <Typography component="span" fontWeight={800} textAlign="right">Fee for Camoin</Typography>
                   </Box>
                 </TableCell>
-                <TableCell align="right" sx={{ fontWeight: 800 }}>Fee for Camoin</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -179,7 +192,7 @@ export default function SalesOutlook() {
             </TableBody>
           </Table>
         </TableContainer>
-      </ChartCard>
-    </Stack>
+      </Paper>
+    </Box>
   );
 }
