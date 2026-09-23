@@ -3533,6 +3533,22 @@ def _build_pe_qualified_lead_rollups(rows: list[dict]) -> list[dict]:
     )
 
 
+def _build_pe_lead_yearly_rollups(rows: list[dict]) -> list[dict]:
+    counts = {}
+    for row in rows:
+        try:
+            year = datetime.fromisoformat(str(row.get("createdon") or "").replace("Z", "+00:00")).year
+        except ValueError:
+            continue
+        counts[year] = counts.get(year, 0) + 1
+    if not counts:
+        return []
+    return [
+        {"year": year, "qualified_leads": counts.get(year, 0)}
+        for year in range(min(counts), max(max(counts), datetime.now(timezone.utc).year) + 1)
+    ]
+
+
 async def get_pe_qualified_leads(year: int | None = None, month: int | None = None, limit: int = PE_QUALIFIED_LEAD_DEFAULT_LIMIT):
     token = await get_access_token()
     if year:
@@ -3552,16 +3568,13 @@ async def get_pe_qualified_leads(year: int | None = None, month: int | None = No
 
     async with httpx.AsyncClient(timeout=PE_CLIENT_REQUEST_TIMEOUT_SECONDS) as client:
         next_url = url
-        while next_url and len(rows) < limit:
+        while next_url:
             response = await client.get(next_url, headers=headers)
             if response.status_code != 200:
                 raise Exception(f"Dynamics GET error: {response.text}")
 
             payload = response.json()
             for record in payload.get("value", []):
-                if len(rows) >= limit:
-                    break
-
                 if not _matches_pe_qualified_status(record):
                     continue
 
@@ -3586,11 +3599,13 @@ async def get_pe_qualified_leads(year: int | None = None, month: int | None = No
             next_url = payload.get("@odata.nextLink")
 
     return {
-        "count": len(rows),
-        "data": rows,
+        "count": min(len(rows), limit),
+        "total_count": len(rows),
+        "data": rows[:limit],
         "from": start_date,
         "limit": limit,
         "rollups": _build_pe_qualified_lead_rollups(rows),
+        "yearly_rollups": _build_pe_lead_yearly_rollups(rows),
         "status": PE_QUALIFIED_LEAD_STATUS_LABEL,
         "to": end_date,
         "year": year,

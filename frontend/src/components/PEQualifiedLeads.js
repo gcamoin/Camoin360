@@ -16,6 +16,8 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Line,
+  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -65,6 +67,7 @@ export default function PEQualifiedLeads() {
   const [selectedMonth, setSelectedMonth] = useState("");
   const [leads, setLeads] = useState([]);
   const [rollups, setRollups] = useState([]);
+  const [yearlyRollups, setYearlyRollups] = useState([]);
   const [statusLabel, setStatusLabel] = useState("Qualified");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -93,6 +96,7 @@ export default function PEQualifiedLeads() {
 
       setLeads(response.data?.data || []);
       setRollups(response.data?.rollups || []);
+      setYearlyRollups(response.data?.yearly_rollups || []);
       setStatusLabel(response.data?.status || "Qualified");
     } catch (fetchError) {
       if (handleUnauthorized(fetchError)) {
@@ -101,9 +105,10 @@ export default function PEQualifiedLeads() {
 
       if (!isMountedRef.current) return;
 
-      setError(getApiErrorMessage(fetchError, "Unable to load Prospect Engage qualified leads."));
+      setError(getApiErrorMessage(fetchError, "Unable to load ProspectEngage qualified leads."));
       setLeads([]);
       setRollups([]);
+      setYearlyRollups([]);
     } finally {
       if (!isMountedRef.current) return;
 
@@ -154,71 +159,109 @@ export default function PEQualifiedLeads() {
       .map(([client_name, qualified_leads]) => ({ client_name, qualified_leads }))
       .sort((a, b) => b.qualified_leads - a.qualified_leads || a.client_name.localeCompare(b.client_name));
   }, [leads, rollups]);
-  const chartHeight = leadsByClient.length > 18 ? 420 : 360;
+  const chartHeight = Math.max(360, leadsByClient.length * 34 + 48);
 
   return (
     <Stack spacing={2.5}>
       {error ? <Alert severity="error">{error}</Alert> : null}
 
-      <Paper
-        elevation={0}
-        sx={{
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: 2,
-          p: { xs: 2, md: 2.5 },
-          backgroundColor: "common.white",
-        }}
-      >
-        <Stack spacing={0.5} sx={{ mb: 2 }}>
-          <Typography fontWeight={800} color="text.primary">
-            Prospect Engage Qualified Leads
-          </Typography>
-          <Typography color="text.secondary" variant="body2">
-            Prospects with the {statusLabel} dropdown option for {periodLabel}.
-          </Typography>
-        </Stack>
+      <Box sx={{ display: "grid", gridTemplateColumns: { xs: "minmax(0, 1fr)", lg: "repeat(2, minmax(0, 1fr))" }, gap: 2.5 }}>
+        <Paper
+          elevation={0}
+          sx={{
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: 2,
+            p: { xs: 2, md: 2.5 },
+            backgroundColor: "common.white",
+            minWidth: 0,
+          }}
+        >
+          <Stack spacing={0.5} sx={{ mb: 2 }}>
+            <Typography fontWeight={800} color="text.primary">
+              ProspectEngage Qualified Leads
+            </Typography>
+            <Typography color="text.secondary" variant="body2">
+              Prospects with the {statusLabel} dropdown option for {periodLabel}.
+            </Typography>
+          </Stack>
 
-        {isLoading ? (
-          <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
-            <CircularProgress />
-          </Box>
-        ) : leadsByClient.length ? (
-          <Box sx={{ height: chartHeight, minWidth: 0 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={leadsByClient} margin={{ top: 12, right: 16, bottom: 72, left: 0 }}>
-                <CartesianGrid vertical={false} stroke="#f1f5f9" strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="client_name"
-                  interval={0}
-                  tick={{ fontSize: 10 }}
-                  tickFormatter={(value) => (value.length > 18 ? `${value.slice(0, 18)}...` : value)}
-                  angle={-45}
-                  textAnchor="end"
-                  height={74}
-                />
-                <YAxis allowDecimals={false} tick={{ fontSize: 10 }} type="number" />
-                <Tooltip
-                  {...tooltipStyle}
-                  formatter={(value) => [Number(value).toLocaleString(), "Qualified Leads"]}
-                />
-                <Bar
-                  dataKey="qualified_leads"
-                  fill="#0d9488"
-                  fillOpacity={0.86}
-                  maxBarSize={46}
-                  name="Qualified Leads"
-                  radius={[3, 3, 0, 0]}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </Box>
-        ) : (
-          <Typography color="text.secondary" variant="body2">
-            No qualified leads match this period.
-          </Typography>
-        )}
-      </Paper>
+          {isLoading ? (
+            <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
+              <CircularProgress />
+            </Box>
+          ) : leadsByClient.length ? (
+            <Box sx={{ height: 420, overflowY: "auto" }}>
+            <Box sx={{ height: chartHeight, minWidth: 0 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={leadsByClient} layout="vertical" margin={{ top: 12, right: 24, bottom: 12, left: 0 }}>
+                  <CartesianGrid horizontal={false} stroke="#f1f5f9" strokeDasharray="3 3" />
+                  <XAxis allowDecimals={false} tick={{ fontSize: 11 }} type="number" />
+                  <YAxis
+                    dataKey="client_name"
+                    type="category"
+                    interval={0}
+                    width={170}
+                    tick={{ fontSize: 11 }}
+                    tickFormatter={(value) => (value.length > 25 ? `${value.slice(0, 25)}...` : value)}
+                  />
+                  <Tooltip
+                    {...tooltipStyle}
+                    formatter={(value) => [Number(value).toLocaleString(), "Qualified Leads"]}
+                  />
+                  <Bar
+                    dataKey="qualified_leads"
+                    fill="#073469"
+                    fillOpacity={0.86}
+                    maxBarSize={24}
+                    name="Qualified Leads"
+                    radius={[0, 3, 3, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </Box>
+            </Box>
+          ) : (
+            <Typography color="text.secondary" variant="body2">
+              No qualified leads match this period.
+            </Typography>
+          )}
+        </Paper>
+        <Paper
+          elevation={0}
+          sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: { xs: 2, md: 2.5 }, backgroundColor: "common.white", minWidth: 0 }}
+        >
+          <Stack spacing={0.5} sx={{ mb: 2 }}>
+            <Typography fontWeight={800} color="text.primary">
+              PE Leads: Year to Year
+            </Typography>
+            <Typography color="text.secondary" variant="body2">
+              ProspectEngage qualified leads by creation year. Current year is year to date.
+            </Typography>
+          </Stack>
+          {isLoading ? (
+            <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
+              <CircularProgress />
+            </Box>
+          ) : yearlyRollups.length ? (
+            <Box sx={{ height: 420, minWidth: 0 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={yearlyRollups} margin={{ top: 12, right: 24, bottom: 12, left: 0 }}>
+                  <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
+                  <XAxis dataKey="year" tick={{ fontSize: 11 }} />
+                  <YAxis allowDecimals={false} domain={[0, "auto"]} tick={{ fontSize: 11 }} />
+                  <Tooltip {...tooltipStyle} formatter={(value) => [Number(value).toLocaleString(), "Qualified Leads"]} />
+                  <Line type="linear" dataKey="qualified_leads" name="Qualified Leads" stroke="#073469" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </Box>
+          ) : (
+            <Typography color="text.secondary" variant="body2">
+              No qualified leads with creation dates are available.
+            </Typography>
+          )}
+        </Paper>
+      </Box>
     </Stack>
   );
 }

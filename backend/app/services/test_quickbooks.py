@@ -2,7 +2,7 @@ import os
 import unittest
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from . import quickbooks
 
@@ -10,6 +10,17 @@ from . import quickbooks
 class QuickBooksFinancialsTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         quickbooks._cache["financials_by_organization"] = {}
+
+    async def test_rejected_environment_token_prompts_reconnection(self):
+        config = {"client_id": "test", "client_secret": "test", "refresh_token": "test", "token_source": "environment"}
+        for status in (400, 401):
+            response = quickbooks.httpx.Response(status, request=quickbooks.httpx.Request("POST", quickbooks.TOKEN_ENDPOINT), json={"error": "invalid_grant"})
+            client = AsyncMock()
+            client.post.return_value = response
+            with patch.object(quickbooks, "_mark_connection_needs_reconnect") as mark:
+                with self.assertRaises(quickbooks.QuickBooksConnectionRequiredError):
+                    await quickbooks._get_access_token(client, config)
+                mark.assert_not_called()
 
     async def test_missing_configuration_returns_sample_financials(self):
         env_without_quickbooks = {

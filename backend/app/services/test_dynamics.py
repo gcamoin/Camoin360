@@ -18,6 +18,7 @@ from .dynamics import (
     get_project_creation_metrics,
     get_sales_outlook_rfp_metrics,
     _build_pe_qualified_lead_rollups,
+    _build_pe_lead_yearly_rollups,
     _canonical_pe_client_name,
     _marketing_window,
     normalize_marketing_list_record,
@@ -1551,6 +1552,22 @@ class LeadfeederVisitQueryTest(unittest.IsolatedAsyncioTestCase):
 
 
 class PEQualifiedLeadMetricsTest(unittest.TestCase):
+    def test_yearly_totals_fill_gaps_and_ignore_missing_dates(self):
+        year = datetime.now(timezone.utc).year
+        rows = [
+            {"createdon": f"{year - 2}-01-01T00:00:00Z"},
+            {"createdon": f"{year}-01-01T00:00:00Z"},
+            {"createdon": f"{year}-02-01T00:00:00Z"},
+            {"createdon": None},
+            {"createdon": "invalid"},
+        ]
+        self.assertEqual(_build_pe_lead_yearly_rollups(rows), [
+            {"year": year - 2, "qualified_leads": 1},
+            {"year": year - 1, "qualified_leads": 0},
+            {"year": year, "qualified_leads": 2},
+        ])
+        self.assertEqual(_build_pe_lead_yearly_rollups([]), [])
+
     def test_canonicalizes_pe_client_name_variants(self):
         self.assertEqual(_canonical_pe_client_name("Upstate SC Alliance"), "Upstate South Carolina Alliance")
         self.assertEqual(_canonical_pe_client_name("Upstate South Carolina Alliance"), "Upstate South Carolina Alliance")
@@ -1575,6 +1592,26 @@ class PEQualifiedLeadMetricsTest(unittest.TestCase):
 
 
 class PEQualifiedLeadQueryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_chart_totals_include_pages_beyond_display_limit(self):
+        record = {
+            "new_client": "Example Client",
+            "cr73c_leadstatus@OData.Community.Display.V1.FormattedValue": "Qualified",
+            "createdon": "2026-01-01T00:00:00Z",
+        }
+        client = AsyncMock()
+        client.get.side_effect = [
+            FakeDynamicsResponse({"value": [record], "@odata.nextLink": "https://example.crm/page2"}),
+            FakeDynamicsResponse({"value": [record]}),
+        ]
+        with patch.object(dynamics, "get_access_token", new=AsyncMock(return_value="token")), patch.object(dynamics.httpx, "AsyncClient") as factory:
+            factory.return_value.__aenter__.return_value = client
+            result = await get_pe_qualified_leads(limit=1)
+        self.assertEqual(len(result["data"]), 1)
+        self.assertEqual(result["total_count"], 2)
+        self.assertEqual(result["rollups"][0]["qualified_leads"], 2)
+        self.assertEqual(result["yearly_rollups"][0], {"year": 2026, "qualified_leads": 2})
+        self.assertEqual(client.get.call_count, 2)
+
     async def test_missing_year_queries_all_time(self):
         FakeAsyncClient.requested_urls = []
         FakeAsyncClient.prospect_payload = {

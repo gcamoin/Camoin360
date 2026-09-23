@@ -652,8 +652,9 @@ async def _get_access_token(client: httpx.AsyncClient, config: dict[str, str]) -
         )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        if config.get("token_source") == "database" and exc.response.status_code in {400, 401}:
-            _mark_connection_needs_reconnect(config["organization_id"])
+        if exc.response.status_code in {400, 401}:
+            if config.get("token_source") == "database":
+                _mark_connection_needs_reconnect(config["organization_id"])
             raise QuickBooksConnectionRequiredError("QuickBooks Online authorization needs to be renewed for your organization.") from exc
         raise
     token_payload = response.json()

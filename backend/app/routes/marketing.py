@@ -2,6 +2,7 @@ from typing import Optional
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from starlette.concurrency import run_in_threadpool
 
 from .auth import require_user
 from ..services.dynamics import (
@@ -14,7 +15,7 @@ from ..services.dynamics import (
     get_website_visit_metrics,
     refresh_website_visit_metrics_cache,
 )
-from ..services.harvest import get_employee_weekly_hours, refresh_employee_weekly_hours_cache
+from ..services.harvest import get_employee_weekly_hours, run_employee_weekly_hours_refresh
 from ..services.service_line_metrics import (
     get_service_line_marketing_metrics,
     refresh_service_line_marketing_metrics_cache,
@@ -183,10 +184,11 @@ async def fetch_employee_weekly_hours(
     _user=Depends(require_user),
 ):
     try:
-        result = get_employee_weekly_hours(year=year, month=month)
-        if result["sync"]["status"] != "syncing" and (refresh or result["sync"]["is_stale"]):
-            background_tasks.add_task(refresh_employee_weekly_hours_cache, year, month)
-            result["sync"] = {**result["sync"], "status": "syncing"}
+        result = await run_in_threadpool(get_employee_weekly_hours, year=year, month=month)
+        sync_status = result["sync"]["status"]
+        if sync_status != "syncing" and (refresh or (sync_status == "idle" and result["sync"]["is_stale"])):
+            background_tasks.add_task(run_employee_weekly_hours_refresh, year, month)
+            result["sync"] = {**result["sync"], "status": "syncing", "last_error": ""}
         return result
     except Exception as exc:
         raise HTTPException(

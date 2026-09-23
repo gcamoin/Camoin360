@@ -140,7 +140,7 @@ const views = {
     label: "PE",
     icon: "clients",
     title: "PE",
-    description: "Prospect Engage qualified leads sent to clients.",
+    description: "ProspectEngage qualified leads sent to clients.",
     parent: "employeeProductivity",
   },
 };

@@ -1,9 +1,10 @@
 import os
 import json
 import re
+import asyncio
 from calendar import monthrange
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -21,7 +22,10 @@ HARVEST_ACCOUNT_ID = os.getenv("HARVEST_ACCOUNT_ID")
 HARVEST_API_BASE = os.getenv("HARVEST_API_BASE", "https://api.harvestapp.com/v2").rstrip("/")
 HARVEST_HISTORY_START_DATE = date.fromisoformat(os.getenv("HARVEST_HISTORY_START_DATE", "2022-01-01"))
 EMPLOYEE_PRODUCTIVITY_SYNC_STALE_SECONDS = int(os.getenv("EMPLOYEE_PRODUCTIVITY_SYNC_STALE_SECONDS", "1800"))
+EMPLOYEE_PRODUCTIVITY_SYNC_TIMEOUT_SECONDS = 300
+EMPLOYEE_PRODUCTIVITY_SYNC_LEASE_SECONDS = 360
 PROSPECT_ENGAGE_PATTERN = re.compile(r"\b(?:prospect\s*engage|prospect-?engage|pe)\b", re.IGNORECASE)
+PROPOSAL_PREP_PATTERN = re.compile(r"\bproposal[\s_-]+prep(?:aration)?\b", re.IGNORECASE)
 DEFAULT_PROSPECT_ENGAGE_EMPLOYEE_NAMES = {"garrett", "jacob"}
 PROSPECT_ENGAGE_EMPLOYEE_NAMES = DEFAULT_PROSPECT_ENGAGE_EMPLOYEE_NAMES | {
     name.strip().lower()
@@ -144,12 +148,8 @@ def _build_employee_hours_rows(hours_by_employee: dict, average_weeks: float) ->
 
 
 async def _fetch_time_entries(start_date, end_date):
-    time_entries = []
-    page = 1
-    total_pages = 1
-
     async with httpx.AsyncClient(timeout=30) as client:
-        while page <= total_pages:
+        async def fetch_page(page):
             response = await client.get(
                 f"{HARVEST_API_BASE}/time_entries",
                 headers=_get_harvest_headers(),
@@ -161,11 +161,18 @@ async def _fetch_time_entries(start_date, end_date):
                 },
             )
             response.raise_for_status()
-            data = response.json()
+            return response.json()
 
-            time_entries.extend(data.get("time_entries", []))
-            total_pages = int(data.get("total_pages") or 1)
-            page += 1
+        first_page = await fetch_page(1)
+        time_entries = list(first_page.get("time_entries", []))
+        total_pages = int(first_page.get("total_pages") or 1)
+        # Bound concurrency so large histories do not create a request burst.
+        for first in range(2, total_pages + 1, 4):
+            pages = await asyncio.gather(*(
+                fetch_page(page) for page in range(first, min(first + 4, total_pages + 1))
+            ))
+            for data in pages:
+                time_entries.extend(data.get("time_entries", []))
 
     return time_entries
 
@@ -184,10 +191,19 @@ async def _load_employee_weekly_hours_from_harvest(year=None, month=None):
     average_weeks = max((end_date - start_date).days + 1, 1) / 7
     hours_by_employee = defaultdict(lambda: {"billable": 0.0, "non_billable": 0.0})
     utilization_hours_by_employee = defaultdict(lambda: {"billable": 0.0, "non_billable": 0.0})
+    proposal_prep_hours_by_employee = defaultdict(lambda: {"billable": 0.0, "non_billable": 0.0})
 
     for time_entry in await _fetch_time_entries(start_date, end_date):
         employee_name = _get_user_name(time_entry)
         hours = float(time_entry.get("hours") or 0)
+        project_name = _get_nested_name(time_entry, "project")
+        is_proposal_prep = (
+            PROPOSAL_PREP_PATTERN.search(_get_nested_name(time_entry, "task"))
+            or PROPOSAL_PREP_PATTERN.search(project_name)
+        )
+        if is_proposal_prep and not PROSPECT_ENGAGE_PATTERN.search(project_name):
+            billing_key = "billable" if _is_billable_time_entry(time_entry) else "non_billable"
+            proposal_prep_hours_by_employee[employee_name][billing_key] += hours
         if _is_billable_time_entry(time_entry):
             hours_by_employee[employee_name]["billable"] += hours
         else:
@@ -202,6 +218,8 @@ async def _load_employee_weekly_hours_from_harvest(year=None, month=None):
     return {
         "employees": _build_employee_hours_rows(hours_by_employee, average_weeks),
         "utilization_employees": _build_employee_hours_rows(utilization_hours_by_employee, average_weeks),
+        "proposal_prep_employees": _build_employee_hours_rows(proposal_prep_hours_by_employee, average_weeks),
+        "proposal_prep_version": 1,
         "from": start_date.isoformat(),
         "to": end_date.isoformat(),
         "weeks": round(average_weeks, 2),
@@ -229,6 +247,8 @@ def _employee_productivity_empty_payload(year=None, month=None) -> dict:
     return {
         "employees": [],
         "utilization_employees": [],
+        "proposal_prep_employees": [],
+        "proposal_prep_version": 1,
         "from": start_date.isoformat(),
         "to": end_date.isoformat(),
         "weeks": round(max((end_date - start_date).days + 1, 1) / 7, 2),
@@ -283,7 +303,7 @@ def _is_employee_productivity_sync_active(cache_row: dict | None) -> bool:
     if started_time.tzinfo is None:
         started_time = started_time.replace(tzinfo=timezone.utc)
 
-    return (datetime.now(timezone.utc) - started_time).total_seconds() <= EMPLOYEE_PRODUCTIVITY_SYNC_STALE_SECONDS
+    return (datetime.now(timezone.utc) - started_time).total_seconds() <= EMPLOYEE_PRODUCTIVITY_SYNC_LEASE_SECONDS
 
 
 def get_employee_weekly_hours(year=None, month=None):
@@ -298,8 +318,10 @@ def get_employee_weekly_hours(year=None, month=None):
         payload = _employee_productivity_empty_payload(year, month)
 
     sync_status = cache_row.get("status") if cache_row else "idle"
+    last_error = cache_row.get("last_error") if cache_row else ""
     if sync_status == "syncing" and not _is_employee_productivity_sync_active(cache_row):
-        sync_status = "idle"
+        sync_status = "error"
+        last_error = "Harvest sync was interrupted. Select Refresh to retry."
 
     payload_has_rows = _employee_productivity_payload_has_rows(payload)
     return {
@@ -308,8 +330,8 @@ def get_employee_weekly_hours(year=None, month=None):
             "status": sync_status,
             "last_started_at": cache_row.get("last_started_at") if cache_row else None,
             "last_completed_at": cache_row.get("last_completed_at") if cache_row else None,
-            "last_error": cache_row.get("last_error") if cache_row else "",
-            "is_stale": _is_employee_productivity_cache_stale(cache_row) or not payload_has_rows,
+            "last_error": last_error,
+            "is_stale": _is_employee_productivity_cache_stale(cache_row) or payload.get("proposal_prep_version") != 1,
             "has_rows": payload_has_rows,
         },
     }
@@ -318,8 +340,9 @@ def get_employee_weekly_hours(year=None, month=None):
 async def refresh_employee_weekly_hours_cache(year=None, month=None) -> dict:
     cache_key = _employee_productivity_cache_key(year, month)
     started_at = datetime.now(timezone.utc).isoformat()
+    expired_before = (datetime.now(timezone.utc) - timedelta(seconds=EMPLOYEE_PRODUCTIVITY_SYNC_LEASE_SECONDS)).isoformat()
     with get_database_connection() as connection:
-        connection.execute(
+        claimed = connection.execute(
             """
             INSERT INTO employee_productivity_cache (
                 cache_key, payload, status, last_started_at, last_error, updated_at
@@ -330,12 +353,22 @@ async def refresh_employee_weekly_hours_cache(year=None, month=None) -> dict:
                 last_started_at = excluded.last_started_at,
                 last_error = '',
                 updated_at = CURRENT_TIMESTAMP
+            WHERE employee_productivity_cache.status != 'syncing'
+                OR employee_productivity_cache.last_started_at IS NULL
+                OR employee_productivity_cache.last_started_at < ?
+            RETURNING cache_key
             """,
-            (cache_key, json.dumps(_employee_productivity_empty_payload(year, month)), started_at),
-        )
+            (cache_key, json.dumps(_employee_productivity_empty_payload(year, month)), started_at, expired_before),
+        ).fetchone()
+
+    if not claimed:
+        return get_employee_weekly_hours(year=year, month=month)
 
     try:
-        payload = await _load_employee_weekly_hours_from_harvest(year=year, month=month)
+        payload = await asyncio.wait_for(
+            _load_employee_weekly_hours_from_harvest(year=year, month=month),
+            timeout=EMPLOYEE_PRODUCTIVITY_SYNC_TIMEOUT_SECONDS,
+        )
         completed_at = datetime.now(timezone.utc).isoformat()
         with get_database_connection() as connection:
             connection.execute(
@@ -346,9 +379,9 @@ async def refresh_employee_weekly_hours_cache(year=None, month=None) -> dict:
                     last_completed_at = ?,
                     last_error = '',
                     updated_at = CURRENT_TIMESTAMP
-                WHERE cache_key = ?
+                WHERE cache_key = ? AND last_started_at = ?
                 """,
-                (json.dumps(payload), completed_at, cache_key),
+                (json.dumps(payload), completed_at, cache_key, started_at),
             )
         return get_employee_weekly_hours(year=year, month=month)
     except Exception as exc:
@@ -359,11 +392,17 @@ async def refresh_employee_weekly_hours_cache(year=None, month=None) -> dict:
                 SET status = 'error',
                     last_error = ?,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE cache_key = ?
+                WHERE cache_key = ? AND last_started_at = ?
                 """,
-                (str(exc), cache_key),
+                (str(exc) or "Harvest sync timed out. Select Refresh to retry.", cache_key, started_at),
             )
         raise
+
+
+def run_employee_weekly_hours_refresh(year=None, month=None):
+    # A synchronous background task runs in FastAPI's thread pool, isolating
+    # database access and large JSON responses from HTTP request handling.
+    return asyncio.run(refresh_employee_weekly_hours_cache(year, month))
 
 
 async def get_billable_breakdown(year, month=None):

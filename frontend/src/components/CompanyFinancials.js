@@ -33,6 +33,7 @@ import {
   YAxis,
 } from "recharts";
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, getCurrentUser, handleUnauthorized } from "../auth";
+import { getQuickBooksConnectUrl } from "../quickbooksApi";
 
 const API_URL = `${API_BASE_URL}/company-financials`;
 const REQUEST_TIMEOUT_MS = 60 * 1000;
@@ -184,7 +185,22 @@ export default function CompanyFinancials() {
   const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
   const [isAnalysisGenerated, setIsAnalysisGenerated] = useState(false);
   const [analysisTab, setAnalysisTab] = useState("analysis");
-  const [canManageQuickBooks, setCanManageQuickBooks] = useState(false);
+  const [isConnectingQuickBooks, setIsConnectingQuickBooks] = useState(false);
+  const canManageQuickBooks = useMemo(() => {
+    const currentUser = getCurrentUser();
+    return currentUser?.role === "admin" || currentUser?.modules?.includes("admin");
+  }, []);
+
+  async function connectQuickBooks() {
+    setIsConnectingQuickBooks(true);
+    try {
+      window.location.assign(await getQuickBooksConnectUrl());
+    } catch (connectError) {
+      if (!isMountedRef.current) return;
+      setIsConnectingQuickBooks(false);
+      setError(connectError.userMessage || getApiErrorMessage(connectError, "Unable to start QuickBooks authorization."));
+    }
+  }
   const displayRows = monthlyFinancials;
   const yearOptions = useMemo(
     () => [
@@ -221,10 +237,9 @@ export default function CompanyFinancials() {
       if (!isMountedRef.current || handleUnauthorized(requestError)) return;
 
       if (requestError.response?.status === 409) {
-        const currentUser = getCurrentUser();
-        const userModules = Array.isArray(currentUser?.modules) ? currentUser.modules : [];
-        setCanManageQuickBooks(currentUser?.role === "admin" || userModules.includes("admin"));
-        setError("QuickBooks Online is not connected for your organization.");
+        setError(canManageQuickBooks
+          ? "Connect QuickBooks to load company financials. After authorizing with Intuit, you’ll return to Camoin 360."
+          : "A Camoin 360 administrator needs to connect QuickBooks to load company financials.");
       } else {
         setError(getApiErrorMessage(requestError, "Unable to load QuickBooks company financials."));
       }
@@ -234,7 +249,7 @@ export default function CompanyFinancials() {
         setIsRefreshing(false);
       }
     }
-  }, []);
+  }, [canManageQuickBooks]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -292,11 +307,12 @@ export default function CompanyFinancials() {
             {canManageQuickBooks ? (
               <Button
                 color="inherit"
-                onClick={() => window.location.assign("/settings/integrations/quickbooks")}
+                disabled={isConnectingQuickBooks}
+                onClick={connectQuickBooks}
                 size="small"
                 variant="outlined"
               >
-                Manage QuickBooks Connection
+                {isConnectingQuickBooks ? "Opening QuickBooks…" : "Connect QuickBooks"}
               </Button>
             ) : null}
           </Stack>

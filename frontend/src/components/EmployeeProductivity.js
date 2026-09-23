@@ -91,9 +91,18 @@ const getUtilizationRate = (employee) => {
 };
 
 const formatShortDate = (dateValue) =>
-  new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(
+  new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(
     new Date(`${dateValue}T00:00:00`)
   );
+
+export function buildProposalPrepRows(employees, selectedEmployee, selectedBilling) {
+  const hoursKey = selectedBilling === "all" ? "total_hours" : `${selectedBilling}_hours`;
+  return employees
+    .filter((employee) => selectedEmployee === ALL_EMPLOYEES_VALUE || employee.employee === selectedEmployee)
+    .map((employee) => ({ employee: employee.employee, hours: Number(employee[hoursKey] || 0) }))
+    .filter((employee) => employee.hours > 0)
+    .sort((a, b) => b.hours - a.hours || a.employee.localeCompare(b.employee));
+}
 
 export default function EmployeeProductivity() {
   const isMountedRef = useRef(true);
@@ -106,6 +115,7 @@ export default function EmployeeProductivity() {
     scope: "consulting",
     to: "",
     utilization_employees: [],
+    proposal_prep_employees: [],
     weeks: 12,
     updated_at: "",
   });
@@ -154,6 +164,7 @@ export default function EmployeeProductivity() {
       const response = await axios.get(API_URL, {
         headers: getAuthHeaders(),
         params,
+        timeout: 30000,
       });
 
       if (!isMountedRef.current || requestId !== latestRequestIdRef.current) return;
@@ -165,6 +176,7 @@ export default function EmployeeProductivity() {
         scope: response.data?.scope || "consulting",
         to: response.data?.to || "",
         utilization_employees: response.data?.utilization_employees || response.data?.employees || [],
+        proposal_prep_employees: response.data?.proposal_prep_employees || [],
         weeks: response.data?.weeks || 12,
         updated_at: response.data?.updated_at || "",
       });
@@ -208,14 +220,14 @@ export default function EmployeeProductivity() {
       return undefined;
     }
 
-    const pollTimer = window.setTimeout(() => {
+    const pollTimer = window.setInterval(() => {
       fetchMetrics({ background: true });
     }, 5000);
 
     return () => {
-      window.clearTimeout(pollTimer);
+      window.clearInterval(pollTimer);
     };
-  }, [fetchMetrics, syncStatus?.last_completed_at, syncStatus?.last_error, syncStatus?.last_started_at, syncStatus?.status]);
+  }, [fetchMetrics, syncStatus?.status]);
 
   const updatedLabel = metrics.updated_at
     ? `Updated ${new Intl.DateTimeFormat(undefined, {
@@ -285,6 +297,10 @@ export default function EmployeeProductivity() {
     };
   }, [metrics.utilization_employees]);
   const chartHeight = filteredEmployees.length > 18 ? 380 : 420;
+  const proposalPrepRows = useMemo(
+    () => buildProposalPrepRows(metrics.proposal_prep_employees, selectedEmployee, selectedBilling),
+    [metrics.proposal_prep_employees, selectedEmployee, selectedBilling]
+  );
   const utilizationChartHeight = utilizationRows.length > 18 ? 380 : 420;
 
   if (isLoading) {
@@ -298,6 +314,11 @@ export default function EmployeeProductivity() {
   return (
     <Stack spacing={2.5}>
       {error ? <Alert severity="error">{error}</Alert> : null}
+      {syncStatus?.last_error ? (
+        <Alert severity="error">
+          Harvest sync failed: {syncStatus.last_error}. Select Refresh to try again.
+        </Alert>
+      ) : null}
 
       <Stack
         direction={{ xs: "column", sm: "row" }}
@@ -570,6 +591,50 @@ export default function EmployeeProductivity() {
         ) : (
           <Typography color="text.secondary" variant="body2">
             No Harvest time entries match these filters.
+          </Typography>
+        )}
+      </Paper>
+      <Paper
+        elevation={0}
+        sx={{
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: 2,
+          p: { xs: 2, md: 2.5 },
+          backgroundColor: "common.white",
+        }}
+      >
+        <Stack spacing={0.5} sx={{ mb: 2 }}>
+          <Typography fontWeight={800} color="text.primary">
+            Proposal Prep Hours
+          </Typography>
+          <Typography color="text.secondary" variant="body2">
+            Total proposal preparation hours by employee for {dateRangeLabel}, ranked highest first.
+          </Typography>
+        </Stack>
+        {proposalPrepRows.length ? (
+          <Box sx={{ maxHeight: 560, overflowY: "auto" }}>
+            <Box sx={{ height: Math.max(240, proposalPrepRows.length * 36 + 48), minWidth: 0 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={proposalPrepRows}
+                  layout="vertical"
+                  margin={{ top: 8, right: 24, bottom: 8, left: 0 }}
+                >
+                  <CartesianGrid horizontal={false} stroke="#f1f5f9" strokeDasharray="3 3" />
+                  <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(value) => `${formatHours(value)}h`} />
+                  <YAxis type="category" dataKey="employee" width={150} interval={0} tick={{ fontSize: 11 }} />
+                  <Tooltip {...tooltipStyle} formatter={(value) => [`${formatHours(value)} hours`, "Proposal Prep"]} />
+                  <Bar dataKey="hours" name="Proposal Prep Hours" fill="#073469" maxBarSize={24} radius={[0, 3, 3, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </Box>
+          </Box>
+        ) : (
+          <Typography color="text.secondary" variant="body2">
+            {syncStatus?.status === "syncing"
+              ? "Syncing proposal preparation hours from Harvest..."
+              : "No proposal preparation hours match these filters."}
           </Typography>
         )}
       </Paper>

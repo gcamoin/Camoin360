@@ -361,7 +361,7 @@ async def fetch_pe_qualified_leads(
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Unable to load Prospect Engage qualified leads: {exc}",
+            detail=f"Unable to load ProspectEngage qualified leads: {exc}",
         ) from exc
 
 
