@@ -25,7 +25,15 @@ from ..services.search_console import (
     refresh_search_console_metrics_cache,
 )
 
+from ..services.newsletter import get_newsletter_metrics
+
 router = APIRouter()
+
+
+@router.get("/marketing/newsletter-subscribers")
+async def fetch_newsletter_subscribers(_user=Depends(require_user)):
+    return await get_newsletter_metrics()
+
 
 
 def _sync_is_ready_to_retry(sync: dict) -> bool:

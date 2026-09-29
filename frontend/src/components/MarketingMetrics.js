@@ -1,3 +1,4 @@
+import NewsletterSubscribers from "./NewsletterSubscribers";
 import { filterReportingRows, matchesReportingPeriod } from "../reportingPeriod";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
@@ -599,6 +600,7 @@ export default function MarketingMetrics({ filters, showOverview = false, showSe
             </Box>
           )}
         </Paper>
+        <NewsletterSubscribers filters={filters} />
         </>
       ) : null}
 

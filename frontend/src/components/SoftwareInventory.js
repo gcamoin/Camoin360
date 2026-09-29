@@ -1,1782 +1,258 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import {
-  Alert,
-  Box,
-  Button,
-  Chip,
-  CircularProgress,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  Drawer,
-  FormControl,
-  IconButton,
-  InputLabel,
-  MenuItem,
-  Paper,
-  Select,
-  Snackbar,
-  Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TablePagination,
-  TableRow,
-  TableSortLabel,
-  TextField,
-  Typography,
+  Autocomplete, Dialog, DialogTitle, DialogContent, DialogActions, Alert, Button, CircularProgress, MenuItem, Paper, Stack, Table, TableBody,
+  TableCell, TableContainer, TableHead, TablePagination, TableRow,
+  TableSortLabel, TextField, Typography,
 } from "@mui/material";
-
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
-import { AppIcon, EmptyState, subtleTableHeadCellSx } from "./UiPrimitives";
-
-const API_URL = `${API_BASE_URL}/software-subscriptions`;
-const ALL_FILTER_VALUE = "all";
-const STATUS_OPTIONS = ["Active", "Pending Renewal", "Needs Review", "Cancelled"];
-const BILLING_FREQUENCY_OPTIONS = ["Monthly", "Quarterly", "Annual", "One-Time", "Other"];
-const DEFAULT_SORT_KEY = "name";
-const DEFAULT_SORT_DIRECTION = "asc";
-const ROWS_PER_PAGE_OPTIONS = [10, 25, 50, 100];
-const COST_FIELD_KEYS = ["current_monthly_cost", "cost_2024_2025", "cost_2025_2026", "cost_2026_2027"];
-const QUICK_FILTER_OPTIONS = [
-  { value: "missing_renewal_date", label: "Missing Renewal Date" },
-  { value: "missing_cost", label: "Missing Cost" },
-  { value: "missing_owner", label: "Missing Owner" },
-  { value: "missing_department", label: "Missing Department" },
-  { value: "missing_vendor", label: "Missing Vendor" },
-];
-const CSV_EXPORT_COLUMNS = [
-  { header: "Software name", getValue: (row) => row.name },
-  { header: "Vendor", getValue: (row) => row.vendor_rep },
-  { header: "Category", getValue: (row) => row.category },
-  { header: "Department", getValue: (row) => row.department },
-  { header: "Owner", getValue: (row) => row.point_of_contact },
-  { header: "Status", getValue: (row) => row.status },
-  { header: "Billing frequency", getValue: (row) => row.billing_frequency },
-  { header: "Monthly cost", getValue: (row) => formatExportCurrency(getCurrentMonthlyCost(row)) },
-  { header: "Annual cost", getValue: (row) => formatExportCurrency(getCurrentAnnualCost(row)) },
-  { header: "Renewal date", getValue: (row) => formatExportDate(row.renewal_date) },
-  { header: "Notes", getValue: (row) => row.notes },
-  { header: "Created date", getValue: (row) => formatExportDate(row.created_at) },
-  { header: "Last updated date", getValue: (row) => formatExportDate(row.updated_at) },
-];
-const EMPTY_FORM = {
-  name: "",
-  description: "",
-  category: "",
-  department: "",
-  point_of_contact: "",
-  assigned_users: "",
-  current_monthly_cost: "",
-  original_cost_2026_2027: "",
-  cost_2024_2025: "",
-  cost_2025_2026: "",
-  cost_2026_2027: "",
-  billing_frequency: "",
-  renewal_date: "",
-  renewal_time_frame: "",
-  vendor_rep: "",
-  subscribed_since: "",
-  status: "Active",
-  notes: "",
-};
+import { subtleTableHeadCellSx } from "./UiPrimitives";
 
 const columns = [
-  { key: "name", label: "Software / Data Subscription Name", minWidth: 240, sortable: true },
-  { key: "category", label: "Category", minWidth: 170, sortable: true },
-  { key: "department", label: "Department", minWidth: 160, sortable: true },
-  { key: "description", label: "Description", minWidth: 300 },
-  { key: "point_of_contact", label: "Owner", minWidth: 190 },
-  { key: "assigned_users", label: "Access / Assigned Users", minWidth: 230 },
-  { key: "current_monthly_cost", label: "Current Monthly Cost", align: "right", minWidth: 180, sortable: true },
-  { key: "cost_2026_2027", label: "Current Annual Cost", align: "right", minWidth: 170, sortable: true },
-  { key: "billing_frequency", label: "Billing Frequency", minWidth: 170, sortable: true },
-  { key: "renewal_date", label: "Renewal Date", minWidth: 160, sortable: true },
-  { key: "renewal_time_frame", label: "Renewal Timeframe", minWidth: 180, sortable: true },
-  { key: "renewal_risk", label: "Renewal Risk", minWidth: 150 },
-  { key: "vendor_rep", label: "Vendor", minWidth: 190, sortable: true },
-  { key: "subscribed_since", label: "Subscribed Since", minWidth: 150 },
-  { key: "status", label: "Status", minWidth: 140, sortable: true },
-  { key: "notes", label: "Notes", minWidth: 300 },
+  { key: "status", label: "Service Status" },
+  { key: "name", label: "Service" },
+  { key: "description", label: "Service Description" },
+  { key: "vendor", label: "Vendor" },
+  { key: "service_type", label: "Service Type" },
+  { key: "current_service_term", label: "Current Service Term" },
+  { key: "primary_vendor_contact", label: "Primary Vendor Contact" },
+  { key: "access_details", label: "Access Details" },
+  { key: "primary_contact", label: "Camoin Primary Contact" },
+  { key: "subscribed_since", label: "Subscribed Since" },
 ];
+const displayValue = (row, key) => key === "subscribed_since" && /^\d{4}-\d{2}-\d{2}/.test(row[key])
+  ? new Date(`${row[key].slice(0, 10)}T00:00:00`).toLocaleDateString()
+  : String(row[key] || "");
 
-const detailFields = [
-  ["Vendor", "vendor_rep"],
-  ["Category", "category"],
-  ["Department", "department"],
-  ["Owner", "point_of_contact"],
-  ["Status", "status"],
-  ["Billing Frequency", "billing_frequency"],
-  ["Monthly Cost", "current_monthly_cost", "monthly_currency"],
-  ["Annualized Cost", "annualized_cost", "annual_currency"],
-  ["Renewal Date", "renewal_date", "date"],
-  ["Notes", "notes", "long_text"],
-  ["Created Timestamp", "created_at", "timestamp"],
-  ["Last Updated Timestamp", "updated_at", "timestamp"],
-];
+const INVENTORY_URL = `${API_BASE_URL}/software-subscriptions/inventory`;
 
-const requiredFields = {
-  name: "Subscription name is required.",
-  category: "Category is required.",
-  department: "Department is required.",
-  point_of_contact: "Point of contact is required.",
-  billing_frequency: "Billing frequency is required.",
-  renewal_date: "Renewal date is required.",
-  renewal_time_frame: "Renewal time frame is required.",
-  vendor_rep: "Vendor is required.",
-  status: "Status is required.",
-};
-
-const statusChipProps = {
-  Active: { color: "success", variant: "filled" },
-  "Pending Renewal": { color: "info", variant: "outlined" },
-  "Needs Review": { color: "warning", variant: "outlined" },
-  Cancelled: { color: "default", variant: "outlined" },
-};
-
-const renewalMonthLookup = {
-  january: 0,
-  jan: 0,
-  february: 1,
-  feb: 1,
-  march: 2,
-  mar: 2,
-  april: 3,
-  apr: 3,
-  may: 4,
-  june: 5,
-  jun: 5,
-  july: 6,
-  jul: 6,
-  august: 7,
-  aug: 7,
-  september: 8,
-  sep: 8,
-  sept: 8,
-  october: 9,
-  oct: 9,
-  november: 10,
-  nov: 10,
-  december: 11,
-  dec: 11,
-};
-
-function normalize(value) {
-  return String(value || "").toLowerCase();
+function ServiceTermField({ value, label, disabled, required, onChange }) {
+  const existing = typeof value === "string" ? (label || value) : "";
+  const match = existing.match(/^\s*(\d+)\s*(months?|years?)\s*$/i);
+  const [amount, setAmount] = useState(value?.duration ?? match?.[1] ?? "");
+  const [unit, setUnit] = useState(value?.unit || (match?.[2]?.toLowerCase().startsWith("year") ? "years" : "months"));
+  const invalid = amount !== "" && (!Number.isInteger(Number(amount)) || Number(amount) <= 0);
+  function update(nextAmount, nextUnit) {
+    setAmount(nextAmount);
+    setUnit(nextUnit);
+    onChange(nextAmount === "" ? null : { duration: Number(nextAmount), unit: nextUnit });
+  }
+  return <Stack spacing={1}>
+    <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+      <TextField fullWidth label="Service Term" type="number" value={amount} disabled={disabled} required={required}
+        error={invalid} helperText={invalid ? "Enter a positive whole number" : undefined}
+        slotProps={{ htmlInput: { min: 1, step: 1 } }} onChange={event => update(event.target.value, unit)} />
+      <TextField select label="Term Unit" value={unit} disabled={disabled} sx={{ minWidth: 160 }}
+        onChange={event => update(amount, event.target.value)}>
+        <MenuItem value="months">Months</MenuItem>
+        <MenuItem value="years">Years</MenuItem>
+      </TextField>
+    </Stack>
+    {existing && !match && <Typography variant="body2" color="text.secondary">Current term: {existing}. Enter a duration to replace it.</Typography>}
+  </Stack>;
 }
 
-function formatCurrency(value) {
-  if (value === null || value === undefined || value === "") {
-    return "-";
-  }
-
-  return new Intl.NumberFormat(undefined, {
-    currency: "USD",
-    maximumFractionDigits: 0,
-    style: "currency",
-  }).format(Number(value));
-}
-
-function formatDate(value) {
-  if (!value) {
-    return "-";
-  }
-
-  const parsedDate = parseDateValue(value);
-  if (Number.isNaN(parsedDate.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  }).format(parsedDate);
-}
-
-function formatTimestamp(value) {
-  if (!value) {
-    return "-";
-  }
-
-  const parsedDate = parseDateValue(value);
-  if (Number.isNaN(parsedDate.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(parsedDate);
-}
-
-function parseDateValue(value) {
-  if (!value) {
-    return new Date("");
-  }
-
-  if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) {
-    return new Date(`${value}T00:00:00`);
-  }
-
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(String(value))) {
-    return new Date(String(value).replace(" ", "T"));
-  }
-
-  return new Date(value);
-}
-
-function formatExportCurrency(value) {
-  if (value === null || value === undefined || value === "") {
-    return "";
-  }
-
-  return new Intl.NumberFormat(undefined, {
-    currency: "USD",
-    maximumFractionDigits: 2,
-    minimumFractionDigits: 2,
-    style: "currency",
-  }).format(Number(value));
-}
-
-function formatExportDate(value) {
-  if (!value) {
-    return "";
-  }
-
-  const parsedDate = parseDateValue(value);
-  if (Number.isNaN(parsedDate.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  }).format(parsedDate);
-}
-
-function escapeCsvValue(value) {
-  const stringValue = String(value ?? "");
-
-  if (/[",\n\r]/.test(stringValue)) {
-    return `"${stringValue.replace(/"/g, '""')}"`;
-  }
-
-  return stringValue;
-}
-
-function getExportDateStamp() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function downloadCsv(filename, rows) {
-  const csvContent = rows.map((row) => row.map(escapeCsvValue).join(",")).join("\n");
-  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const downloadLink = document.createElement("a");
-
-  downloadLink.href = url;
-  downloadLink.download = filename;
-  document.body.appendChild(downloadLink);
-  downloadLink.click();
-  document.body.removeChild(downloadLink);
-  URL.revokeObjectURL(url);
-}
-
-function roundCurrencyValue(value) {
-  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
-}
-
-function getCurrentMonthlyCost(row) {
-  if (row?.current_monthly_cost !== null && row?.current_monthly_cost !== undefined && row?.current_monthly_cost !== "") {
-    return Number(row.current_monthly_cost);
-  }
-
-  if (row?.cost_2026_2027 !== null && row?.cost_2026_2027 !== undefined && row?.cost_2026_2027 !== "") {
-    return roundCurrencyValue(Number(row.cost_2026_2027) / 12);
-  }
-
-  return null;
-}
-
-function getCurrentMonthlyCostTotal(rows) {
-  return rows.reduce((sum, row) => sum + Number(getCurrentMonthlyCost(row) || 0), 0);
-}
-
-function getCurrentAnnualCost(row) {
-  if (row?.cost_2026_2027 !== null && row?.cost_2026_2027 !== undefined && row?.cost_2026_2027 !== "") {
-    return Number(row.cost_2026_2027);
-  }
-
-  const monthlyCost = getCurrentMonthlyCost(row);
-  return monthlyCost === null ? null : roundCurrencyValue(monthlyCost * 12);
-}
-
-function getDetailFieldValue(row, key, format) {
-  if (format === "monthly_currency") {
-    return formatCurrency(getCurrentMonthlyCost(row));
-  }
-
-  if (format === "annual_currency") {
-    return formatCurrency(getCurrentAnnualCost(row));
-  }
-
-  if (format === "date") {
-    return formatDate(row[key]);
-  }
-
-  if (format === "timestamp") {
-    return formatTimestamp(row[key]);
-  }
-
-  return row[key] || "-";
-}
-
-function getRenewalMonth(renewalTimeFrame) {
-  const normalized = normalize(renewalTimeFrame);
-  return Object.entries(renewalMonthLookup).find(([label]) =>
-    normalized.includes(label)
-  )?.[1];
-}
-
-function isUpcomingRenewal(row) {
-  if (row.status === "Pending Renewal") {
-    return true;
-  }
-
-  const renewalRisk = getRenewalRisk(row);
-  if (renewalRisk && renewalRisk.daysUntilRenewal <= 90) {
-    return true;
-  }
-
-  const renewalMonth = getRenewalMonth(row.renewal_time_frame);
-  if (renewalMonth === undefined) {
-    return false;
-  }
-
-  const today = new Date();
-  const currentYearRenewal = new Date(today.getFullYear(), renewalMonth, 1);
-  const renewalDate =
-    currentYearRenewal < today
-      ? new Date(today.getFullYear() + 1, renewalMonth, 1)
-      : currentYearRenewal;
-  const daysUntilRenewal = (renewalDate - today) / (1000 * 60 * 60 * 24);
-
-  return daysUntilRenewal <= 90;
-}
-
-function getRenewalRisk(row) {
-  if (!row?.renewal_date) {
-    return null;
-  }
-
-  const renewalDate = new Date(`${row.renewal_date}T00:00:00`);
-  if (Number.isNaN(renewalDate.getTime())) {
-    return null;
-  }
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const daysUntilRenewal = Math.ceil((renewalDate - today) / (1000 * 60 * 60 * 24));
-
-  if (daysUntilRenewal < 0) {
-    return { color: "error", label: "Expired", severity: "expired", daysUntilRenewal };
-  }
-
-  if (daysUntilRenewal <= 30) {
-    return { color: "error", label: "Renews <=30d", severity: "30", daysUntilRenewal };
-  }
-
-  if (daysUntilRenewal <= 60) {
-    return { color: "warning", label: "Renews <=60d", severity: "60", daysUntilRenewal };
-  }
-
-  if (daysUntilRenewal <= 90) {
-    return { color: "info", label: "Renews <=90d", severity: "90", daysUntilRenewal };
-  }
-
-  return { color: "success", label: "On Track", severity: "clear", daysUntilRenewal };
-}
-
-function getRenewalRowSx(row) {
-  const renewalRisk = getRenewalRisk(row);
-
-  if (!renewalRisk) {
-    return {};
-  }
-
-  if (renewalRisk.severity === "expired") {
-    return { bgcolor: "rgba(211, 47, 47, 0.08)" };
-  }
-
-  if (renewalRisk.severity === "30") {
-    return { bgcolor: "rgba(211, 47, 47, 0.08)" };
-  }
-
-  if (renewalRisk.severity === "60") {
-    return { bgcolor: "rgba(237, 108, 2, 0.1)" };
-  }
-
-  if (renewalRisk.severity === "90") {
-    return { bgcolor: "rgba(2, 136, 209, 0.08)" };
-  }
-
-  return {};
-}
-
-function getRenewalSortValue(row) {
-  if (row.renewal_date) {
-    const renewalDate = new Date(`${row.renewal_date}T00:00:00`);
-    if (!Number.isNaN(renewalDate.getTime())) {
-      return renewalDate.getTime();
-    }
-  }
-
-  const renewalMonth = getRenewalMonth(row.renewal_time_frame);
-
-  if (renewalMonth === undefined) {
-    return normalize(row.renewal_time_frame);
-  }
-
-  const today = new Date();
-  const currentYearRenewal = new Date(today.getFullYear(), renewalMonth, 1);
-  const renewalDate =
-    currentYearRenewal < today
-      ? new Date(today.getFullYear() + 1, renewalMonth, 1)
-      : currentYearRenewal;
-
-  return renewalDate.getTime();
-}
-
-function getSortValue(row, sortKey) {
-  if (sortKey === "current_monthly_cost") {
-    return getCurrentMonthlyCost(row);
-  }
-
-  if (sortKey === "cost_2026_2027") {
-    return getCurrentAnnualCost(row);
-  }
-
-  if (sortKey === "renewal_time_frame") {
-    return getRenewalSortValue(row);
-  }
-
-  if (sortKey === "renewal_date") {
-    return getRenewalSortValue(row);
-  }
-
-  if (sortKey === "status") {
-    const statusIndex = STATUS_OPTIONS.indexOf(row.status);
-    return statusIndex === -1 ? STATUS_OPTIONS.length : statusIndex;
-  }
-
-  return row[sortKey];
-}
-
-function compareSortValues(firstValue, secondValue) {
-  const firstMissing = firstValue === null || firstValue === undefined || firstValue === "";
-  const secondMissing = secondValue === null || secondValue === undefined || secondValue === "";
-
-  if (firstMissing && secondMissing) {
-    return 0;
-  }
-
-  if (firstMissing) {
-    return 1;
-  }
-
-  if (secondMissing) {
-    return -1;
-  }
-
-  if (typeof firstValue === "number" && typeof secondValue === "number") {
-    return firstValue - secondValue;
-  }
-
-  return String(firstValue).localeCompare(String(secondValue), undefined, {
-    numeric: true,
-    sensitivity: "base",
-  });
-}
-
-function sortRows(rows, sortKey, sortDirection) {
-  const directionMultiplier = sortDirection === "asc" ? 1 : -1;
-
-  return rows
-    .map((row, index) => ({ index, row }))
-    .sort((first, second) => {
-      const comparison = compareSortValues(
-        getSortValue(first.row, sortKey),
-        getSortValue(second.row, sortKey)
-      );
-
-      return comparison === 0
-        ? first.index - second.index
-        : comparison * directionMultiplier;
-    })
-    .map(({ row }) => row);
-}
-
-function toFormState(row) {
-  if (!row) {
-    return EMPTY_FORM;
-  }
-
-  return {
-    name: row.name || "",
-    description: row.description || "",
-    category: row.category || "",
-    department: row.department || "",
-    point_of_contact: row.point_of_contact || "",
-    assigned_users: row.assigned_users || "",
-    current_monthly_cost:
-      getCurrentMonthlyCost(row) === null ? "" : String(getCurrentMonthlyCost(row)),
-    original_cost_2026_2027: row.cost_2026_2027 ?? "",
-    cost_2024_2025: row.cost_2024_2025 ?? "",
-    cost_2025_2026: row.cost_2025_2026 ?? "",
-    cost_2026_2027: "",
-    billing_frequency: row.billing_frequency || "",
-    renewal_date: row.renewal_date || "",
-    renewal_time_frame: row.renewal_time_frame || "",
-    vendor_rep: row.vendor_rep || "",
-    subscribed_since: row.subscribed_since || "",
-    status: row.status || "Active",
-    notes: row.notes || "",
-  };
-}
-
-function toRequestPayload(form) {
-  const {
-    current_monthly_cost: currentMonthlyCostInput,
-    original_cost_2026_2027: originalCurrentYearlyCost,
-    ...payload
-  } = form;
-  const trimmedPayload = Object.fromEntries(
-    Object.entries(payload).map(([key, value]) => [
-      key,
-      typeof value === "string" ? value.trim() : value,
-    ])
-  );
-  const currentMonthlyCost =
-    String(currentMonthlyCostInput).trim() === ""
-      ? null
-      : Number(currentMonthlyCostInput);
-  const originalMonthlyCost =
-    originalCurrentYearlyCost === ""
-      ? null
-      : String(roundCurrencyValue(Number(originalCurrentYearlyCost) / 12));
-  const currentYearlyCost =
-    String(form.cost_2026_2027).trim() === ""
-      ? currentMonthlyCost === null
-        ? null
-        : currentMonthlyCostInput === originalMonthlyCost
-          ? Number(originalCurrentYearlyCost)
-          : roundCurrencyValue(currentMonthlyCost * 12)
-      : Number(form.cost_2026_2027);
-
-  return {
-    ...trimmedPayload,
-    cost_2024_2025: String(form.cost_2024_2025).trim() === "" ? null : Number(form.cost_2024_2025),
-    cost_2025_2026: String(form.cost_2025_2026).trim() === "" ? null : Number(form.cost_2025_2026),
-    cost_2026_2027: currentYearlyCost,
-  };
-}
-
-function validateForm(form) {
-  const errors = {};
-
-  for (const [field, message] of Object.entries(requiredFields)) {
-    if (!String(form[field] || "").trim()) {
-      errors[field] = message;
-    }
-  }
-
-  for (const field of COST_FIELD_KEYS) {
-    const value = String(form[field] ?? "").trim();
-    if (value === "") {
-      continue;
-    }
-
-    const numericValue = Number(value);
-    if (!Number.isFinite(numericValue)) {
-      errors[field] = "Enter a valid cost.";
-    } else if (numericValue < 0) {
-      errors[field] = "Cost must be zero or greater.";
-    }
-  }
-
-  if (String(form.current_monthly_cost).trim() !== "" && String(form.cost_2026_2027).trim() !== "") {
-    errors.current_monthly_cost = "Enter either monthly or yearly current cost.";
-    errors.cost_2026_2027 = "Enter either yearly or monthly current cost.";
-  }
-
-  return errors;
-}
-
-function getAnnualizedMonthlyCost(form) {
-  const monthlyCostValue = String(form.current_monthly_cost ?? "").trim();
-
-  if (monthlyCostValue === "") {
-    return null;
-  }
-
-  const monthlyCost = Number(monthlyCostValue);
-  return Number.isFinite(monthlyCost) && monthlyCost >= 0
-    ? roundCurrencyValue(monthlyCost * 12)
-    : null;
-}
-
-function StatusChip({ status }) {
-  const chipProps = statusChipProps[status] || statusChipProps["Needs Review"];
-
-  return (
-    <Chip
-      color={chipProps.color}
-      label={status || "Needs Review"}
-      size="small"
-      sx={{ fontWeight: 800, minWidth: 112 }}
-      variant={chipProps.variant}
-    />
-  );
-}
-
-function RenewalRiskChip({ row }) {
-  const renewalRisk = getRenewalRisk(row);
-
-  if (!renewalRisk) {
-    return (
-      <Chip
-        color="default"
-        label="Missing Date"
-        size="small"
-        sx={{ fontWeight: 800, minWidth: 116 }}
-        variant="outlined"
-      />
-    );
-  }
-
-  return (
-    <Chip
-      color={renewalRisk.color}
-      label={renewalRisk.label}
-      size="small"
-      sx={{ fontWeight: 800, minWidth: 116 }}
-      variant={renewalRisk.severity === "clear" ? "outlined" : "filled"}
-    />
-  );
-}
-
-function SummaryCard({ label, value, helper }) {
-  return (
-    <Paper
-      elevation={0}
-      sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2.5 }}
-    >
-      <Typography color="text.secondary" variant="overline">
-        {label}
-      </Typography>
-      <Typography color="primary.main" sx={{ fontSize: "2rem", fontWeight: 800, lineHeight: 1.1, mt: 0.75 }}>
-        {value}
-      </Typography>
-      <Typography color="text.secondary" sx={{ mt: 0.75 }} variant="body2">
-        {helper}
-      </Typography>
-    </Paper>
-  );
-}
-
-function SubscriptionFormDialog({
-  error,
-  form,
-  formErrors,
-  mode,
-  onChange,
-  onClose,
-  onSubmit,
-  open,
-  saving,
-}) {
-  const liveFormErrors = validateForm(form);
-  const displayFormErrors = { ...liveFormErrors, ...formErrors };
-  const annualizedMonthlyCost = getAnnualizedMonthlyCost(form);
-  const saveDisabled = saving || Object.keys(liveFormErrors).length > 0;
-
-  return (
-    <Dialog fullWidth maxWidth="md" onClose={saving ? undefined : onClose} open={open}>
-      <DialogTitle>{mode === "edit" ? "Edit Subscription" : "Create Subscription"}</DialogTitle>
-      <DialogContent dividers>
-        <Stack spacing={2}>
-          {error ? <Alert severity="error">{error}</Alert> : null}
-          <Box
-            sx={{
-              display: "grid",
-              gap: 2,
-              gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
-            }}
-          >
-            <TextField
-              error={Boolean(displayFormErrors.name)}
-              helperText={displayFormErrors.name}
-              label="Software / Data Subscription Name"
-              onChange={(event) => onChange("name", event.target.value)}
-              required
-              value={form.name}
-            />
-            <TextField
-              error={Boolean(displayFormErrors.category)}
-              helperText={displayFormErrors.category}
-              label="Category"
-              onChange={(event) => onChange("category", event.target.value)}
-              required
-              value={form.category}
-            />
-            <TextField
-              error={Boolean(displayFormErrors.department)}
-              helperText={displayFormErrors.department}
-              label="Department"
-              onChange={(event) => onChange("department", event.target.value)}
-              required
-              value={form.department}
-            />
-            <TextField
-              error={Boolean(displayFormErrors.point_of_contact)}
-              helperText={displayFormErrors.point_of_contact}
-              label="Owner"
-              onChange={(event) => onChange("point_of_contact", event.target.value)}
-              required
-              value={form.point_of_contact}
-            />
-            <TextField
-              label="Access / Assigned Users"
-              onChange={(event) => onChange("assigned_users", event.target.value)}
-              value={form.assigned_users}
-            />
-            <FormControl error={Boolean(displayFormErrors.status)} required>
-              <InputLabel id="software-status-label">Status</InputLabel>
-              <Select
-                label="Status"
-                labelId="software-status-label"
-                onChange={(event) => onChange("status", event.target.value)}
-                value={form.status}
-              >
-                {STATUS_OPTIONS.map((status) => (
-                  <MenuItem key={status} value={status}>
-                    {status}
-                  </MenuItem>
-                ))}
-              </Select>
-              {displayFormErrors.status ? (
-                <Typography color="error" sx={{ ml: 1.75, mt: 0.5 }} variant="caption">
-                  {displayFormErrors.status}
-                </Typography>
-              ) : null}
-            </FormControl>
-            <TextField
-              error={Boolean(displayFormErrors.renewal_time_frame)}
-              helperText={displayFormErrors.renewal_time_frame}
-              label="Renewal Time Frame"
-              onChange={(event) => onChange("renewal_time_frame", event.target.value)}
-              required
-              value={form.renewal_time_frame}
-            />
-            <TextField
-              InputLabelProps={{ shrink: true }}
-              error={Boolean(displayFormErrors.renewal_date)}
-              helperText={displayFormErrors.renewal_date}
-              label="Renewal Date"
-              onChange={(event) => onChange("renewal_date", event.target.value)}
-              required
-              type="date"
-              value={form.renewal_date}
-            />
-            <FormControl error={Boolean(displayFormErrors.billing_frequency)} required>
-              <InputLabel id="software-billing-frequency-label">Billing Frequency</InputLabel>
-              <Select
-                label="Billing Frequency"
-                labelId="software-billing-frequency-label"
-                onChange={(event) => onChange("billing_frequency", event.target.value)}
-                value={form.billing_frequency}
-              >
-                <MenuItem value="">Unspecified</MenuItem>
-                {BILLING_FREQUENCY_OPTIONS.map((frequency) => (
-                  <MenuItem key={frequency} value={frequency}>
-                    {frequency}
-                  </MenuItem>
-                ))}
-              </Select>
-              {displayFormErrors.billing_frequency ? (
-                <Typography color="error" sx={{ ml: 1.75, mt: 0.5 }} variant="caption">
-                  {displayFormErrors.billing_frequency}
-                </Typography>
-              ) : null}
-            </FormControl>
-            <TextField
-              error={Boolean(displayFormErrors.vendor_rep)}
-              helperText={displayFormErrors.vendor_rep}
-              label="Vendor"
-              onChange={(event) => onChange("vendor_rep", event.target.value)}
-              required
-              value={form.vendor_rep}
-            />
-            <TextField
-              label="Subscribed Since"
-              onChange={(event) => onChange("subscribed_since", event.target.value)}
-              value={form.subscribed_since}
-            />
-            <TextField
-              error={Boolean(displayFormErrors.current_monthly_cost)}
-              helperText={
-                displayFormErrors.current_monthly_cost ||
-                (annualizedMonthlyCost === null
-                  ? "Monthly billing amount. Annualized cost will be calculated."
-                  : `Annualized cost: ${formatCurrency(annualizedMonthlyCost)}`)
-              }
-              inputProps={{ min: 0, step: "0.01" }}
-              label="Monthly Billing Cost"
-              onChange={(event) => onChange("current_monthly_cost", event.target.value)}
-              type="number"
-              value={form.current_monthly_cost}
-            />
-            <TextField
-              error={Boolean(displayFormErrors.cost_2026_2027)}
-              helperText={displayFormErrors.cost_2026_2027 || "Annual billing amount. Leave blank when entering monthly cost."}
-              inputProps={{ min: 0, step: "0.01" }}
-              label="Annual Billing Cost"
-              onChange={(event) => onChange("cost_2026_2027", event.target.value)}
-              type="number"
-              value={form.cost_2026_2027}
-            />
-            <TextField
-              error={Boolean(displayFormErrors.cost_2024_2025)}
-              helperText={displayFormErrors.cost_2024_2025}
-              inputProps={{ min: 0, step: "0.01" }}
-              label="2024-2025 Yearly Cost"
-              onChange={(event) => onChange("cost_2024_2025", event.target.value)}
-              type="number"
-              value={form.cost_2024_2025}
-            />
-            <TextField
-              error={Boolean(displayFormErrors.cost_2025_2026)}
-              helperText={displayFormErrors.cost_2025_2026}
-              inputProps={{ min: 0, step: "0.01" }}
-              label="2025-2026 Yearly Cost"
-              onChange={(event) => onChange("cost_2025_2026", event.target.value)}
-              type="number"
-              value={form.cost_2025_2026}
-            />
-          </Box>
-          <TextField
-            label="Description"
-            multiline
-            onChange={(event) => onChange("description", event.target.value)}
-            rows={3}
-            value={form.description}
-          />
-          <TextField
-            label="Notes"
-            multiline
-            onChange={(event) => onChange("notes", event.target.value)}
-            rows={3}
-            value={form.notes}
-          />
-        </Stack>
-      </DialogContent>
-      <DialogActions>
-        <Button disabled={saving} onClick={onClose} variant="outlined">
-          Cancel
-        </Button>
-        <Button disabled={saveDisabled} onClick={onSubmit} variant="contained">
-          {saving ? "Saving" : "Save"}
-        </Button>
-      </DialogActions>
-    </Dialog>
-  );
+function LookupField({ column, value, label, onChange, disabled, required }) {
+  const [query, setQuery] = useState("");
+  const [options, setOptions] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let active = true;
+    const timer = setTimeout(async () => {
+      setBusy(true);
+      setError("");
+      try {
+        const response = await axios.get(`${INVENTORY_URL}/lookups/${column.key}`, { headers: getAuthHeaders(), params: { q: query } });
+        if (active) setOptions(response.data.data || []);
+      } catch (err) {
+        if (active && !handleUnauthorized(err)) setError("Unable to load options. Type to retry.");
+      } finally { if (active) setBusy(false); }
+    }, 300);
+    return () => { active = false; clearTimeout(timer); };
+  }, [column.key, query]);
+  const selected = value ? options.find(option => option.value === value) || { value, label: label || value } : null;
+  return <Autocomplete options={options} value={selected} loading={busy} disabled={disabled}
+    getOptionLabel={option => option.label} isOptionEqualToValue={(a, b) => a.value === b.value}
+    filterOptions={items => items}
+    onInputChange={(_, text, reason) => { if (reason === "input") setQuery(text); if (reason === "clear") setQuery(""); }}
+    onChange={(_, option) => onChange(option?.value || null, option?.label || "")}
+    renderInput={params => <TextField {...params} label={column.label} required={required} error={Boolean(error)} helperText={error || "Search and select a Dynamics record"} />} />;
 }
 
 export default function SoftwareInventory() {
-  const isMountedRef = useRef(true);
-  const [subscriptions, setSubscriptions] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState(ALL_FILTER_VALUE);
-  const [categoryFilter, setCategoryFilter] = useState(ALL_FILTER_VALUE);
-  const [departmentFilter, setDepartmentFilter] = useState(ALL_FILTER_VALUE);
-  const [billingFrequencyFilter, setBillingFrequencyFilter] = useState(ALL_FILTER_VALUE);
-  const [renewalFilter, setRenewalFilter] = useState(ALL_FILTER_VALUE);
-  const [quickFilter, setQuickFilter] = useState(ALL_FILTER_VALUE);
-  const [sortKey, setSortKey] = useState(DEFAULT_SORT_KEY);
-  const [sortDirection, setSortDirection] = useState(DEFAULT_SORT_DIRECTION);
+  const [status, setStatus] = useState("");
+  const [sort, setSort] = useState({ key: "name", direction: "asc" });
   const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(ROWS_PER_PAGE_OPTIONS[1]);
-  const [selectedSubscription, setSelectedSubscription] = useState(null);
-  const [formDialogMode, setFormDialogMode] = useState(null);
-  const [form, setForm] = useState(EMPTY_FORM);
-  const [formErrors, setFormErrors] = useState({});
+  const [pageSize, setPageSize] = useState(25);
+  const [editor, setEditor] = useState(null);
+  const [fields, setFields] = useState(null);
+  const [values, setValues] = useState({});
+  const [labels, setLabels] = useState({});
   const [formError, setFormError] = useState("");
-  const [isSaving, setIsSaving] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const [deleteError, setDeleteError] = useState("");
-  const [deleteSuccessMessage, setDeleteSuccessMessage] = useState("");
-  const [isDeleting, setIsDeleting] = useState(false);
-
-  const fetchSubscriptions = useCallback(async ({ silent = false } = {}) => {
-    if (!isMountedRef.current) return;
-
-    if (silent) {
-      setIsRefreshing(true);
-    } else {
-      setIsLoading(true);
-    }
-    setError("");
-
+  const [success, setSuccess] = useState("");
+  async function openEditor(row = null) {
+    setEditor({ row });
+    setValues(row?.values || {});
+    setLabels(row || {});
+    setFields(null);
+    setFormError("");
     try {
-      const response = await axios.get(API_URL, { headers: getAuthHeaders() });
-      if (!isMountedRef.current) return;
-
-      setSubscriptions(response.data?.data || []);
-    } catch (fetchError) {
-      if (handleUnauthorized(fetchError)) {
-        return;
-      }
-
-      if (!isMountedRef.current) return;
-      setError(getApiErrorMessage(fetchError, "Unable to load software subscriptions."));
-    } finally {
-      if (!isMountedRef.current) return;
-      setIsLoading(false);
-      setIsRefreshing(false);
+      const response = await axios.get(`${INVENTORY_URL}/editor`, { headers: getAuthHeaders() });
+      setFields(response.data.fields);
+    } catch (err) {
+      if (!handleUnauthorized(err)) setFormError(getApiErrorMessage(err, "Unable to load the service form."));
     }
-  }, []);
-
-  useEffect(() => {
-    isMountedRef.current = true;
-    fetchSubscriptions();
-
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, [fetchSubscriptions]);
-
-  const categoryOptions = useMemo(
-    () =>
-      Array.from(new Set(subscriptions.map((row) => row.category).filter(Boolean))).sort(),
-    [subscriptions]
-  );
-  const departmentOptions = useMemo(
-    () =>
-      Array.from(new Set(subscriptions.map((row) => row.department).filter(Boolean))).sort(),
-    [subscriptions]
-  );
-  const billingFrequencyOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          [...BILLING_FREQUENCY_OPTIONS, ...subscriptions.map((row) => row.billing_frequency)]
-            .filter(Boolean)
-        )
-      ).sort(),
-    [subscriptions]
-  );
-  const renewalOptions = useMemo(
-    () =>
-      Array.from(new Set(subscriptions.map((row) => row.renewal_time_frame).filter(Boolean))).sort(),
-    [subscriptions]
-  );
-
-  const visibleRows = useMemo(() => {
-    const normalizedQuery = normalize(query);
-
-    return subscriptions.filter((row) => {
-      const matchesStatus = statusFilter === ALL_FILTER_VALUE || row.status === statusFilter;
-      const matchesCategory =
-        categoryFilter === ALL_FILTER_VALUE || row.category === categoryFilter;
-      const matchesDepartment =
-        departmentFilter === ALL_FILTER_VALUE || row.department === departmentFilter;
-      const matchesBillingFrequency =
-        billingFrequencyFilter === ALL_FILTER_VALUE ||
-        row.billing_frequency === billingFrequencyFilter;
-      const matchesRenewal =
-        renewalFilter === ALL_FILTER_VALUE || row.renewal_time_frame === renewalFilter;
-      const matchesQuickFilter =
-        quickFilter === ALL_FILTER_VALUE ||
-        (quickFilter === "missing_renewal_date" && !row.renewal_date) ||
-        (quickFilter === "missing_cost" && getCurrentAnnualCost(row) === null) ||
-        (quickFilter === "missing_owner" && !row.point_of_contact) ||
-        (quickFilter === "missing_department" && !row.department) ||
-        (quickFilter === "missing_vendor" && !row.vendor_rep);
-      const searchableValues = [
-        row.name,
-        row.vendor_rep,
-        row.category,
-        row.department,
-        row.notes,
-      ];
-      const matchesQuery =
-        !normalizedQuery ||
-        searchableValues.some((value) => normalize(value).includes(normalizedQuery));
-
-      return (
-        matchesStatus &&
-        matchesCategory &&
-        matchesDepartment &&
-        matchesBillingFrequency &&
-        matchesRenewal &&
-        matchesQuickFilter &&
-        matchesQuery
-      );
-    });
-  }, [
-    billingFrequencyFilter,
-    categoryFilter,
-    departmentFilter,
-    query,
-    quickFilter,
-    renewalFilter,
-    statusFilter,
-    subscriptions,
-  ]);
-
-  const sortedRows = useMemo(
-    () => sortRows(visibleRows, sortKey, sortDirection),
-    [sortDirection, sortKey, visibleRows]
-  );
-
-  const paginatedRows = useMemo(
-    () => sortedRows.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
-    [page, rowsPerPage, sortedRows]
-  );
-
-  useEffect(() => {
-    setPage(0);
-  }, [
-    billingFrequencyFilter,
-    categoryFilter,
-    departmentFilter,
-    query,
-    quickFilter,
-    renewalFilter,
-    statusFilter,
-  ]);
-
-  useEffect(() => {
-    const lastPage = Math.max(0, Math.ceil(sortedRows.length / rowsPerPage) - 1);
-    setPage((currentPage) => Math.min(currentPage, lastPage));
-  }, [rowsPerPage, sortedRows.length]);
-
-  const activeCount = subscriptions.filter((row) => row.status === "Active").length;
-  const upcomingRenewalCount = subscriptions.filter(isUpcomingRenewal).length;
-  const missingVendorOrContactCount = subscriptions.filter(
-    (row) => !row.vendor_rep || !row.point_of_contact
-  ).length;
-  const hasActiveFilters =
-    Boolean(query.trim()) ||
-    statusFilter !== ALL_FILTER_VALUE ||
-    categoryFilter !== ALL_FILTER_VALUE ||
-    departmentFilter !== ALL_FILTER_VALUE ||
-    billingFrequencyFilter !== ALL_FILTER_VALUE ||
-    renewalFilter !== ALL_FILTER_VALUE ||
-    quickFilter !== ALL_FILTER_VALUE;
-  const hasSubscriptions = subscriptions.length > 0;
-
-  function openCreateDialog() {
-    setSelectedSubscription(null);
-    setForm(EMPTY_FORM);
-    setFormErrors({});
-    setFormError("");
-    setFormDialogMode("create");
   }
-
-  function openEditDialog(row) {
-    setForm(toFormState(row));
-    setFormErrors({});
+  async function save() {
     setFormError("");
-    setFormDialogMode("edit");
-  }
-
-  function closeFormDialog() {
-    if (isSaving) return;
-    setFormDialogMode(null);
-    setFormErrors({});
-    setFormError("");
-  }
-
-  function updateFormField(field, value) {
-    if (COST_FIELD_KEYS.includes(field) && String(value).includes("-")) {
-      return;
+    if (!String(values.name || "").trim()) { setFormError("Service is required."); return; }
+    const term = values.current_service_term;
+    if (term && typeof term === "object" && (!Number.isInteger(term.duration) || term.duration <= 0)) {
+      setFormError("Service Term must be a positive whole number."); return;
     }
-
-    setForm((current) => ({ ...current, [field]: value }));
-    setFormErrors((current) => {
-      const next = { ...current, [field]: "" };
-      if (field === "current_monthly_cost") {
-        next.cost_2026_2027 = "";
-      }
-      if (field === "cost_2026_2027") {
-        next.current_monthly_cost = "";
-      }
-      return next;
-    });
-  }
-
-  function clearFilters() {
-    setQuery("");
-    setStatusFilter(ALL_FILTER_VALUE);
-    setCategoryFilter(ALL_FILTER_VALUE);
-    setDepartmentFilter(ALL_FILTER_VALUE);
-    setBillingFrequencyFilter(ALL_FILTER_VALUE);
-    setRenewalFilter(ALL_FILTER_VALUE);
-    setQuickFilter(ALL_FILTER_VALUE);
-  }
-
-  function handleSort(columnKey) {
-    setSortKey((currentKey) => {
-      if (currentKey === columnKey) {
-        setSortDirection((currentDirection) =>
-          currentDirection === "asc" ? "desc" : "asc"
-        );
-        return currentKey;
-      }
-
-      setSortDirection(DEFAULT_SORT_DIRECTION);
-      return columnKey;
-    });
-    setPage(0);
-  }
-
-  function exportInventoryCsv() {
-    const csvRows = [
-      CSV_EXPORT_COLUMNS.map((column) => column.header),
-      ...sortedRows.map((row) =>
-        CSV_EXPORT_COLUMNS.map((column) => column.getValue(row))
-      ),
-    ];
-
-    downloadCsv(`software-inventory-export-${getExportDateStamp()}.csv`, csvRows);
-  }
-
-  async function saveSubscription() {
-    const nextErrors = validateForm(form);
-    setFormErrors(nextErrors);
-    setFormError("");
-
-    if (Object.keys(nextErrors).length > 0) {
-      return;
-    }
-
-    setIsSaving(true);
+    const creating = !editor.row;
+    const changed = Object.fromEntries(Object.entries(values).filter(([key, value]) => {
+      const field = fields[key];
+      return field && field[creating ? "create" : "update"] && (creating || value !== editor.row.values[key]);
+    }));
+    if (!creating && !Object.keys(changed).length) { setEditor(null); return; }
+    setSaving(true);
     try {
-      const payload = toRequestPayload(form);
-      const response =
-        formDialogMode === "edit" && selectedSubscription
-          ? await axios.put(`${API_URL}/${selectedSubscription.id}`, payload, {
-              headers: getAuthHeaders(),
-            })
-          : await axios.post(API_URL, payload, { headers: getAuthHeaders() });
-
-      const savedSubscription = response.data;
-      setSubscriptions((current) => {
-        if (formDialogMode === "edit") {
-          return current.map((row) =>
-            row.id === savedSubscription.id ? savedSubscription : row
-          );
-        }
-        return [...current, savedSubscription].sort((a, b) =>
-          a.name.localeCompare(b.name)
-        );
-      });
-      setSelectedSubscription(savedSubscription);
-      setFormDialogMode(null);
-    } catch (saveError) {
-      if (handleUnauthorized(saveError)) {
-        return;
-      }
-      setFormError(getApiErrorMessage(saveError, "Unable to save subscription."));
-    } finally {
-      setIsSaving(false);
-    }
+      const payload = { values: changed, etag: editor.row?.etag || null };
+      if (creating) await axios.post(INVENTORY_URL, payload, { headers: getAuthHeaders() });
+      else await axios.patch(`${INVENTORY_URL}/${editor.row.id}`, payload, { headers: getAuthHeaders() });
+      setEditor(null);
+      setSuccess(creating ? "Service created in Dynamics." : "Service updated in Dynamics.");
+      await load();
+    } catch (err) {
+      if (!handleUnauthorized(err)) setFormError(getApiErrorMessage(err, "Unable to save the service to Dynamics."));
+    } finally { setSaving(false); }
   }
-
-  async function deleteSubscription() {
-    if (!deleteTarget) return;
-
-    const deletedName = deleteTarget.name;
-    setDeleteError("");
-    setIsDeleting(true);
+  async function remove() {
+    setSaving(true);
+    setFormError("");
     try {
-      await axios.delete(`${API_URL}/${deleteTarget.id}`, { headers: getAuthHeaders() });
-      setSubscriptions((current) => current.filter((row) => row.id !== deleteTarget.id));
-      if (selectedSubscription?.id === deleteTarget.id) {
-        setSelectedSubscription(null);
-      }
+      await axios.delete(`${INVENTORY_URL}/${deleteTarget.id}`, { headers: getAuthHeaders(), params: { etag: deleteTarget.etag || undefined } });
       setDeleteTarget(null);
-      setDeleteSuccessMessage(`${deletedName} was deleted.`);
-    } catch (deleteError) {
-      if (handleUnauthorized(deleteError)) {
-        return;
-      }
-      setDeleteError(getApiErrorMessage(deleteError, "Unable to delete subscription."));
-    } finally {
-      setIsDeleting(false);
-    }
+      setSuccess("Service deleted from Dynamics.");
+      await load();
+    } catch (err) {
+      if (!handleUnauthorized(err)) setFormError(getApiErrorMessage(err, "Unable to delete the service from Dynamics."));
+    } finally { setSaving(false); }
   }
-
-  if (isLoading) {
-    return (
-      <Stack alignItems="center" spacing={2} sx={{ py: 8 }}>
-        <CircularProgress />
-        <Typography color="text.secondary">Loading software subscriptions...</Typography>
-      </Stack>
-    );
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const response = await axios.get(`${API_BASE_URL}/software-subscriptions/inventory`, {
+        headers: getAuthHeaders(), params: { limit: 5000 },
+      });
+      setRows(response.data.data || []);
+      setPage(0);
+    } catch (err) {
+      if (!handleUnauthorized(err)) setError(getApiErrorMessage(err, "Unable to load software inventory from Dynamics."));
+    } finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const statuses = useMemo(() => [...new Set(rows.map(row => row.status).filter(Boolean))].sort(), [rows]);
+  const filtered = useMemo(() => rows.filter(row =>
+    (!status || row.status === status) && columns.some(column =>
+      displayValue(row, column.key).toLowerCase().includes(query.toLowerCase())
+    )
+  ).sort((a, b) => String(a[sort.key] || "").localeCompare(String(b[sort.key] || ""), undefined, { numeric: true }) * (sort.direction === "asc" ? 1 : -1)), [rows, status, query, sort]);
+  function exportCsv() {
+    const escape = value => `"${String(value).replace(/"/g, '""')}"`;
+    const csv = [columns.map(column => column.label), ...filtered.map(row => columns.map(column => displayValue(row, column.key)))]
+      .map(row => row.map(value => escape(/^[=+\-@\t\r]/.test(String(value)) ? `'${value}` : value)).join(",")).join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "software-inventory.csv";
+    anchor.click();
+    URL.revokeObjectURL(url);
   }
-
-  if (error && !hasSubscriptions) {
-    return (
-      <Stack spacing={2.5}>
-        <Alert severity="error">
-          {error}
-        </Alert>
-        <EmptyState
-          actionLabel="Retry"
-          description="The software inventory could not be loaded. Check your connection and try again."
-          icon="refresh"
-          onAction={() => fetchSubscriptions()}
-          title="Unable to load software inventory"
-        />
-      </Stack>
-    );
-  }
-
-  return (
-    <Stack spacing={2.5}>
-      {error ? <Alert severity="error">{error}</Alert> : null}
-
-      <Box
-        sx={{
-          display: "grid",
-          gap: 2,
-          gridTemplateColumns: {
-            xs: "1fr",
-            sm: "repeat(2, minmax(0, 1fr))",
-            lg: "repeat(4, minmax(0, 1fr))",
-          },
-        }}
-      >
-        <SummaryCard
-          helper="Subscriptions marked Active"
-          label="Total Active Subscriptions"
-          value={activeCount.toLocaleString()}
-        />
-        <SummaryCard
-          helper="Across current subscriptions"
-          label="Total Monthly Cost"
-          value={formatCurrency(getCurrentMonthlyCostTotal(subscriptions))}
-        />
-        <SummaryCard
-          helper="Pending renewal or due within 90 days"
-          label="Upcoming Renewals"
-          value={upcomingRenewalCount.toLocaleString()}
-        />
-        <SummaryCard
-          helper="Missing vendor rep or point of contact"
-          label="Missing Vendor / Contact"
-          value={missingVendorOrContactCount.toLocaleString()}
-        />
-      </Box>
-
-      <Paper
-        elevation={0}
-        sx={{
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: 2,
-          overflow: "hidden",
-        }}
-      >
-        <Stack
-          alignItems={{ xs: "stretch", lg: "center" }}
-          direction={{ xs: "column", lg: "row" }}
-          justifyContent="space-between"
-          spacing={2}
-          sx={{ borderBottom: "1px solid", borderColor: "divider", p: 2 }}
-        >
-          <Box>
-            <Stack alignItems="center" direction="row" spacing={1}>
-              <Typography color="text.primary" fontWeight={800}>
-                Subscription Inventory
-              </Typography>
-              {isRefreshing ? <CircularProgress size={16} /> : null}
-            </Stack>
-            <Typography color="text.secondary" variant="body2">
-              {isRefreshing
-                ? "Updating subscription records in the background."
-                : "Track ownership, access, cost history, renewals, vendor contacts, and notes."}
-            </Typography>
-          </Box>
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            flexWrap="wrap"
-            gap={1}
-            sx={{ flexShrink: 0 }}
-          >
-            <Button disabled={isRefreshing} onClick={() => fetchSubscriptions({ silent: true })} variant="outlined">
-              {isRefreshing ? "Refreshing" : "Refresh"}
-            </Button>
-            <Button disabled={sortedRows.length === 0} onClick={exportInventoryCsv} variant="outlined">
-              Export CSV
-            </Button>
-            <Button onClick={openCreateDialog} variant="contained">
-              Add Subscription
-            </Button>
-          </Stack>
-        </Stack>
-
-        <Stack spacing={2} sx={{ borderBottom: "1px solid", borderColor: "divider", p: { xs: 2, md: 2.5 } }}>
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
-            <TextField
-              fullWidth
-              label="Search inventory"
-              placeholder="Search software, vendors, categories, departments, or notes"
-              onChange={(event) => setQuery(event.target.value)}
-              size="small"
-              value={query}
-            />
-            <Button
-              disabled={!hasActiveFilters}
-              onClick={clearFilters}
-              variant="text"
-              sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
-            >
-              Clear Filters
-            </Button>
-          </Stack>
-          <Box
-            sx={{
-              display: "grid",
-              gap: 2,
-              gridTemplateColumns: {
-                xs: "minmax(0, 1fr)",
-                sm: "repeat(2, minmax(0, 1fr))",
-                md: "repeat(3, minmax(0, 1fr))",
-              },
-              "@media (min-width: 1800px)": {
-                gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
-              },
-            }}
-          >
-            <FormControl fullWidth size="small" sx={{ minWidth: 0 }}>
-              <InputLabel id="software-status-filter-label">Status</InputLabel>
-              <Select
-                label="Status"
-                labelId="software-status-filter-label"
-                onChange={(event) => setStatusFilter(event.target.value)}
-                value={statusFilter}
-              >
-                <MenuItem value={ALL_FILTER_VALUE}>All Statuses</MenuItem>
-                {STATUS_OPTIONS.map((status) => (
-                  <MenuItem key={status} value={status}>
-                    {status}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <FormControl fullWidth size="small" sx={{ minWidth: 0 }}>
-              <InputLabel id="software-category-filter-label">Category</InputLabel>
-              <Select
-                label="Category"
-                labelId="software-category-filter-label"
-                onChange={(event) => setCategoryFilter(event.target.value)}
-                value={categoryFilter}
-              >
-                <MenuItem value={ALL_FILTER_VALUE}>All Categories</MenuItem>
-                {categoryOptions.map((category) => (
-                  <MenuItem key={category} value={category}>
-                    {category}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <FormControl fullWidth size="small" sx={{ minWidth: 0 }}>
-              <InputLabel id="software-department-filter-label">Department</InputLabel>
-              <Select
-                label="Department"
-                labelId="software-department-filter-label"
-                onChange={(event) => setDepartmentFilter(event.target.value)}
-                value={departmentFilter}
-              >
-                <MenuItem value={ALL_FILTER_VALUE}>All Departments</MenuItem>
-                {departmentOptions.map((department) => (
-                  <MenuItem key={department} value={department}>
-                    {department}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <FormControl fullWidth size="small" sx={{ minWidth: 0 }}>
-              <InputLabel id="software-billing-filter-label">Billing</InputLabel>
-              <Select
-                label="Billing"
-                labelId="software-billing-filter-label"
-                onChange={(event) => setBillingFrequencyFilter(event.target.value)}
-                value={billingFrequencyFilter}
-              >
-                <MenuItem value={ALL_FILTER_VALUE}>All Billing</MenuItem>
-                {billingFrequencyOptions.map((frequency) => (
-                  <MenuItem key={frequency} value={frequency}>
-                    {frequency}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <FormControl fullWidth size="small" sx={{ minWidth: 0 }}>
-              <InputLabel id="software-renewal-filter-label">Renewal Time Frame</InputLabel>
-              <Select
-                label="Renewal Time Frame"
-                labelId="software-renewal-filter-label"
-                onChange={(event) => setRenewalFilter(event.target.value)}
-                value={renewalFilter}
-              >
-                <MenuItem value={ALL_FILTER_VALUE}>All Renewals</MenuItem>
-                {renewalOptions.map((renewal) => (
-                  <MenuItem key={renewal} value={renewal}>
-                    {renewal}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <FormControl fullWidth size="small" sx={{ minWidth: 0 }}>
-              <InputLabel id="software-quick-filter-label">Missing Info</InputLabel>
-              <Select
-                label="Missing Info"
-                labelId="software-quick-filter-label"
-                onChange={(event) => setQuickFilter(event.target.value)}
-                value={quickFilter}
-              >
-                <MenuItem value={ALL_FILTER_VALUE}>All Records</MenuItem>
-                {QUICK_FILTER_OPTIONS.map((option) => (
-                  <MenuItem key={option.value} value={option.value}>
-                    {option.label}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          </Box>
-        </Stack>
-
-        {!hasSubscriptions ? (
-          <EmptyState
-            actionLabel="Add Subscription"
-            description="Create the first software subscription to start tracking ownership, billing, and renewals."
-            icon="inbox"
-            onAction={openCreateDialog}
-            title="No software subscriptions yet"
-          />
-        ) : sortedRows.length === 0 ? (
-          <EmptyState
-            actionLabel={hasActiveFilters ? "Clear Filters" : undefined}
-            description="No software subscriptions match the current search, filters, or missing-info quick filter."
-            icon="search"
-            onAction={hasActiveFilters ? clearFilters : undefined}
-            title="No matching subscriptions"
-          />
-        ) : (
-          <>
-            <TableContainer sx={{ overflowX: "auto" }}>
-              <Table stickyHeader sx={{ minWidth: 2300 }}>
-                <TableHead>
-                  <TableRow>
-                    {columns.map((column) => (
-                      <TableCell
-                        align={column.align || "left"}
-                        key={column.key}
-                        sx={{
-                          ...subtleTableHeadCellSx,
-                          minWidth: column.minWidth,
-                          top: 0,
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {column.sortable ? (
-                          <TableSortLabel
-                            active={sortKey === column.key}
-                            direction={sortKey === column.key ? sortDirection : DEFAULT_SORT_DIRECTION}
-                            onClick={() => handleSort(column.key)}
-                            sx={{
-                              "& .MuiTableSortLabel-icon": { color: "primary.main !important" },
-                            }}
-                          >
-                            {column.label}
-                          </TableSortLabel>
-                        ) : (
-                          column.label
-                        )}
-                      </TableCell>
-                    ))}
-                    <TableCell sx={{ ...subtleTableHeadCellSx, minWidth: 220, top: 0 }}>
-                      Actions
-                    </TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {paginatedRows.map((row) => (
-                    <TableRow
-                      hover
-                      key={row.id}
-                      onClick={() => setSelectedSubscription(row)}
-                      sx={{ cursor: "pointer", ...getRenewalRowSx(row) }}
-                    >
-                      {columns.map((column) => (
-                        <TableCell
-                          align={column.align || "left"}
-                          key={column.key}
-                          sx={{
-                            minWidth: column.minWidth,
-                            verticalAlign: "top",
-                            whiteSpace: column.key.startsWith("cost") ? "nowrap" : "normal",
-                          }}
-                        >
-                          {column.key === "status" ? (
-                            <StatusChip status={row.status} />
-                          ) : column.key === "renewal_risk" ? (
-                            <RenewalRiskChip row={row} />
-                          ) : column.key === "current_monthly_cost" ? (
-                            <Typography color="text.primary" variant="body2">
-                              {formatCurrency(getCurrentMonthlyCost(row))}
-                            </Typography>
-                          ) : column.key === "cost_2026_2027" ? (
-                            <Typography color="text.primary" variant="body2">
-                              {formatCurrency(getCurrentAnnualCost(row))}
-                            </Typography>
-                          ) : column.key === "renewal_date" ? (
-                            <Typography
-                              color={row.renewal_date ? "text.primary" : "text.disabled"}
-                              variant="body2"
-                            >
-                              {formatDate(row.renewal_date)}
-                            </Typography>
-                          ) : (
-                            <Typography
-                              color={row[column.key] ? "text.primary" : "text.disabled"}
-                              variant="body2"
-                            >
-                              {row[column.key] || "-"}
-                            </Typography>
-                          )}
-                        </TableCell>
-                      ))}
-                      <TableCell
-                        onClick={(event) => event.stopPropagation()}
-                        sx={{ minWidth: 220, verticalAlign: "top" }}
-                      >
-                        <Stack direction="row" spacing={0.75}>
-                          <Button size="small" onClick={() => setSelectedSubscription(row)} variant="outlined">
-                            View
-                          </Button>
-                          <Button
-                            size="small"
-                            onClick={() => {
-                              setDeleteError("");
-                              setDeleteTarget(row);
-                            }}
-                            color="error"
-                            variant="outlined"
-                          >
-                            Delete
-                          </Button>
-                          <Button
-                            size="small"
-                            onClick={() => {
-                              setSelectedSubscription(row);
-                              openEditDialog(row);
-                            }}
-                            variant="outlined"
-                          >
-                            Edit
-                          </Button>
-                        </Stack>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-
-            <TablePagination
-              component="div"
-              count={sortedRows.length}
-              onPageChange={(_event, nextPage) => setPage(nextPage)}
-              onRowsPerPageChange={(event) => {
-                setRowsPerPage(Number(event.target.value));
-                setPage(0);
-              }}
-              page={page}
-              rowsPerPage={rowsPerPage}
-              rowsPerPageOptions={ROWS_PER_PAGE_OPTIONS}
-            />
-          </>
-        )}
-      </Paper>
-
-      <Drawer
-        anchor="right"
-        onClose={() => setSelectedSubscription(null)}
-        open={Boolean(selectedSubscription)}
-        PaperProps={{
-          sx: { maxWidth: "100%", width: { xs: "100%", sm: 520 } },
-        }}
-      >
-        {selectedSubscription ? (
-          <Stack sx={{ height: "100%" }}>
-            <Stack
-              alignItems="flex-start"
-              direction="row"
-              justifyContent="space-between"
-              spacing={2}
-              sx={{ borderBottom: "1px solid", borderColor: "divider", p: 3 }}
-            >
-              <Box sx={{ minWidth: 0 }}>
-                <Typography color="text.primary" component="h3" variant="h5">
-                  {selectedSubscription.name}
-                </Typography>
-                <Box sx={{ mt: 1 }}>
-                  <Stack direction="row" flexWrap="wrap" gap={1}>
-                    <StatusChip status={selectedSubscription.status} />
-                    <RenewalRiskChip row={selectedSubscription} />
-                  </Stack>
-                </Box>
-              </Box>
-              <IconButton aria-label="Close details" onClick={() => setSelectedSubscription(null)}>
-                <AppIcon name="close" />
-              </IconButton>
-            </Stack>
-            <Stack spacing={2} sx={{ flex: 1, overflowY: "auto", p: 3 }}>
-              {detailFields.map(([label, key, format]) => (
-                <Box key={key}>
-                  <Typography color="text.secondary" variant="overline">
-                    {label}
-                  </Typography>
-                  {format === "long_text" ? (
-                    <Box
-                      sx={{
-                        bgcolor: "action.hover",
-                        border: "1px solid",
-                        borderColor: "divider",
-                        borderRadius: 1,
-                        mt: 0.5,
-                        p: 1.5,
-                      }}
-                    >
-                      <Typography
-                        color={selectedSubscription[key] ? "text.primary" : "text.disabled"}
-                        sx={{ lineHeight: 1.7, whiteSpace: "pre-wrap", wordBreak: "break-word" }}
-                        variant="body2"
-                      >
-                        {selectedSubscription[key] || "-"}
-                      </Typography>
-                    </Box>
-                  ) : (
-                    <Typography color="text.primary" sx={{ whiteSpace: "pre-wrap" }} variant="body2">
-                      {getDetailFieldValue(selectedSubscription, key, format)}
-                    </Typography>
-                  )}
-                </Box>
-              ))}
-            </Stack>
-            <Stack direction="row" spacing={1} sx={{ borderTop: "1px solid", borderColor: "divider", p: 2 }}>
-              <Button fullWidth onClick={() => openEditDialog(selectedSubscription)} variant="contained">
-                Edit
-              </Button>
-              <Button
-                color="error"
-                fullWidth
-                onClick={() => {
-                  setDeleteError("");
-                  setDeleteTarget(selectedSubscription);
-                }}
-                variant="outlined"
-              >
-                Delete
-              </Button>
-            </Stack>
-          </Stack>
-        ) : null}
-      </Drawer>
-
-      <SubscriptionFormDialog
-        error={formError}
-        form={form}
-        formErrors={formErrors}
-        mode={formDialogMode}
-        onChange={updateFormField}
-        onClose={closeFormDialog}
-        onSubmit={saveSubscription}
-        open={Boolean(formDialogMode)}
-        saving={isSaving}
-      />
-
-      <Dialog
-        fullWidth
-        maxWidth="xs"
-        onClose={
-          isDeleting
-            ? undefined
-            : () => {
-                setDeleteError("");
-                setDeleteTarget(null);
-              }
-        }
-        open={Boolean(deleteTarget)}
-      >
-        <DialogTitle>Delete Subscription</DialogTitle>
-        <DialogContent dividers>
-          <Stack spacing={2}>
-            {deleteError ? <Alert severity="error">{deleteError}</Alert> : null}
-            <Typography color="text.primary" fontWeight={800}>
-              {deleteTarget?.name || "Selected subscription"}
-            </Typography>
-            <Typography color="text.secondary" variant="body2">
-              This will permanently delete the software subscription record from the inventory.
-            </Typography>
-            <Alert severity="warning">
-              This action cannot be undone.
-            </Alert>
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button
-            disabled={isDeleting}
-            onClick={() => {
-              setDeleteError("");
-              setDeleteTarget(null);
-            }}
-            variant="outlined"
-          >
-            Cancel
-          </Button>
-          <Button color="error" disabled={isDeleting} onClick={deleteSubscription} variant="contained">
-            {isDeleting ? "Deleting" : "Delete Subscription"}
-          </Button>
-        </DialogActions>
-      </Dialog>
-      <Snackbar
-        autoHideDuration={4000}
-        onClose={() => setDeleteSuccessMessage("")}
-        open={Boolean(deleteSuccessMessage)}
-      >
-        <Alert
-          onClose={() => setDeleteSuccessMessage("")}
-          severity="success"
-          sx={{ width: "100%" }}
-        >
-          {deleteSuccessMessage}
-        </Alert>
-      </Snackbar>
+  return <Stack spacing={2}>
+    {success && <Alert severity="success" onClose={() => setSuccess("")}>{success}</Alert>}
+    {error && <Alert severity="error">{error}</Alert>}
+    <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems="center">
+      <Typography fontWeight={800} sx={{ flexGrow: 1 }}>Software Inventory · {rows.length} services</Typography>
+      <Button variant="contained" disabled={loading || saving} onClick={() => openEditor()}>Add Service</Button>
+      <Button variant="outlined" disabled={loading || saving} onClick={load}>Refresh</Button>
+      <Button variant="outlined" disabled={!filtered.length} onClick={exportCsv}>Export CSV</Button>
     </Stack>
-  );
+    <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+      <TextField fullWidth size="small" label="Search inventory" value={query} onChange={event => { setQuery(event.target.value); setPage(0); }} />
+      <TextField select size="small" label="Service Status" sx={{ minWidth: 220 }} value={status} onChange={event => { setStatus(event.target.value); setPage(0); }}>
+        <MenuItem value="">All statuses</MenuItem>
+        {statuses.map(value => <MenuItem key={value} value={value}>{value}</MenuItem>)}
+      </TextField>
+    </Stack>
+    {loading && <Stack alignItems="center"><CircularProgress size={24} /></Stack>}
+    <Paper variant="outlined">
+      <TableContainer>
+        <Table size="small" sx={{ minWidth: 1800 }}>
+          <TableHead><TableRow>{columns.map(column => <TableCell key={column.key} sx={{ ...subtleTableHeadCellSx, minWidth: column.key === "description" ? 260 : 160 }}>
+            <TableSortLabel active={sort.key === column.key} direction={sort.key === column.key ? sort.direction : "asc"} onClick={() => setSort({ key: column.key, direction: sort.key === column.key && sort.direction === "asc" ? "desc" : "asc" })}>{column.label}</TableSortLabel>
+          </TableCell>)}<TableCell sx={subtleTableHeadCellSx}>Actions</TableCell></TableRow></TableHead>
+          <TableBody>
+            {filtered.slice(page * pageSize, (page + 1) * pageSize).map(row => <TableRow key={row.id} hover>{columns.map(column => <TableCell key={column.key} sx={{ verticalAlign: "top", whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxWidth: 340 }}>{displayValue(row, column.key) || "—"}</TableCell>)}<TableCell sx={{ whiteSpace: "nowrap" }}>
+              <Button disabled={saving} onClick={() => openEditor(row)}>Edit</Button>
+              <Button color="error" disabled={saving} onClick={() => { setFormError(""); setDeleteTarget(row); }}>Delete</Button>
+            </TableCell></TableRow>)}
+            {!loading && !filtered.length && <TableRow><TableCell colSpan={columns.length + 1} align="center">{error ? "Inventory unavailable. Use Refresh to retry." : "No services found."}</TableCell></TableRow>}
+          </TableBody>
+        </Table>
+      </TableContainer>
+      <TablePagination component="div" count={filtered.length} page={page} rowsPerPage={pageSize} rowsPerPageOptions={[10, 25, 50, 100]} onPageChange={(_, value) => setPage(value)} onRowsPerPageChange={event => { setPageSize(Number(event.target.value)); setPage(0); }} />
+    </Paper>
+    <Dialog open={Boolean(editor)} onClose={() => { if (!saving) setEditor(null); }} fullWidth maxWidth="md">
+      <DialogTitle>{editor?.row ? "Edit Service" : "Add Service"}</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} sx={{ pt: 1 }}>
+          {formError && <Alert severity="error">{formError}</Alert>}
+          {!fields && !formError && <CircularProgress size={24} />}
+          {fields && columns.map(column => {
+            const field = fields[column.key];
+            const disabled = saving || !field[editor?.row ? "update" : "create"];
+            const required = field.required || column.key === "name";
+            const change = (value, label) => { setValues(current => ({ ...current, [column.key]: value })); if (label !== undefined) setLabels(current => ({ ...current, [column.key]: label })); };
+            if (column.key === "current_service_term") return <ServiceTermField key={column.key}
+              value={values[column.key]} label={labels[column.key]} disabled={disabled} required={required} onChange={change} />;
+            if (!editor?.row && ["vendor", "primary_vendor_contact"].includes(column.key)) {
+              const lookup = ["Lookup", "Customer", "Owner"].includes(field.type);
+              return <TextField key={column.key} label={column.label} disabled={disabled} required={required}
+                value={lookup ? values[column.key]?.name || "" : values[column.key] || ""}
+                helperText={lookup ? "Enter the exact name of an existing Dynamics record" : undefined}
+                onChange={event => change(lookup ? (event.target.value ? { name: event.target.value } : null) : event.target.value)} />;
+            }
+            if (["Lookup", "Customer", "Owner"].includes(field.type)) return <LookupField key={column.key} column={column} value={values[column.key]} label={labels[column.key]} onChange={change} disabled={disabled} required={required} />;
+            const choice = field.type === "Picklist";
+            const date = field.type === "DateTime";
+            const value = values[column.key] ?? "";
+            return <TextField key={column.key} label={column.label} disabled={disabled} required={required}
+              select={choice} type={date ? "date" : "text"} slotProps={date ? { inputLabel: { shrink: true } } : undefined}
+              multiline={["description", "access_details"].includes(column.key)} minRows={["description", "access_details"].includes(column.key) ? 3 : undefined}
+              value={date ? String(value).slice(0, 10) : value}
+              onChange={event => change(choice ? (event.target.value === "" ? null : Number(event.target.value)) : event.target.value)}>
+              {choice && <MenuItem value="">None</MenuItem>}
+              {choice && field.options.map(option => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
+            </TextField>;
+          })}
+        </Stack>
+      </DialogContent>
+      <DialogActions><Button disabled={saving} onClick={() => setEditor(null)}>Cancel</Button><Button variant="contained" disabled={saving || !fields} onClick={save}>{saving ? "Saving…" : "Save to Dynamics"}</Button></DialogActions>
+    </Dialog>
+    <Dialog open={Boolean(deleteTarget)} onClose={() => { if (!saving) setDeleteTarget(null); }}>
+      <DialogTitle>Delete Service</DialogTitle>
+      <DialogContent><Stack spacing={2}>{formError && <Alert severity="error">{formError}</Alert>}<Typography>Delete {deleteTarget?.name} from Dynamics? This permanently deletes the service record.</Typography></Stack></DialogContent>
+      <DialogActions><Button disabled={saving} onClick={() => setDeleteTarget(null)}>Cancel</Button><Button color="error" variant="contained" disabled={saving} onClick={remove}>{saving ? "Deleting…" : "Delete from Dynamics"}</Button></DialogActions>
+    </Dialog>
+  </Stack>;
 }

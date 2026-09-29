@@ -1,3 +1,5 @@
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -21,7 +23,21 @@ from .routes.organizations import router as organizations_router
 from .routes.quickbooks import router as quickbooks_router
 from .routes.software_subscriptions import router as software_subscriptions_router
 
-app = FastAPI()
+from .services.newsletter import run_snapshot_scheduler
+
+
+@asynccontextmanager
+async def lifespan(app):
+    newsletter_task = asyncio.create_task(run_snapshot_scheduler())
+    try:
+        yield
+    finally:
+        newsletter_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await newsletter_task
+
+
+app = FastAPI(lifespan=lifespan)
 initialize_database()
 
 MODULE_PATH_RULES = [

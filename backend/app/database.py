@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 import os
 import re
 from contextlib import contextmanager
@@ -246,6 +248,46 @@ def initialize_database(force: bool = False):
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
+        )
+        wrapped.execute(
+            """
+            CREATE TABLE IF NOT EXISTS newsletter_subscriber_snapshots (
+                segment_definition_id TEXT NOT NULL,
+                month_key TEXT NOT NULL,
+                subscriber_count INTEGER NOT NULL CHECK (subscriber_count >= 0),
+                captured_at TEXT NOT NULL,
+                segment_name TEXT NOT NULL,
+                PRIMARY KEY (segment_definition_id, month_key)
+            )
+            """
+        )
+        # Verified initial observation, not reconstructed subscriber history.
+        baseline = json.loads((Path(__file__).parent / "data" / "newsletter_initial_snapshot.json").read_text())
+        wrapped.execute(
+            """INSERT INTO newsletter_subscriber_snapshots
+               (segment_definition_id, month_key, subscriber_count, captured_at, segment_name)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT (segment_definition_id, month_key) DO NOTHING""",
+            (baseline["segment_definition_id"], baseline["month_key"], baseline["subscriber_count"],
+             baseline["captured_at"], baseline["segment_name"]),
+        )
+        wrapped.execute(
+            """CREATE TABLE IF NOT EXISTS newsletter_subscriber_observations (
+                segment_definition_id TEXT NOT NULL,
+                snapshot_key TEXT NOT NULL,
+                subscriber_count INTEGER NOT NULL CHECK (subscriber_count >= 0),
+                captured_at TEXT NOT NULL,
+                segment_name TEXT NOT NULL,
+                PRIMARY KEY (segment_definition_id, snapshot_key)
+            )"""
+        )
+        # Preserve the initial observation and any previously recorded monthly history.
+        wrapped.execute(
+            """INSERT INTO newsletter_subscriber_observations
+               (segment_definition_id, snapshot_key, subscriber_count, captured_at, segment_name)
+               SELECT segment_definition_id, 'legacy:' || captured_at, subscriber_count, captured_at, segment_name
+               FROM newsletter_subscriber_snapshots
+               ON CONFLICT (segment_definition_id, snapshot_key) DO NOTHING"""
         )
         wrapped.execute(
             """
