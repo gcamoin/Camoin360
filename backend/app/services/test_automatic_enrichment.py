@@ -51,6 +51,37 @@ class AutomaticEnrichmentPolicyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(field_updates, expected_updates or {})
         self.assertEqual(result["fields_updated"], list(field_updates))
 
+    async def test_naics_only_updates_blank_values_in_metadata_patch(self):
+        for blank, value in ((None, 511210), ("", "511210"), ("   ", " 511210 ")):
+            with self.subTest(blank=blank, value=value):
+                self.account = {"name": "Acme", "cr73c_enrichmentattempted": False,
+                                "cr73c_naicscode": blank}
+                self.update.reset_mock()
+                self.provider.return_value = {"cr73c_naicscode": value}
+                result = await dynamics.enrich_one_account("account-1")
+                self.assert_completed(result, "updated", {"cr73c_naicscode": "511210"})
+                self.assertIn("cr73c_naicscode", self.get_account.await_args.args[1].split(","))
+
+    async def test_existing_naics_is_preserved(self):
+        self.account["cr73c_naicscode"] = "541511"
+        self.provider.return_value = {"cr73c_naicscode": "511210"}
+        result = await dynamics.enrich_one_account("account-1")
+        self.assert_completed(result, "no_updates_needed")
+        self.assertEqual(self.account["cr73c_naicscode"], "541511")
+
+    async def test_missing_invalid_naics_does_not_interfere_with_other_fields(self):
+        for fields in [{}, *({"cr73c_naicscode": v} for v in
+                            (None, "", "Technology", "51121", "511210.0", 511210.0, True, [], {}))]:
+            with self.subTest(fields=fields):
+                self.account = {"name": "Acme", "cr73c_enrichmentattempted": False}
+                self.update.reset_mock()
+                expected = {"websiteurl": "https://acme.example", "telephone1": "555-0100",
+                            "address1_city": "Cambridge", "address1_postalcode": "02141"}
+                self.provider.return_value = {**expected, **fields}
+                result = await dynamics.enrich_one_account("account-1")
+                self.assert_completed(result, "updated", expected)
+                self.assertNotIn("cr73c_naicscode", self.account)
+
     async def test_account_retrieval_failure_leaves_account_retryable(self):
         self.get_account.side_effect = RuntimeError("Dynamics unavailable")
         result = await dynamics.enrich_one_account("account-1")
@@ -124,6 +155,87 @@ class AutomaticEnrichmentPolicyTest(unittest.IsolatedAsyncioTestCase):
         result = await dynamics.enrich_one_account("account-1")
         self.assert_completed(result, "updated", {"websiteurl": "https://acme.example"})
         self.get_account.assert_awaited_once_with("account-1", dynamics.ENRICHMENT_ACCOUNT_FIELDS)
+
+    async def test_postal_text_formats_and_blank_dynamics_values(self):
+        for blank, postal, expected in (
+            (None, "02141", "02141"),
+            ("", " 02141 ", "02141"),
+            ("   ", "02141-1234", "02141-1234"),
+            (None, " SW1A 1AA ", "SW1A 1AA"),
+        ):
+            with self.subTest(blank=blank, postal=postal):
+                self.account = {"name": "Acme", "cr73c_enrichmentattempted": False,
+                                "websiteurl": "https://acme.example", "address1_postalcode": blank}
+                self.update.reset_mock()
+                self.provider.return_value = {"websiteurl": "https://acme.example", "address1_postalcode": postal}
+                result = await dynamics.enrich_one_account("account-1")
+                self.assert_completed(result, "updated", {"address1_postalcode": expected})
+                self.assertIsInstance(self.account["address1_postalcode"], str)
+        self.assertIn("address1_postalcode", self.get_account.await_args.args[1].split(","))
+
+    async def test_populated_postal_is_preserved(self):
+        self.account["address1_postalcode"] = "12866"
+        self.provider.return_value = {"address1_postalcode": "02141"}
+        result = await dynamics.enrich_one_account("account-1")
+        self.assert_completed(result, "no_updates_needed")
+        self.assertEqual(self.account["address1_postalcode"], "12866")
+
+    async def test_unusable_postal_does_not_interfere_with_other_fields(self):
+        cases = [{}, *({"address1_postalcode": value} for value in (
+            None, "", "   ", 2141, 0, True, {}, [],
+        ))]
+        for postal_fields in cases:
+            with self.subTest(postal_fields=postal_fields):
+                self.account = {"name": "Acme", "cr73c_enrichmentattempted": False}
+                self.update.reset_mock()
+                self.provider.return_value = {"websiteurl": "https://acme.example", **postal_fields}
+                result = await dynamics.enrich_one_account("account-1")
+                self.assert_completed(result, "updated", {"websiteurl": "https://acme.example"})
+                self.assertNotIn("address1_postalcode", self.account)
+
+    async def test_only_invalid_postal_does_not_produce_field_update(self):
+        self.provider.return_value = {"address1_postalcode": 2141}
+        result = await dynamics.enrich_one_account("account-1")
+        self.assert_completed(result, "no_updates_needed")
+
+    async def test_existing_fields_and_postal_share_one_patch(self):
+        expected = {
+            "websiteurl": "https://acme.example", "telephone1": "555-0100",
+            "description": "Company description", "numberofemployees": 1200,
+            "address1_city": "Cambridge", "address1_stateorprovince": "Massachusetts",
+            "address1_country": "United States", "address1_postalcode": "02141",
+            "cr73c_naicscode": "511210",
+        }
+        self.provider.return_value = {**expected, "numberofemployees": "1,200"}
+        result = await dynamics.enrich_one_account("account-1")
+        self.assert_completed(result, "updated", expected)
+
+    async def test_all_existing_fields_are_preserved_while_postal_is_added(self):
+        existing = {
+            "websiteurl": "https://human.example", "telephone1": "555-9999",
+            "description": "Human description", "numberofemployees": 0,
+            "address1_city": "Saratoga Springs", "address1_stateorprovince": "NY",
+            "address1_country": "United States",
+        }
+        self.account.update(existing)
+        self.provider.return_value = {
+            "websiteurl": "https://provider.example", "telephone1": "555-0100",
+            "description": "Provider description", "numberofemployees": 1200,
+            "address1_city": "Cambridge", "address1_stateorprovince": "MA",
+            "address1_country": "Canada", "address1_postalcode": "02141",
+        }
+        result = await dynamics.enrich_one_account("account-1")
+        self.assert_completed(result, "updated", {"address1_postalcode": "02141"})
+        for field, value in existing.items():
+            self.assertEqual(self.account[field], value)
+
+    async def test_shared_mapping_does_not_broaden_manual_updates(self):
+        self.provider.return_value = {"address1_postalcode": "02141", "cr73c_naicscode": "511210"}
+        with patch.object(dynamics, "increment_processed"), patch.object(dynamics, "load_usage", return_value={"credits_used": 0}):
+            result = await dynamics.enrich_account("account-1")
+        self.assertFalse(result["updated"])
+        self.update.assert_not_awaited()
+
 
     async def test_already_attempted_account_never_reaches_provider(self):
         self.account["cr73c_enrichmentattempted"] = True

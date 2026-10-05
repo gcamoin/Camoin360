@@ -15,7 +15,7 @@ from ..database import get_database_connection
 from .reporting_period import matches_reporting_date
 from .auth import get_access_token
 from .metrics import increment_processed, log_update
-from .seamless import enrich_with_seamless
+from .seamless import enrich_with_seamless, normalize_naics_code
 from .usage import can_make_request, increment_usage, load_usage, WEEKLY_LIMIT
 from .locations import normalize_country_group, normalize_state_province
 
@@ -4344,8 +4344,8 @@ async def update_account(account_id: str, updates: dict):
 
 ENRICHMENT_ACCOUNT_FIELDS = (
     "accountid,name,websiteurl,telephone1,description,numberofemployees,"
-    "address1_city,address1_stateorprovince,address1_country,"
-    "cr73c_enrichmentattempted"
+    "address1_city,address1_stateorprovince,address1_country,address1_postalcode,"
+    "cr73c_naicscode,cr73c_enrichmentattempted"
 )
 ENRICHMENT_FIELD_NAMES = (
     "websiteurl",
@@ -4355,6 +4355,8 @@ ENRICHMENT_FIELD_NAMES = (
     "address1_city",
     "address1_stateorprovince",
     "address1_country",
+    "address1_postalcode",
+    "cr73c_naicscode",
 )
 
 
@@ -4363,6 +4365,13 @@ def _is_blank(value: object) -> bool:
 
 
 def _normalise_enrichment_value(field_name: str, value: object) -> object | None:
+    if field_name == "cr73c_naicscode":
+        return normalize_naics_code(value)
+    if field_name == "address1_postalcode":
+        # Postal codes are text; converting numbers would lose leading zeros.
+        if not isinstance(value, str):
+            return None
+        return value.strip() or None
     if _is_blank(value):
         return None
     if field_name == "numberofemployees":

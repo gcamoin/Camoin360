@@ -58,6 +58,57 @@ class MatchConfidenceTest(unittest.TestCase):
 
 
 class SparseCompanyMatchTest(unittest.IsolatedAsyncioTestCase):
+    async def test_naics_mapping_uses_only_selected_company_actual_code(self):
+        cases = [(511210, "511210"), ("511210", "511210"),
+                 (" 511210 ", "511210"), (None, None), ("", None),
+                 ("Technology", None), (51121, None), ("511210.0", None),
+                 (511210.0, None), (True, None), ([511210], None),
+                 ("５１１２１０", None), ({"code": 511210}, None)]
+        for value, expected in cases + [("missing", None)]:
+            with self.subTest(value=value):
+                candidate = {"name": "Acme", "domain": "acme.example",
+                             "sicCode": "511210", "industries": ["511210"]}
+                if value != "missing":
+                    candidate["naicsCode"] = value
+                response = MagicMock(status_code=200, headers={})
+                response.json.return_value = {"data": [
+                    {"name": "Different Business", "domain": "other.example", "naicsCode": 541511},
+                    candidate]}
+                client = AsyncMock()
+                client.__aenter__.return_value = client
+                client.post.return_value = response
+                with patch.object(seamless, "SEAMLESS_API_KEY", "test-key"), patch.object(seamless.httpx, "AsyncClient", return_value=client):
+                    result = await seamless.enrich_with_seamless({"name": "Acme"})
+                self.assertEqual(result["cr73c_naicscode"], expected)
+                client.post.assert_awaited_once()
+
+    async def test_maps_postal_code_from_selected_company_without_extra_request(self):
+        cases = [
+            ({"postCode": "02141"}, "02141"),
+            ({}, None),
+            ({"postCode": None}, None),
+            ({"postCode": ""}, ""),
+            ({"postCode": "   "}, "   "),
+        ]
+        for postal_fields, expected in cases:
+            with self.subTest(postal_fields=postal_fields):
+                response = MagicMock(status_code=200, headers={})
+                response.json.return_value = {"data": [
+                    {"name": "Different Business", "domain": "other.example", "postCode": "99999"},
+                    {"name": "Acme", "domain": "acme.example", **postal_fields},
+                ]}
+                client = AsyncMock()
+                client.__aenter__.return_value = client
+                client.post.return_value = response
+                with (
+                    patch.object(seamless, "SEAMLESS_API_KEY", "test-key"),
+                    patch.object(seamless.httpx, "AsyncClient", return_value=client),
+                ):
+                    result = await seamless.enrich_with_seamless({"name": "Acme"})
+                self.assertEqual(result["address1_postalcode"], expected)
+                self.assertEqual(result["websiteurl"], "https://acme.example")
+                client.post.assert_awaited_once()
+
     async def test_balance_write_failure_preserves_provider_outcome(self):
         for data, expected in (
             ([{"name": "Acme", "domain": "acme.example"}], "https://acme.example"),

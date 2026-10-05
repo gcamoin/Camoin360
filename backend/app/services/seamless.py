@@ -22,6 +22,14 @@ COUNTRY_ALIASES = {
     "united states of america": "united states",
     "ca": "canada",
 }
+def normalize_naics_code(value: object) -> str | None:
+    """Accept only six ASCII digits from a string or a JSON integer."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return None
+    code = str(value).strip()
+    return code if re.fullmatch(r"[0-9]{6}", code) else None
+
+
 def normalize_text(value):
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold())).strip()
 
@@ -285,4 +293,6 @@ async def enrich_with_seamless(company: dict[str, Any] | None) -> dict[str, Any]
         "address1_city": best_match.get("city") or None,
         "address1_stateorprovince": best_match.get("state") or None,
         "address1_country": best_match.get("country") or None,
+        "address1_postalcode": best_match.get("postCode"),
+        "cr73c_naicscode": normalize_naics_code(best_match.get("naicsCode")),
     }
