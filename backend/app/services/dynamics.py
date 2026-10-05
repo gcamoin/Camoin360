@@ -4360,6 +4360,16 @@ ENRICHMENT_FIELD_NAMES = (
 )
 
 
+# Only these missing targets justify initiating a paid provider lookup.
+CREDIT_WORTHY_ENRICHMENT_FIELDS = frozenset({
+    "websiteurl",
+    "telephone1",
+    "numberofemployees",
+    "address1_postalcode",
+    "cr73c_naicscode",
+})
+
+
 def _is_blank(value: object) -> bool:
     return value is None or (isinstance(value, str) and not value.strip())
 
@@ -4439,6 +4449,32 @@ async def enrich_one_account(account_id: str) -> dict[str, object]:
             "skipped_reason": "Account has no name to search.",
         }
 
+    missing_fields = tuple(
+        field_name for field_name in ENRICHMENT_FIELD_NAMES
+        if _is_blank(account.get(field_name))
+    )
+    missing_credit_worthy_fields = CREDIT_WORTHY_ENRICHMENT_FIELDS.intersection(missing_fields)
+    if not missing_credit_worthy_fields:
+        # Optional targets can be filled from a response but never initiate a lookup.
+        try:
+            await _mark_enrichment_attempted(account_id, {})
+        except Exception:
+            logger.exception("Could not mark ineligible account evaluated for account_id=%s", account_id)
+            return {
+                "account_id": account_id,
+                "account_name": account_name,
+                "status": "failed",
+                "fields_updated": [],
+                "skipped_reason": "Unable to update Dynamics account.",
+            }
+        return {
+            "account_id": account_id,
+            "account_name": account_name,
+            "status": "no_updates_needed",
+            "fields_updated": [],
+            "skipped_reason": "No credit-worthy automatic enrichment fields are missing.",
+        }
+
     if not os.getenv("SEAMLESS_API_KEY"):
         logger.error("Seamless enrichment cannot run for account_id=%s: SEAMLESS_API_KEY is not configured", account_id)
         return {
@@ -4494,7 +4530,7 @@ async def enrich_one_account(account_id: str) -> dict[str, object]:
         }
 
     updates: dict[str, object] = {}
-    for field_name in ENRICHMENT_FIELD_NAMES:
+    for field_name in missing_fields:
         value = _normalise_enrichment_value(field_name, seamless_data.get(field_name))
         if _is_blank(account.get(field_name)) and value is not None:
             updates[field_name] = value

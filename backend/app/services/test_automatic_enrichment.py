@@ -1,11 +1,11 @@
 import os
 import unittest
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 
-from . import dynamics
+from . import dynamics, seamless
 
 
 class AutomaticEnrichmentPolicyTest(unittest.IsolatedAsyncioTestCase):
@@ -50,6 +50,161 @@ class AutomaticEnrichmentPolicyTest(unittest.IsolatedAsyncioTestCase):
         }}
         self.assertEqual(field_updates, expected_updates or {})
         self.assertEqual(result["fields_updated"], list(field_updates))
+
+    def populated_targets(self):
+        values = {field: "human-entered" for field in dynamics.ENRICHMENT_FIELD_NAMES}
+        values["numberofemployees"] = 0  # Zero is populated under existing semantics.
+        values["cr73c_naicscode"] = "541511"
+        values["address1_postalcode"] = "12866"
+        return values
+
+    def test_credit_worthy_targets_are_exact_subset_of_all_targets(self):
+        self.assertEqual(dynamics.CREDIT_WORTHY_ENRICHMENT_FIELDS, {
+            "websiteurl", "telephone1", "numberofemployees", "address1_postalcode", "cr73c_naicscode",
+        })
+        self.assertTrue(dynamics.CREDIT_WORTHY_ENRICHMENT_FIELDS.issubset(dynamics.ENRICHMENT_FIELD_NAMES))
+
+    async def test_optional_only_missing_fields_skip_provider_and_complete_evaluation(self):
+        optional = ("description", "address1_city", "address1_stateorprovince", "address1_country")
+        for missing in [(field,) for field in optional] + [optional]:
+            with self.subTest(missing=missing):
+                existing = self.populated_targets()
+                self.account = {"name": "Acme", "cr73c_enrichmentattempted": False, **existing}
+                for field in missing:
+                    self.account[field] = None
+                self.update.reset_mock()
+                os.environ.pop("SEAMLESS_API_KEY", None)
+                result = await dynamics.enrich_one_account("account-1")
+                self.assert_completed(result, "no_updates_needed")
+                self.provider.assert_not_awaited()
+                self.credit_check.assert_not_called()
+                self.record_usage.assert_not_called()
+                for field, value in existing.items():
+                    self.assertEqual(self.account[field], None if field in missing else value)
+                skipped = await dynamics.enrich_one_account("account-1")
+                self.assertEqual(skipped["status"], "skipped_already_attempted")
+                self.update.assert_awaited_once()
+
+    async def test_optional_only_metadata_failure_remains_retryable(self):
+        self.account.update(self.populated_targets())
+        self.account["description"] = "   "
+        self.update.side_effect = RuntimeError("Dynamics unavailable")
+        failed = await dynamics.enrich_one_account("account-1")
+        self.assertEqual(failed["status"], "failed")
+        self.assertFalse(self.account["cr73c_enrichmentattempted"])
+        self.assertNotIn("cr73c_enrichmentlastattemptedon", self.account)
+        self.provider.assert_not_awaited()
+        self.credit_check.assert_not_called()
+        self.record_usage.assert_not_called()
+        self.update.reset_mock()
+        self.update.side_effect = self.confirm_update
+        result = await dynamics.enrich_one_account("account-1")
+        self.assert_completed(result, "no_updates_needed")
+        self.provider.assert_not_awaited()
+
+    async def test_fallback_is_one_invocation_but_two_http_searches(self):
+        self.account.update(self.populated_targets())
+        self.account["cr73c_naicscode"] = None
+        first = MagicMock(status_code=200, headers={})
+        first.json.return_value = {"data": []}
+        second = MagicMock(status_code=200, headers={})
+        second.json.return_value = {"data": [{"name": "Acme", "domain": "acme.example", "naicsCode": 511210}]}
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.post.side_effect = [first, second]
+        with (
+            patch.object(dynamics, "enrich_with_seamless", wraps=seamless.enrich_with_seamless) as provider,
+            patch.object(seamless, "SEAMLESS_API_KEY", "test-key"),
+            patch.object(seamless.httpx, "AsyncClient", return_value=client),
+        ):
+            result = await dynamics.enrich_one_account("account-1")
+        self.assert_completed(result, "updated", {"cr73c_naicscode": "511210"})
+        provider.assert_awaited_once()
+        self.assertEqual(client.post.await_count, 2)
+        self.assertEqual(client.post.await_args_list[1].kwargs["json"], {"companyName": ["Acme"], "limit": 5})
+        self.credit_check.assert_called_once_with()
+        self.record_usage.assert_called_once_with()
+
+    async def test_complete_account_skips_provider_configuration_credits_and_usage(self):
+        existing = self.populated_targets()
+        self.account.update(existing)
+        os.environ.pop("SEAMLESS_API_KEY", None)
+        result = await dynamics.enrich_one_account("account-1")
+        self.assert_completed(result, "no_updates_needed")
+        self.provider.assert_not_awaited()
+        self.credit_check.assert_not_called()
+        self.record_usage.assert_not_called()
+        for field, value in existing.items():
+            self.assertEqual(self.account[field], value)
+        skipped = await dynamics.enrich_one_account("account-1")
+        self.assertEqual(skipped["status"], "skipped_already_attempted")
+        self.provider.assert_not_awaited()
+        self.update.assert_awaited_once()
+
+    async def test_complete_account_metadata_write_failure_is_retryable_without_provider(self):
+        self.account.update(self.populated_targets())
+        self.update.side_effect = RuntimeError("Dynamics unavailable")
+        result = await dynamics.enrich_one_account("account-1")
+        self.assertEqual(result["status"], "failed")
+        self.assertFalse(self.account["cr73c_enrichmentattempted"])
+        self.assertNotIn("cr73c_enrichmentlastattemptedon", self.account)
+        self.provider.assert_not_awaited()
+        self.credit_check.assert_not_called()
+        self.record_usage.assert_not_called()
+        self.update.reset_mock()
+        self.update.side_effect = self.confirm_update
+        result = await dynamics.enrich_one_account("account-1")
+        self.assert_completed(result, "no_updates_needed")
+        self.provider.assert_not_awaited()
+
+    async def test_missing_fields_use_one_actual_search_and_preserve_other_values(self):
+        scenarios = (
+            (("websiteurl",), {}, {"websiteurl": "https://provider.example"}),
+            (("telephone1",), {}, {"telephone1": "555-0100"}),
+            (("numberofemployees",), {"employeeCount": 42}, {"numberofemployees": 42}),
+            (("cr73c_naicscode", "description"), {"naicsCode": 511210, "description": "Company description"},
+             {"description": "Company description", "cr73c_naicscode": "511210"}),
+            (("websiteurl", "address1_city", "address1_stateorprovince"), {},
+             {"websiteurl": "https://provider.example", "address1_city": "Cambridge", "address1_stateorprovince": "Massachusetts"}),
+            (("cr73c_naicscode",), {"naicsCode": 511210}, {"cr73c_naicscode": "511210"}),
+            (("address1_postalcode",), {"postCode": "02141"}, {"address1_postalcode": "02141"}),
+            (("address1_postalcode", "cr73c_naicscode"),
+             {"postCode": "02141", "naicsCode": 511210},
+             {"address1_postalcode": "02141", "cr73c_naicscode": "511210"}),
+            (("address1_postalcode", "cr73c_naicscode"), {}, {}),
+        )
+        for missing, provider_values, expected in scenarios:
+            with self.subTest(missing=missing, provider_values=provider_values):
+                existing = self.populated_targets()
+                self.account = {"name": "Acme", "cr73c_enrichmentattempted": False, **existing}
+                for field in missing:
+                    self.account[field] = "   "
+                self.update.reset_mock()
+                self.credit_check.reset_mock()
+                self.record_usage.reset_mock()
+                response = MagicMock(status_code=200, headers={})
+                response.json.return_value = {"data": [{
+                    "name": "Acme", "domain": "provider.example", "phones": ["555-0100"],
+                    "city": "Cambridge", "state": "Massachusetts", "country": "United States",
+                    **provider_values,
+                }]}
+                client = AsyncMock()
+                client.__aenter__.return_value = client
+                client.post.return_value = response
+                with (
+                    patch.object(dynamics, "enrich_with_seamless", wraps=seamless.enrich_with_seamless) as provider,
+                    patch.object(seamless, "SEAMLESS_API_KEY", "test-key"),
+                    patch.object(seamless.httpx, "AsyncClient", return_value=client),
+                ):
+                    result = await dynamics.enrich_one_account("account-1")
+                self.assert_completed(result, "updated" if expected else "no_updates_needed", expected)
+                provider.assert_awaited_once()
+                client.post.assert_awaited_once()
+                self.credit_check.assert_called_once_with()
+                self.record_usage.assert_called_once_with()
+                for field, value in existing.items():
+                    if field not in missing:
+                        self.assertEqual(self.account[field], value)
 
     async def test_naics_only_updates_blank_values_in_metadata_patch(self):
         for blank, value in ((None, 511210), ("", "511210"), ("   ", " 511210 ")):
