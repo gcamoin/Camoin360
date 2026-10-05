@@ -6,7 +6,7 @@ from typing import Annotated
 
 from datetime import date
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from .auth import require_user
@@ -564,10 +564,16 @@ async def fetch_accounts_missing_website():
     }
 
 
-def _require_power_automate_api_key(x_api_key: str | None = Header(default=None)) -> None:
-    """Require the shared secret only when POWER_AUTOMATE_API_KEY is configured."""
+def _require_power_automate_api_key(request: Request, x_api_key: str | None = Header(default=None)) -> None:
+    """Accept a middleware-validated user or a configured machine secret."""
+    if getattr(request.state, "authenticated_user", None) is not None:
+        return
     configured_key = os.getenv("POWER_AUTOMATE_API_KEY")
-    if configured_key and not (x_api_key and hmac.compare_digest(x_api_key, configured_key)):
+    if not (
+        configured_key
+        and x_api_key
+        and hmac.compare_digest(x_api_key.encode("utf-8"), configured_key.encode("utf-8"))
+    ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing x-api-key")
 
 

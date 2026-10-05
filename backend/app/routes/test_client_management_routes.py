@@ -1,7 +1,9 @@
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from backend.app import main
 from backend.app.main import app
 from backend.app.routes.auth import require_user
 from backend.app.testing_support import temporary_database
@@ -11,10 +13,16 @@ class ClientManagementRoutesTest(unittest.TestCase):
     def setUp(self):
         self.database_patch = temporary_database()
         self.database_patch.start()
-        app.dependency_overrides[require_user] = lambda: {"email": "admin@example.com"}
-        self.client = TestClient(app)
+        user = {"email": "admin@example.com", "role": "user", "modules": ["prospecting", "management"]}
+        app.dependency_overrides[require_user] = lambda: user
+        # Dependency overrides do not bypass the application's auth middleware.
+        self.token_patch = patch.object(main, "get_user_from_token", return_value=user)
+        self.token_patch.start()
+        self.client = TestClient(app, headers={"Authorization": "Bearer client-management-test"})
 
     def tearDown(self):
+        self.client.close()
+        self.token_patch.stop()
         app.dependency_overrides.clear()
         self.database_patch.stop()
 

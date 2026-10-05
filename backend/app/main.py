@@ -1,4 +1,5 @@
 import asyncio
+import re
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
@@ -69,6 +70,15 @@ async def enforce_module_access(request, call_next):
     if request.method == "OPTIONS" or path == "/" or path.startswith("/auth"):
         return await call_next(request)
 
+    # Only this POST route has its own fail-closed machine authentication.
+    # Requests presenting user credentials still follow the normal module checks.
+    if (
+        request.method == "POST"
+        and re.fullmatch(r"/accounts/enrich-one/[^/]+", path)
+        and not request.headers.get("authorization")
+    ):
+        return await call_next(request)
+
     required_module = next(
         (module for module, prefixes in MODULE_PATH_RULES if any(path.startswith(prefix) for prefix in prefixes)),
         None,
@@ -93,6 +103,7 @@ async def enforce_module_access(request, call_next):
     if not user_has_module(user, required_module):
         return JSONResponse(status_code=403, content={"detail": "Module access required"})
 
+    request.state.authenticated_user = user
     return await call_next(request)
 
 app.include_router(accounts_router)

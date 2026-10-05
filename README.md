@@ -319,8 +319,52 @@ returns JSON containing `status`, `fields_updated`, and `skipped_reason`.
 
 Set these backend environment variables: `TENANT_ID`, `CLIENT_ID`, `CLIENT_SECRET`,
 `DYNAMICS_SCOPE`, `DYNAMICS_API_URL`, and `SEAMLESS_API_KEY`. Set
-`POWER_AUTOMATE_API_KEY` to require the `x-api-key` header (strongly recommended for
-any deployed endpoint); if it is unset, the header is optional for local development.
+`POWER_AUTOMATE_API_KEY` for machine access using the `x-api-key` header. Machine
+access is rejected when this variable is unset or empty. This authentication applies
+only to `POST /accounts/enrich-one/{accountid}`; other Account endpoints still require
+user authentication. Authenticated users with Sophie Maintenance access can also
+call this endpoint with their normal Bearer token. If an Authorization header is
+supplied, it must pass the normal user-token and module checks.
+
+The backend endpoint is prepared for a future flow; no automatic Account
+enrichment flow is included in this repository. `enrich_one_account()` treats the
+attempt flag as a completed provider attempt, with missing company name as an
+explicit non-retryable exception. Infrastructure failures remain eligible for
+resubmission:
+
+| Outcome | Sets `cr73c_enrichmentattempted` to true? |
+| --- | --- |
+| Account retrieval fails | No |
+| Already attempted | No new write; existing flag remains true |
+| Account has no name | Yes, if the metadata PATCH succeeds |
+| `SEAMLESS_API_KEY` missing | No; returns failed |
+| Weekly credit limit reached | No |
+| Credit-budget check raises | No; returns failed without calling Seamless |
+| Seamless lookup raises | No; returns failed |
+| Post-lookup usage or response-balance recording raises | Logged; provider outcome continues unchanged |
+| No matching company | Yes, if the metadata PATCH succeeds |
+| Matching company, no blank fields to fill | Yes, if the metadata PATCH succeeds |
+| Matching company, blank fields updated | Yes, in the same PATCH as field updates |
+| Final Dynamics PATCH fails | No confirmed write; a transport failure may have an uncertain outcome |
+
+Completed attempts require a confirmed Dynamics PATCH including both
+`cr73c_enrichmentattempted` and `cr73c_enrichmentlastattemptedon` in UTC, alongside
+any field updates. Both fields exist in the deployed Account table. A Dynamics
+400 is no longer retried without the timestamp; any write failure returns failed.
+
+Local usage and credit-balance JSON writes are best-effort operational telemetry;
+failure after a provider response does not invalidate enrichment. A failed
+preflight credit-budget check stops enrichment conservatively, because the
+backend cannot establish whether another request is within the limit. The
+automatic path does not write the separate `metrics_tracker.json` update history.
+
+The future flow must inspect the returned `status`: enrichment failures currently
+return HTTP 200 with `status: failed`. No retry scheduling or queue is provided.
+If Dynamics commits a PATCH but its response is lost, the backend returns failed
+because completion was not confirmed. A later request rereads the Account and
+skips it if the attempt flag is already true. Concurrent requests can still both
+pass the initial flag check, and read-then-write updates can race with human edits.
+Use a small, sequential controlled test before broader automation.
 
 For a local call:
 

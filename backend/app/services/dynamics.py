@@ -4375,22 +4375,13 @@ def _normalise_enrichment_value(field_name: str, value: object) -> object | None
 
 
 async def _mark_enrichment_attempted(account_id: str, updates: dict[str, object]) -> None:
-    """Set the required attempt flag and include the optional timestamp when available."""
+    """Persist a completed attempt and its timestamp together with field updates."""
     attempt_updates = {
         **updates,
         "cr73c_enrichmentattempted": True,
         "cr73c_enrichmentlastattemptedon": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    try:
-        await update_account(account_id, attempt_updates)
-    except DynamicsApiError as exc:
-        if exc.status_code != 400:
-            raise
-        # Some Dataverse environments do not have the optional timestamp field.
-        # Retry without it so the required attempt flag is never lost for that reason.
-        logger.warning("Could not update optional enrichment timestamp for %s: %s", account_id, exc)
-        attempt_updates.pop("cr73c_enrichmentlastattemptedon")
-        await update_account(account_id, attempt_updates)
+    await update_account(account_id, attempt_updates)
 
 
 async def enrich_one_account(account_id: str) -> dict[str, object]:
@@ -4418,7 +4409,7 @@ async def enrich_one_account(account_id: str) -> dict[str, object]:
             "skipped_reason": "Enrichment has already been attempted for this account.",
         }
 
-    if not account_name:
+    if _is_blank(account_name):
         try:
             await _mark_enrichment_attempted(account_id, {})
         except Exception:
@@ -4441,10 +4432,6 @@ async def enrich_one_account(account_id: str) -> dict[str, object]:
 
     if not os.getenv("SEAMLESS_API_KEY"):
         logger.error("Seamless enrichment cannot run for account_id=%s: SEAMLESS_API_KEY is not configured", account_id)
-        try:
-            await _mark_enrichment_attempted(account_id, {})
-        except Exception:
-            logger.exception("Could not mark unconfigured enrichment attempted for account_id=%s", account_id)
         return {
             "account_id": account_id,
             "account_name": account_name,
@@ -4453,7 +4440,20 @@ async def enrich_one_account(account_id: str) -> dict[str, object]:
             "skipped_reason": "Seamless enrichment is not configured.",
         }
 
-    if not can_make_request():
+    try:
+        credit_available = can_make_request()
+    except Exception:
+        # Without a readable credit budget, do not risk exceeding the limit.
+        logger.exception("Unable to check Seamless credit usage for account_id=%s", account_id)
+        return {
+            "account_id": account_id,
+            "account_name": account_name,
+            "status": "failed",
+            "fields_updated": [],
+            "skipped_reason": "Unable to check Seamless credit usage.",
+        }
+
+    if not credit_available:
         logger.warning("Enrichment skipped for account_id=%s name=%r: weekly credit limit reached", account_id, account_name)
         return {
             "account_id": account_id,
@@ -4468,14 +4468,14 @@ async def enrich_one_account(account_id: str) -> dict[str, object]:
         try:
             seamless_data = await enrich_with_seamless(account)
         finally:
-            usage = increment_usage()
-            logger.info("Seamless credit used for account_id=%s; usage=%s/%s", account_id, usage.get("credits_used"), WEEKLY_LIMIT)
-    except Exception as exc:
+            # Recording usage is operational telemetry, not the provider outcome.
+            try:
+                usage = increment_usage()
+                logger.info("Seamless credit used for account_id=%s; usage=%s/%s", account_id, usage.get("credits_used"), WEEKLY_LIMIT)
+            except Exception:
+                logger.exception("Unable to record Seamless credit usage for account_id=%s", account_id)
+    except Exception:
         logger.exception("Seamless enrichment failed for account_id=%s name=%r", account_id, account_name)
-        try:
-            await _mark_enrichment_attempted(account_id, {})
-        except Exception:
-            logger.exception("Could not mark failed enrichment attempted for account_id=%s", account_id)
         return {
             "account_id": account_id,
             "account_name": account_name,

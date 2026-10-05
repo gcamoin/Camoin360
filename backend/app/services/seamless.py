@@ -204,7 +204,10 @@ async def enrich_with_seamless(company: dict[str, Any] | None) -> dict[str, Any]
             or response_headers.get("X-Credits-Remaining")
         )
         if remaining_credits is not None:
-            update_total_credits_remaining(remaining_credits)
+            try:
+                update_total_credits_remaining(remaining_credits)
+            except Exception:
+                logger.exception("Unable to record Seamless remaining-credit balance")
 
         if response.status_code != 200:
             raise RuntimeError(f"Seamless API error ({response.status_code}): {response.text}")

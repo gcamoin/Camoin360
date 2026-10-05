@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from . import seamless
 from .seamless import company_names_match, get_match_confidence
@@ -58,6 +58,42 @@ class MatchConfidenceTest(unittest.TestCase):
 
 
 class SparseCompanyMatchTest(unittest.IsolatedAsyncioTestCase):
+    async def test_balance_write_failure_preserves_provider_outcome(self):
+        for data, expected in (
+            ([{"name": "Acme", "domain": "acme.example"}], "https://acme.example"),
+            ([], None),
+        ):
+            with self.subTest(has_match=bool(data)):
+                response = MagicMock(status_code=200, headers={"X-PublicAPI-Credits": "123"})
+                response.json.return_value = {"data": data}
+                client = AsyncMock()
+                client.__aenter__.return_value = client
+                client.post.return_value = response
+                with (
+                    patch.object(seamless, "SEAMLESS_API_KEY", "test-key"),
+                    patch.object(seamless.httpx, "AsyncClient", return_value=client),
+                    patch.object(seamless, "update_total_credits_remaining", side_effect=OSError("Balance file unwritable")),
+                    self.assertLogs(seamless.logger, level="ERROR"),
+                ):
+                    result = await seamless.enrich_with_seamless({"name": "Acme"})
+                self.assertEqual(result.get("websiteurl"), expected)
+                if not data:
+                    self.assertEqual(result, {})
+
+    async def test_balance_write_failure_does_not_mask_provider_error(self):
+        response = MagicMock(status_code=429, headers={"X-PublicAPI-Credits": "123"}, text="Rate limit reached")
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.post.return_value = response
+        with (
+            patch.object(seamless, "SEAMLESS_API_KEY", "test-key"),
+            patch.object(seamless.httpx, "AsyncClient", return_value=client),
+            patch.object(seamless, "update_total_credits_remaining", side_effect=OSError("Balance file unwritable")),
+            self.assertLogs(seamless.logger, level="ERROR"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Seamless API error \\(429\\)"):
+                await seamless.enrich_with_seamless({"name": "Acme"})
+
     async def test_records_total_credit_balance_from_response_header(self):
         class Response:
             status_code = 200
