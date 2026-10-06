@@ -27,7 +27,7 @@ const views = {
     route: "/dashboard",
     title: "Sophie Maintenance",
     description:
-      "Live view of weekly Seamless credit consumption and enrichment throughput across the Dynamics pipeline.",
+      "Keep your Dynamics account data clean and enriched.",
   },
   dataQuality: {
     label: "Data Quality",
@@ -132,7 +132,7 @@ export default function LandingPage({ onLogout }) {
         sx={{
           display: "grid",
           gridTemplateColumns: {
-            xs: "1fr",
+            xs: activeView === "seamless" ? "minmax(0, 1fr)" : "1fr",
             md: sidebarCollapsed ? "88px minmax(0, 1fr)" : `${sidebarResize.width}px minmax(0, 1fr)`,
           },
           minHeight: "100vh",
@@ -268,6 +268,7 @@ export default function LandingPage({ onLogout }) {
                         transition: "background-color 150ms ease, color 150ms ease, transform 150ms ease, box-shadow 150ms ease",
                         whiteSpace: sidebarCollapsed ? "nowrap" : "normal",
                         width: { xs: "auto", md: "100%" },
+                        flexShrink: activeView === "seamless" ? 0 : undefined,
                         "&::before": {
                           backgroundColor: "secondary.main",
                           borderRadius: 999,

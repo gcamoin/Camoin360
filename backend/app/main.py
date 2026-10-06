@@ -20,6 +20,7 @@ from .routes.employee_productivity import router as employee_productivity_router
 from .routes.economic_indicators import router as economic_indicators_router
 from .routes.marketing import router as marketing_router
 from .routes.metrics import router as metrics_router
+from .routes.maintenance import router as maintenance_router
 from .routes.organizations import router as organizations_router
 from .routes.quickbooks import router as quickbooks_router
 from .routes.software_subscriptions import router as software_subscriptions_router
@@ -44,7 +45,7 @@ initialize_database()
 MODULE_PATH_RULES = [
     ("prospecting", ("/leadfeeder-visits", "/accounts/leadfeeder-visits", "/pe-clients", "/pe-qualified-leads", "/marketing-lists", "/organizations", "/users")),
     ("management", ("/management", "/economic-indicators", "/company-financials", "/marketing", "/productivity", "/employee-productivity", "/software-subscriptions", "/ai")),
-    ("main", ("/metrics", "/accounts")),
+    ("main", ("/metrics", "/accounts", "/maintenance")),
 ]
 
 app.add_middleware(
@@ -115,6 +116,7 @@ app.include_router(employee_productivity_router)
 app.include_router(economic_indicators_router)
 app.include_router(marketing_router)
 app.include_router(metrics_router)
+app.include_router(maintenance_router)
 app.include_router(organizations_router)
 app.include_router(quickbooks_router)
 app.include_router(software_subscriptions_router)

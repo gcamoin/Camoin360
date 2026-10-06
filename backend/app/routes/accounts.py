@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from .auth import require_user
 from ..services.cache import AsyncStaleCache
+from ..services.account_enrichment_history import automatic_enrichment_request
 from ..services.duplicate_accounts import find_duplicate_account_groups
 from ..services.organizations import increment_organization_user_count
 from ..services.dynamics import (
@@ -583,7 +584,9 @@ async def enrich_one(
     _api_key: None = Depends(_require_power_automate_api_key),
 ):
     """Power Automate entry point for safe, one-account Seamless enrichment."""
-    result = await enrich_one_account(account_id)
+    async with automatic_enrichment_request(account_id) as attempt:
+        result = await enrich_one_account(account_id)
+        attempt.finish(result)
     invalidate_account_endpoint_caches()
     return result
 

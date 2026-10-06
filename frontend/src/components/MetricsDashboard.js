@@ -11,7 +11,6 @@ import {
   Dialog,
   DialogActions,
   DialogContent,
-  LinearProgress,
   Paper,
   Snackbar,
   Stack,
@@ -25,23 +24,9 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-
 import { API_BASE_URL, getAuthHeaders, handleUnauthorized } from "../auth";
 import { getCached, invalidateApiCache } from "../apiClient";
-import { EmptyState, ModalTitle } from "./UiPrimitives";
+import { ModalTitle } from "./UiPrimitives";
 
 const API_URL = `${API_BASE_URL}/metrics`;
 const ENRICH_ALL_URL = `${API_BASE_URL}/accounts/enrich-all`;
@@ -53,7 +38,7 @@ const valueSx = {
   mt: 1,
 };
 
-function MetricCard({ title, value, subtitle, children }) {
+function MetricCard({ title, value, subtitle }) {
   const theme = useTheme();
 
   return (
@@ -64,7 +49,7 @@ function MetricCard({ title, value, subtitle, children }) {
         borderRadius: 3,
         boxShadow: "0 10px 30px rgba(0, 51, 108, 0.08)",
         height: "100%",
-        minHeight: 220,
+        minHeight: 155,
         borderTop: `4px solid ${theme.palette.secondary.main}`,
       }}
     >
@@ -78,7 +63,6 @@ function MetricCard({ title, value, subtitle, children }) {
             {subtitle}
           </Typography>
         ) : null}
-        {children}
       </CardContent>
     </Card>
   );
@@ -165,108 +149,20 @@ function getStatusColor(status) {
   return "default";
 }
 
-function getStatusProgressColor(status) {
-  const normalizedStatus = String(status || "").toLowerCase();
-
-  if (normalizedStatus === "updated") {
-    return "success.main";
-  }
-
-  if (normalizedStatus === "failed") {
-    return "error.main";
-  }
-
-  if (normalizedStatus === "pending") {
-    return "info.main";
-  }
-
-  if (["skipped", "no match found"].includes(normalizedStatus)) {
-    return "warning.main";
-  }
-
-  return "text.secondary";
-}
-
-function getAlertColor(severity) {
-  const normalizedSeverity = String(severity || "").toLowerCase();
-
-  if (normalizedSeverity === "critical") {
-    return "error";
-  }
-
-  if (normalizedSeverity === "warning") {
-    return "warning";
-  }
-
-  if (normalizedSeverity === "info") {
-    return "info";
-  }
-
-  return "default";
-}
-
-function TrendChartCard({ children, subtitle, title }) {
-  return (
-    <Box
-      sx={{
-        border: "1px solid rgba(0, 51, 108, 0.10)",
-        borderRadius: 1,
-        p: 2,
-        minHeight: 280,
-      }}
-    >
-      <Stack spacing={1.5} sx={{ height: "100%" }}>
-        <Box>
-          <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="body1">
-            {title}
-          </Typography>
-          <Typography color="text.secondary" variant="body2">
-            {subtitle}
-          </Typography>
-        </Box>
-        <Box sx={{ flex: 1, minHeight: 190 }}>
-          {children}
-        </Box>
-      </Stack>
-    </Box>
-  );
-}
-
-function EmptySection({ message, minHeight = 160 }) {
-  return (
-    <Box sx={{ minHeight }}>
-      <EmptyState compact description={message} icon="database" title="No data available" />
-    </Box>
-  );
-}
-
-function hasChartData(data) {
-  return Array.isArray(data) && data.length > 0;
-}
-
 export default function MetricsDashboard() {
-  const theme = useTheme();
   const [metrics, setMetrics] = useState({
-    credits_used: 0,
     weekly_limit: 2000,
     remaining_credits: 2000,
     total_credits_remaining: null,
     total_credits_updated_at: null,
-    usage_percent: 0,
-    accounts_processed: 0,
     accounts_updated: 0,
-    alert_center: [],
     audit_history: [],
     data_quality_pipeline: [],
-    outcome_breakdown: [],
-    field_impact: [],
     recent_activity: [],
-    trend_tracking: {},
   });
   const [expandedAuditRun, setExpandedAuditRun] = useState("");
   const [isRunningEnrichment, setIsRunningEnrichment] = useState(false);
   const [actionError, setActionError] = useState("");
-  const [actionInfo, setActionInfo] = useState("");
   const [actionMessage, setActionMessage] = useState("");
   const [selectedPipelineCategory, setSelectedPipelineCategory] = useState(null);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(true);
@@ -275,15 +171,16 @@ export default function MetricsDashboard() {
   const [auditPage, setAuditPage] = useState(0);
   const [auditRowsPerPage, setAuditRowsPerPage] = useState(5);
   const [recentPage, setRecentPage] = useState(0);
-  const [recentRowsPerPage, setRecentRowsPerPage] = useState(10);
-  const alerts = metrics.alert_center || [];
+  const [recentRowsPerPage, setRecentRowsPerPage] = useState(5);
   const auditHistory = metrics.audit_history || [];
   const dataQualityPipeline = metrics.data_quality_pipeline || [];
-  const outcomeBreakdown = metrics.outcome_breakdown || [];
-  const fieldImpact = metrics.field_impact || [];
   const recentActivity = metrics.recent_activity || [];
   const selectedPipelineRecords = selectedPipelineCategory?.records || [];
-  const trends = metrics.trend_tracking || {};
+  const totalAccounts = dataQualityPipeline.length
+    ? dataQualityPipeline.reduce((total, item) => total + Number(item.count || 0), 0)
+    : null;
+  const readyCategory = dataQualityPipeline.find((item) => item.category === "Ready for Enrichment");
+  const enrichedCategory = dataQualityPipeline.find((item) => item.category === "Already Enriched");
   const paginatedAuditHistory = auditHistory.slice(
     auditPage * auditRowsPerPage,
     auditPage * auditRowsPerPage + auditRowsPerPage
@@ -337,18 +234,6 @@ export default function MetricsDashboard() {
     );
   }
 
-  function exportFieldImpactCsv() {
-    downloadCsv(
-      `field-impact-analytics-${getExportDateStamp()}.csv`,
-      ["Field", "Total Updates", "Percentage of Total Updates"],
-      fieldImpact.map((field) => ({
-        "Field": field.field,
-        "Total Updates": field.total_updates,
-        "Percentage of Total Updates": `${Number(field.percentage || 0).toFixed(1)}%`,
-      }))
-    );
-  }
-
   function exportAuditHistoryCsv() {
     const rows = auditHistory.flatMap((run) => {
       const details = run.details?.length ? run.details : [{}];
@@ -397,7 +282,6 @@ export default function MetricsDashboard() {
   async function runEnrichment() {
     setIsRunningEnrichment(true);
     setActionError("");
-    setActionInfo("");
     setActionMessage("");
 
     try {
@@ -416,12 +300,6 @@ export default function MetricsDashboard() {
     } finally {
       setIsRunningEnrichment(false);
     }
-  }
-
-  function previewNextBatch() {
-    // TODO: Replace this placeholder with a backend endpoint that returns the next enrichment batch preview.
-    setActionError("");
-    setActionInfo("Preview Next Batch is not connected yet.");
   }
 
   function viewPipelineCategory(category) {
@@ -511,7 +389,7 @@ export default function MetricsDashboard() {
   }
 
   return (
-    <Stack spacing={3}>
+    <Stack spacing={4} sx={{ minWidth: 0 }}>
       {loadError ? (
         <Alert
           action={
@@ -525,75 +403,32 @@ export default function MetricsDashboard() {
         </Alert>
       ) : null}
 
-      <Box
-        sx={{
-          display: "grid",
-          gap: 3,
-          gridTemplateColumns: {
-            xs: "1fr",
-            sm: "repeat(2, minmax(0, 1fr))",
-            lg: "repeat(6, minmax(0, 1fr))",
-          },
-          alignItems: "stretch",
-        }}
-      >
-        <Box sx={{ display: "flex" }}>
-          <MetricCard
-            title="Credits Used"
-            value={metrics.credits_used}
-            subtitle={`Weekly limit: ${metrics.weekly_limit}`}
-          />
+      <Stack component="section" spacing={2} aria-labelledby="sophie-data-quality">
+        <Typography id="sophie-data-quality" component="h2" variant="h6" color="primary.main">Data Quality</Typography>
+        <Box sx={{ display: "grid", gap: 3, gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", md: "repeat(3, minmax(0, 1fr))" } }}>
+          <MetricCard title="Total Accounts" value={totalAccounts == null ? "—" : totalAccounts.toLocaleString()} subtitle="Accounts in the current Dynamics snapshot" />
+          <MetricCard title="Ready for Enrichment" value={readyCategory?.count ?? "—"} subtitle="Accounts eligible for enrichment" />
+          <MetricCard title="Already Enriched" value={enrichedCategory ? `${Number(enrichedCategory.percentage || 0).toFixed(1)}%` : "—"} subtitle="Share of accounts marked enriched" />
         </Box>
-        <Box sx={{ display: "flex" }}>
-          <MetricCard
-            title="Remaining Credits"
-            value={metrics.remaining_credits}
-            subtitle="Available before weekly reset"
-          />
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+          <Button disabled={!readyCategory?.records?.length} onClick={() => viewPipelineCategory("Ready for Enrichment")} variant="outlined">View Accounts Ready</Button>
+          <Button disabled={!dataQualityPipeline.find((item) => item.category === "Requires Manual Review")?.records?.length} onClick={() => viewPipelineCategory("Requires Manual Review")} variant="outlined">View Manual Review</Button>
+        </Stack>
+      </Stack>
+
+      <Stack component="section" spacing={2} aria-labelledby="sophie-enrichment">
+        <Typography id="sophie-enrichment" component="h2" variant="h6" color="primary.main">Enrichment</Typography>
+        <Box sx={{ display: "grid", gap: 3, gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))" } }}>
+          <MetricCard title="Accounts Updated" value={metrics.accounts_updated ?? "—"} subtitle="Cumulative Dynamics records changed successfully" />
+          <MetricCard title="Seamless Credits Remaining" value={metrics.total_credits_remaining == null ? "—" : Number(metrics.total_credits_remaining).toLocaleString()} subtitle={metrics.total_credits_updated_at ? `Balance reported ${formatTimestamp(metrics.total_credits_updated_at)}` : "Balance not yet reported by Seamless"} />
         </Box>
-        <Box sx={{ display: "flex" }}>
-          <MetricCard
-            title="Total Seamless Credits"
-            value={metrics.total_credits_remaining == null ? "—" : Number(metrics.total_credits_remaining).toLocaleString()}
-            subtitle={metrics.total_credits_updated_at ? "Latest balance reported by Seamless" : "Runs populate this from the Seamless API"}
-          />
-        </Box>
-        <Box sx={{ display: "flex" }}>
-          <MetricCard
-            title="Usage %"
-            value={`${Number(metrics.usage_percent || 0).toFixed(1)}%`}
-            subtitle="Weekly credit consumption"
-          >
-            <LinearProgress
-              sx={{
-                height: 10,
-                borderRadius: 999,
-                mt: 2,
-                backgroundColor: `${theme.palette.primary.main}22`,
-                "& .MuiLinearProgress-bar": {
-                  backgroundColor: theme.palette.secondary.main,
-                },
-              }}
-              value={Math.min(metrics.usage_percent || 0, 100)}
-              variant="determinate"
-            />
-          </MetricCard>
-        </Box>
-        <Box sx={{ display: "flex" }}>
-          <MetricCard
-            title="Accounts Processed"
-            value={metrics.accounts_processed}
-            subtitle="Every enrichment attempt counted"
-          />
-        </Box>
-        <Box sx={{ display: "flex" }}>
-          <MetricCard
-            title="Accounts Updated"
-            value={metrics.accounts_updated}
-            subtitle="Dynamics records changed successfully"
-          />
-        </Box>
-      </Box>
+        <Typography color="text.secondary" variant="body2">
+          Weekly allowance: {metrics.remaining_credits ?? "—"} remaining of {metrics.weekly_limit ?? "—"} credits.
+        </Typography>
+        <Button disabled={isRunningEnrichment} onClick={runEnrichment} sx={{ alignSelf: { xs: "stretch", sm: "flex-start" }, minHeight: 44, fontWeight: 800 }} variant="contained">
+          {isRunningEnrichment ? "Running..." : "Run Enrichment"}
+        </Button>
+      </Stack>
 
       <Paper
         elevation={0}
@@ -617,56 +452,92 @@ export default function MetricsDashboard() {
         >
           <Box>
             <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="h6">
-              Action Center
+              Recent Activity
             </Typography>
             <Typography color="text.secondary" variant="body2">
-              Common enrichment actions and account review shortcuts.
+              Latest Seamless enrichment outcomes.
             </Typography>
           </Box>
-          <Chip label="4 actions" sx={{ fontWeight: 800 }} />
+          <Stack
+            alignItems={{ xs: "stretch", sm: "center" }}
+            direction={{ xs: "column", sm: "row" }}
+            spacing={1}
+            sx={{ width: { xs: "100%", sm: "auto" } }}
+          >
+            <Button
+              disabled={!recentActivity.length}
+              onClick={exportRecentActivityCsv}
+              size="small"
+              sx={{ borderRadius: 1, fontWeight: 800 }}
+              variant="outlined"
+            >
+              Export CSV
+            </Button>
+          </Stack>
         </Box>
-        <Box
-          sx={{
-            display: "grid",
-            gap: 1.5,
-            gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", lg: "repeat(4, minmax(0, 1fr))" },
-            p: { xs: 2, md: 3 },
-          }}
-        >
-          <Button
-            disabled={isRunningEnrichment}
-            onClick={runEnrichment}
-            sx={{ borderRadius: 1, fontWeight: 800, minHeight: 44 }}
-            variant="contained"
-          >
-            {isRunningEnrichment ? "Running..." : "Run Enrichment"}
-          </Button>
-          <Button
-            onClick={previewNextBatch}
-            sx={{ borderRadius: 1, fontWeight: 800, minHeight: 44 }}
-            variant="outlined"
-          >
-            Preview Next Batch
-          </Button>
-          <Button
-            disabled={!dataQualityPipeline.find((item) => item.category === "Ready for Enrichment")?.records?.length}
-            onClick={() => viewPipelineCategory("Ready for Enrichment")}
-            sx={{ borderRadius: 1, fontWeight: 800, minHeight: 44 }}
-            variant="outlined"
-          >
-            View Accounts Ready
-          </Button>
-          <Button
-            disabled={!dataQualityPipeline.find((item) => item.category === "Requires Manual Review")?.records?.length}
-            onClick={() => viewPipelineCategory("Requires Manual Review")}
-            sx={{ borderRadius: 1, fontWeight: 800, minHeight: 44 }}
-            variant="outlined"
-          >
-            View Manual Review
-          </Button>
-        </Box>
+        <TableContainer sx={{ overflowX: "auto" }}>
+          <Table size="small" sx={{ minWidth: 650 }}>
+            <TableHead>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 800 }}>Account Name</TableCell>
+                <TableCell sx={{ fontWeight: 800 }}>Result Status</TableCell>
+                <TableCell sx={{ fontWeight: 800 }}>Fields Updated</TableCell>
+                <TableCell sx={{ fontWeight: 800 }}>Credits Used</TableCell>
+                <TableCell sx={{ fontWeight: 800 }}>Timestamp</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {recentActivity.length ? (
+                paginatedRecentActivity.map((activity, index) => (
+                  <TableRow key={`${activity.account_name || "activity"}-${activity.timestamp || index}`} hover>
+                    <TableCell>{activity.account_name || "Unknown Account"}</TableCell>
+                    <TableCell>
+                      <Chip
+                        color={getStatusColor(activity.result_status)}
+                        label={activity.result_status || "Pending"}
+                        size="small"
+                        sx={{ fontWeight: 800 }}
+                        variant="outlined"
+                      />
+                    </TableCell>
+                    <TableCell sx={{ overflowWrap: "anywhere" }}>
+                      {getFieldsUpdatedDisplay(activity.fields_updated)}
+                    </TableCell>
+                    <TableCell>{activity.credits_used ?? 0}</TableCell>
+                    <TableCell>{formatTimestamp(activity.timestamp)}</TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={5} sx={{ py: 4, textAlign: "center" }}>
+                    <Typography color="text.secondary">
+                      No recent Seamless activity has been recorded yet.
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+        {recentActivity.length ? (
+          <TablePagination
+            sx={{ "& .MuiTablePagination-toolbar": { flexWrap: "wrap", justifyContent: "flex-end", px: 1 }, "& .MuiTablePagination-spacer": { display: { xs: "none", sm: "block" } } }}
+            component="div"
+            count={recentActivity.length}
+            onPageChange={(event, nextPage) => setRecentPage(nextPage)}
+            onRowsPerPageChange={(event) => {
+              setRecentRowsPerPage(parseInt(event.target.value, 10));
+              setRecentPage(0);
+            }}
+            page={recentPage}
+            rowsPerPage={recentRowsPerPage}
+            rowsPerPageOptions={[5, 10, 25]}
+          />
+        ) : null}
       </Paper>
 
+      <Box component="details" sx={{ minWidth: 0 }}>
+        <Typography component="summary" color="primary.main" sx={{ cursor: "pointer", fontWeight: 700, py: 1 }}>View enrichment audit history</Typography>
       <Paper
         elevation={0}
         sx={{
@@ -815,6 +686,7 @@ export default function MetricsDashboard() {
         </TableContainer>
         {auditHistory.length ? (
           <TablePagination
+            sx={{ "& .MuiTablePagination-toolbar": { flexWrap: "wrap", justifyContent: "flex-end", px: 1 }, "& .MuiTablePagination-spacer": { display: { xs: "none", sm: "block" } } }}
             component="div"
             count={auditHistory.length}
             onPageChange={(event, nextPage) => setAuditPage(nextPage)}
@@ -829,604 +701,7 @@ export default function MetricsDashboard() {
         ) : null}
       </Paper>
 
-      <Paper
-        elevation={0}
-        sx={{
-          border: "1px solid rgba(0, 51, 108, 0.10)",
-          borderRadius: 2,
-          overflow: "hidden",
-        }}
-      >
-        <Box
-          sx={{
-            alignItems: { xs: "flex-start", sm: "center" },
-            borderBottom: "1px solid rgba(0, 51, 108, 0.10)",
-            display: "flex",
-            flexDirection: { xs: "column", sm: "row" },
-            gap: 1,
-            justifyContent: "space-between",
-            px: { xs: 2, md: 3 },
-            py: 2,
-          }}
-        >
-          <Box>
-            <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="h6">
-              Alert Center
-            </Typography>
-            <Typography color="text.secondary" variant="body2">
-              Operational risks and recommended actions.
-            </Typography>
-          </Box>
-          <Chip
-            color={alerts.length ? "warning" : "success"}
-            label={alerts.length ? `${alerts.length} active` : "No active alerts"}
-            sx={{ fontWeight: 800 }}
-            variant="outlined"
-          />
-        </Box>
-        {alerts.length ? (
-          <Box
-            sx={{
-              display: "grid",
-              gap: 2,
-              gridTemplateColumns: { xs: "1fr", lg: "repeat(2, minmax(0, 1fr))" },
-              p: { xs: 2, md: 3 },
-            }}
-          >
-            {alerts.map((alert, index) => (
-              <Box
-                key={`${alert.severity}-${index}`}
-                sx={{
-                  border: "1px solid rgba(0, 51, 108, 0.10)",
-                  borderRadius: 1,
-                  p: 2,
-                }}
-              >
-                <Stack spacing={1.25}>
-                  <Stack alignItems="center" direction="row" justifyContent="space-between" spacing={1}>
-                    <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="body1">
-                      {alert.description}
-                    </Typography>
-                    <Chip
-                      color={getAlertColor(alert.severity)}
-                      label={alert.severity || "info"}
-                      size="small"
-                      sx={{ fontWeight: 800, textTransform: "capitalize" }}
-                      variant="outlined"
-                    />
-                  </Stack>
-                  <Typography color="text.secondary" variant="body2">
-                    {alert.recommended_action}
-                  </Typography>
-                </Stack>
-              </Box>
-            ))}
-          </Box>
-        ) : (
-          <Box sx={{ px: { xs: 2, md: 3 }, py: 4, textAlign: "center" }}>
-            <Typography color="text.secondary">
-              No active enrichment alerts. Usage and recent outcomes are within expected ranges.
-            </Typography>
-          </Box>
-        )}
-      </Paper>
-
-      <Paper
-        elevation={0}
-        sx={{
-          border: "1px solid rgba(0, 51, 108, 0.10)",
-          borderRadius: 2,
-          overflow: "hidden",
-        }}
-      >
-        <Box
-          sx={{
-            alignItems: { xs: "flex-start", sm: "center" },
-            borderBottom: "1px solid rgba(0, 51, 108, 0.10)",
-            display: "flex",
-            flexDirection: { xs: "column", sm: "row" },
-            gap: 1,
-            justifyContent: "space-between",
-            px: { xs: 2, md: 3 },
-            py: 2,
-          }}
-        >
-          <Box>
-            <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="h6">
-              Trend Tracking
-            </Typography>
-            <Typography color="text.secondary" variant="body2">
-              Usage patterns and enrichment performance over time.
-            </Typography>
-          </Box>
-          <Chip label="5 trends" sx={{ fontWeight: 800 }} />
-        </Box>
-        <Box
-          sx={{
-            display: "grid",
-            gap: 2,
-            gridTemplateColumns: { xs: "1fr", lg: "repeat(2, minmax(0, 1fr))" },
-            p: { xs: 2, md: 3 },
-          }}
-        >
-          <TrendChartCard subtitle="Credits consumed by day" title="Daily Credits Used">
-            {hasChartData(trends.daily_credits_used) ? (
-              <ResponsiveContainer height="100%" width="100%">
-                <AreaChart data={trends.daily_credits_used}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <Area dataKey="credits_used" fill={theme.palette.secondary.main} fillOpacity={0.24} stroke={theme.palette.secondary.main} strokeWidth={2} />
-                </AreaChart>
-              </ResponsiveContainer>
-            ) : (
-              <EmptySection message="No daily credit usage has been recorded yet." minHeight={190} />
-            )}
-          </TrendChartCard>
-
-          <TrendChartCard subtitle="Credits consumed by ISO week" title="Weekly Credits Used">
-            {hasChartData(trends.weekly_credits_used) ? (
-              <ResponsiveContainer height="100%" width="100%">
-                <BarChart data={trends.weekly_credits_used}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <Bar dataKey="credits_used" fill={theme.palette.primary.main} radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <EmptySection message="No weekly credit usage has been recorded yet." minHeight={190} />
-            )}
-          </TrendChartCard>
-
-          <TrendChartCard subtitle="Enrichment attempts by day" title="Accounts Processed Per Day">
-            {hasChartData(trends.accounts_processed_per_day) ? (
-              <ResponsiveContainer height="100%" width="100%">
-                <LineChart data={trends.accounts_processed_per_day}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <Line dataKey="accounts_processed" dot={{ r: 3 }} stroke={theme.palette.primary.main} strokeWidth={2} type="monotone" />
-                </LineChart>
-              </ResponsiveContainer>
-            ) : (
-              <EmptySection message="No account processing trend data has been recorded yet." minHeight={190} />
-            )}
-          </TrendChartCard>
-
-          <TrendChartCard subtitle="Dynamics records changed by day" title="Accounts Updated Per Day">
-            {hasChartData(trends.accounts_updated_per_day) ? (
-              <ResponsiveContainer height="100%" width="100%">
-                <LineChart data={trends.accounts_updated_per_day}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <Line dataKey="accounts_updated" dot={{ r: 3 }} stroke={theme.palette.secondary.main} strokeWidth={2} type="monotone" />
-                </LineChart>
-              </ResponsiveContainer>
-            ) : (
-              <EmptySection message="No account update trend data has been recorded yet." minHeight={190} />
-            )}
-          </TrendChartCard>
-
-          <Box sx={{ gridColumn: { xs: "auto", lg: "1 / -1" } }}>
-            <TrendChartCard subtitle="Updated accounts divided by processed accounts" title="Success Rate Over Time">
-              {hasChartData(trends.success_rate_over_time) ? (
-                <ResponsiveContainer height="100%" width="100%">
-                  <AreaChart data={trends.success_rate_over_time}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="period" tick={{ fontSize: 11 }} />
-                    <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(value) => [`${Number(value || 0).toFixed(1)}%`, "Success Rate"]} />
-                    <Area dataKey="success_rate" fill={theme.palette.success.main} fillOpacity={0.18} stroke={theme.palette.success.main} strokeWidth={2} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              ) : (
-                <EmptySection message="No success rate trend data has been recorded yet." minHeight={190} />
-              )}
-            </TrendChartCard>
-          </Box>
-        </Box>
-      </Paper>
-
-      <Paper
-        elevation={0}
-        sx={{
-          border: "1px solid rgba(0, 51, 108, 0.10)",
-          borderRadius: 2,
-          overflow: "hidden",
-        }}
-      >
-        <Box
-          sx={{
-            alignItems: { xs: "flex-start", sm: "center" },
-            borderBottom: "1px solid rgba(0, 51, 108, 0.10)",
-            display: "flex",
-            flexDirection: { xs: "column", sm: "row" },
-            gap: 1,
-            justifyContent: "space-between",
-            px: { xs: 2, md: 3 },
-            py: 2,
-          }}
-        >
-          <Box>
-            <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="h6">
-              Data Quality Pipeline
-            </Typography>
-            <Typography color="text.secondary" variant="body2">
-              Account readiness for Seamless enrichment.
-            </Typography>
-          </Box>
-          <Chip
-            label={`${dataQualityPipeline.reduce((total, item) => total + Number(item.count || 0), 0)} accounts`}
-            sx={{ fontWeight: 800 }}
-          />
-        </Box>
-        <Box
-          sx={{
-            display: "grid",
-            gap: 2,
-            gridTemplateColumns: {
-              xs: "1fr",
-              sm: "repeat(2, minmax(0, 1fr))",
-              lg: "repeat(3, minmax(0, 1fr))",
-            },
-            p: { xs: 2, md: 3 },
-          }}
-        >
-          {dataQualityPipeline.length ? (
-            dataQualityPipeline.map((pipelineItem) => (
-              <Box
-                key={pipelineItem.category}
-                sx={{
-                  border: "1px solid rgba(0, 51, 108, 0.10)",
-                  borderRadius: 1,
-                  p: 2,
-                }}
-              >
-                <Stack spacing={1.5}>
-                  <Stack alignItems="flex-start" direction="row" justifyContent="space-between" spacing={1}>
-                    <Typography color="text.secondary" sx={{ fontWeight: 800 }} variant="body2">
-                      {pipelineItem.category}
-                    </Typography>
-                    <Chip label={pipelineItem.count} size="small" sx={{ fontWeight: 800 }} variant="outlined" />
-                  </Stack>
-                  <Typography color="primary.main" sx={{ fontSize: "1.7rem", fontWeight: 800, lineHeight: 1 }}>
-                    {Number(pipelineItem.percentage || 0).toFixed(1)}%
-                  </Typography>
-                  <LinearProgress
-                    sx={{
-                      backgroundColor: `${theme.palette.primary.main}18`,
-                      borderRadius: 999,
-                      height: 8,
-                      "& .MuiLinearProgress-bar": {
-                        backgroundColor: theme.palette.secondary.main,
-                      },
-                    }}
-                    value={Math.min(Number(pipelineItem.percentage || 0), 100)}
-                    variant="determinate"
-                  />
-                  <Button
-                    disabled={!pipelineItem.records?.length}
-                    onClick={() => setSelectedPipelineCategory(pipelineItem)}
-                    size="small"
-                    sx={{ alignSelf: "flex-start", borderRadius: 1, fontWeight: 800 }}
-                    variant="outlined"
-                  >
-                    View Records
-                  </Button>
-                </Stack>
-              </Box>
-            ))
-          ) : (
-            <Box sx={{ gridColumn: "1 / -1" }}>
-              <EmptySection message="No account readiness data is available yet." />
-            </Box>
-          )}
-        </Box>
-      </Paper>
-
-      <Paper
-        elevation={0}
-        sx={{
-          border: "1px solid rgba(0, 51, 108, 0.10)",
-          borderRadius: 2,
-          overflow: "hidden",
-        }}
-      >
-        <Box
-          sx={{
-            alignItems: { xs: "flex-start", sm: "center" },
-            borderBottom: "1px solid rgba(0, 51, 108, 0.10)",
-            display: "flex",
-            flexDirection: { xs: "column", sm: "row" },
-            gap: 1,
-            justifyContent: "space-between",
-            px: { xs: 2, md: 3 },
-            py: 2,
-          }}
-        >
-          <Box>
-            <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="h6">
-              Enrichment Outcome Breakdown
-            </Typography>
-            <Typography color="text.secondary" variant="body2">
-              Result mix for recent Seamless enrichment activity.
-            </Typography>
-          </Box>
-          <Chip
-            label={`${outcomeBreakdown.reduce((total, outcome) => total + Number(outcome.count || 0), 0)} outcomes`}
-            sx={{ fontWeight: 800 }}
-          />
-        </Box>
-        <Box
-          sx={{
-            display: "grid",
-            gap: 2,
-            gridTemplateColumns: {
-              xs: "1fr",
-              sm: "repeat(2, minmax(0, 1fr))",
-              lg: "repeat(5, minmax(0, 1fr))",
-            },
-            p: { xs: 2, md: 3 },
-          }}
-        >
-          {outcomeBreakdown.length ? (
-            outcomeBreakdown.map((outcome) => {
-              const progressColor = getStatusProgressColor(outcome.result_status);
-
-              return (
-                <Box
-                  key={outcome.result_status}
-                  sx={{
-                    border: "1px solid rgba(0, 51, 108, 0.10)",
-                    borderRadius: 1,
-                    p: 2,
-                  }}
-                >
-                  <Stack spacing={1.25}>
-                    <Stack alignItems="center" direction="row" justifyContent="space-between" spacing={1}>
-                      <Typography color="text.secondary" sx={{ fontWeight: 800 }} variant="body2">
-                        {outcome.result_status}
-                      </Typography>
-                      <Chip
-                        color={getStatusColor(outcome.result_status)}
-                        label={outcome.count}
-                        size="small"
-                        sx={{ fontWeight: 800 }}
-                        variant="outlined"
-                      />
-                    </Stack>
-                    <Typography color="primary.main" sx={{ fontSize: "1.65rem", fontWeight: 800, lineHeight: 1 }}>
-                      {Number(outcome.percentage || 0).toFixed(1)}%
-                    </Typography>
-                    <LinearProgress
-                      sx={{
-                        backgroundColor: `${theme.palette.primary.main}18`,
-                        borderRadius: 999,
-                        height: 8,
-                        "& .MuiLinearProgress-bar": {
-                          backgroundColor: progressColor,
-                        },
-                      }}
-                      value={Math.min(Number(outcome.percentage || 0), 100)}
-                      variant="determinate"
-                    />
-                  </Stack>
-                </Box>
-              );
-            })
-          ) : (
-            <Box sx={{ gridColumn: "1 / -1" }}>
-              <EmptySection message="No enrichment outcome data is available yet." />
-            </Box>
-          )}
-        </Box>
-      </Paper>
-
-      <Paper
-        elevation={0}
-        sx={{
-          border: "1px solid rgba(0, 51, 108, 0.10)",
-          borderRadius: 2,
-          overflow: "hidden",
-        }}
-      >
-        <Box
-          sx={{
-            alignItems: { xs: "flex-start", sm: "center" },
-            borderBottom: "1px solid rgba(0, 51, 108, 0.10)",
-            display: "flex",
-            flexDirection: { xs: "column", sm: "row" },
-            gap: 1,
-            justifyContent: "space-between",
-            px: { xs: 2, md: 3 },
-            py: 2,
-          }}
-        >
-          <Box>
-            <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="h6">
-              Field Impact Analytics
-            </Typography>
-            <Typography color="text.secondary" variant="body2">
-              Fields most frequently improved by Seamless enrichment.
-            </Typography>
-          </Box>
-          <Stack
-            alignItems={{ xs: "stretch", sm: "center" }}
-            direction={{ xs: "column", sm: "row" }}
-            spacing={1}
-            sx={{ width: { xs: "100%", sm: "auto" } }}
-          >
-            <Button
-              disabled={!fieldImpact.length}
-              onClick={exportFieldImpactCsv}
-              size="small"
-              sx={{ borderRadius: 1, fontWeight: 800 }}
-              variant="outlined"
-            >
-              Export CSV
-            </Button>
-            <Chip
-              label={`${fieldImpact.reduce((total, field) => total + Number(field.total_updates || 0), 0)} updates`}
-              sx={{ fontWeight: 800 }}
-            />
-          </Stack>
-        </Box>
-        <Box sx={{ p: { xs: 2, md: 3 } }}>
-          {fieldImpact.length ? (
-            <Stack spacing={2}>
-              {fieldImpact.map((field) => (
-                <Box
-                  key={field.field}
-                  sx={{
-                    display: "grid",
-                    gap: 1.5,
-                    gridTemplateColumns: { xs: "1fr", sm: "180px minmax(0, 1fr) 120px" },
-                    alignItems: "center",
-                  }}
-                >
-                  <Typography color="text.secondary" sx={{ fontWeight: 800 }} variant="body2">
-                    {field.field}
-                  </Typography>
-                  <LinearProgress
-                    sx={{
-                      backgroundColor: `${theme.palette.primary.main}18`,
-                      borderRadius: 999,
-                      height: 10,
-                      "& .MuiLinearProgress-bar": {
-                        backgroundColor: theme.palette.secondary.main,
-                      },
-                    }}
-                    value={Math.min(Number(field.percentage || 0), 100)}
-                    variant="determinate"
-                  />
-                  <Stack alignItems={{ xs: "flex-start", sm: "flex-end" }} spacing={0.25}>
-                    <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="body2">
-                      {field.total_updates} update{Number(field.total_updates || 0) === 1 ? "" : "s"}
-                    </Typography>
-                    <Typography color="text.secondary" variant="caption">
-                      {Number(field.percentage || 0).toFixed(1)}%
-                    </Typography>
-                  </Stack>
-                </Box>
-              ))}
-            </Stack>
-          ) : (
-            <EmptySection message="No field impact data is available yet." />
-          )}
-        </Box>
-      </Paper>
-
-      <Paper
-        elevation={0}
-        sx={{
-          border: "1px solid rgba(0, 51, 108, 0.10)",
-          borderRadius: 2,
-          overflow: "hidden",
-        }}
-      >
-        <Box
-          sx={{
-            alignItems: { xs: "flex-start", sm: "center" },
-            borderBottom: "1px solid rgba(0, 51, 108, 0.10)",
-            display: "flex",
-            flexDirection: { xs: "column", sm: "row" },
-            gap: 1,
-            justifyContent: "space-between",
-            px: { xs: 2, md: 3 },
-            py: 2,
-          }}
-        >
-          <Box>
-            <Typography color="primary.main" sx={{ fontWeight: 800 }} variant="h6">
-              Recent Activity
-            </Typography>
-            <Typography color="text.secondary" variant="body2">
-              Latest Seamless enrichment outcomes.
-            </Typography>
-          </Box>
-          <Stack
-            alignItems={{ xs: "stretch", sm: "center" }}
-            direction={{ xs: "column", sm: "row" }}
-            spacing={1}
-            sx={{ width: { xs: "100%", sm: "auto" } }}
-          >
-            <Button
-              disabled={!recentActivity.length}
-              onClick={exportRecentActivityCsv}
-              size="small"
-              sx={{ borderRadius: 1, fontWeight: 800 }}
-              variant="outlined"
-            >
-              Export CSV
-            </Button>
-            <Chip label={`${recentActivity.length} recent`} sx={{ fontWeight: 800 }} />
-          </Stack>
-        </Box>
-        <TableContainer sx={{ overflowX: "auto" }}>
-          <Table size="small" sx={{ minWidth: 880 }}>
-            <TableHead>
-              <TableRow>
-                <TableCell sx={{ fontWeight: 800 }}>Account Name</TableCell>
-                <TableCell sx={{ fontWeight: 800 }}>Result Status</TableCell>
-                <TableCell sx={{ fontWeight: 800 }}>Fields Updated</TableCell>
-                <TableCell sx={{ fontWeight: 800 }}>Credits Used</TableCell>
-                <TableCell sx={{ fontWeight: 800 }}>Timestamp</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {recentActivity.length ? (
-                paginatedRecentActivity.map((activity, index) => (
-                  <TableRow key={`${activity.account_name || "activity"}-${activity.timestamp || index}`} hover>
-                    <TableCell>{activity.account_name || "Unknown Account"}</TableCell>
-                    <TableCell>
-                      <Chip
-                        color={getStatusColor(activity.result_status)}
-                        label={activity.result_status || "Pending"}
-                        size="small"
-                        sx={{ fontWeight: 800 }}
-                        variant="outlined"
-                      />
-                    </TableCell>
-                    <TableCell sx={{ overflowWrap: "anywhere" }}>
-                      {getFieldsUpdatedDisplay(activity.fields_updated)}
-                    </TableCell>
-                    <TableCell>{activity.credits_used ?? 0}</TableCell>
-                    <TableCell>{formatTimestamp(activity.timestamp)}</TableCell>
-                  </TableRow>
-                ))
-              ) : (
-                <TableRow>
-                  <TableCell colSpan={5} sx={{ py: 4, textAlign: "center" }}>
-                    <Typography color="text.secondary">
-                      No recent Seamless activity has been recorded yet.
-                    </Typography>
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
-        {recentActivity.length ? (
-          <TablePagination
-            component="div"
-            count={recentActivity.length}
-            onPageChange={(event, nextPage) => setRecentPage(nextPage)}
-            onRowsPerPageChange={(event) => {
-              setRecentRowsPerPage(parseInt(event.target.value, 10));
-              setRecentPage(0);
-            }}
-            page={recentPage}
-            rowsPerPage={recentRowsPerPage}
-            rowsPerPageOptions={[5, 10, 25]}
-          />
-        ) : null}
-      </Paper>
+      </Box>
 
       <Dialog
         fullWidth
@@ -1480,16 +755,6 @@ export default function MetricsDashboard() {
       >
         <Alert onClose={() => setActionMessage("")} severity="success" sx={{ width: "100%" }}>
           {actionMessage}
-        </Alert>
-      </Snackbar>
-
-      <Snackbar
-        autoHideDuration={5000}
-        onClose={() => setActionInfo("")}
-        open={Boolean(actionInfo)}
-      >
-        <Alert onClose={() => setActionInfo("")} severity="info" sx={{ width: "100%" }}>
-          {actionInfo}
         </Alert>
       </Snackbar>
 

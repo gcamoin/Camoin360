@@ -9,6 +9,7 @@ import httpx
 from dotenv import load_dotenv
 from .locations import normalize_state_province
 from .usage import update_total_credits_remaining
+from .account_enrichment_history import note_provider_request, persist_provider_activity
 
 load_dotenv()
 
@@ -204,7 +205,11 @@ async def enrich_with_seamless(company: dict[str, Any] | None) -> dict[str, Any]
 
     async def search(payload: dict[str, Any]) -> list[dict[str, Any]]:
         async with httpx.AsyncClient() as client:
-            response = await client.post(SEAMLESS_API_URL, headers=headers, json=payload)
+            note_provider_request()
+            try:
+                response = await client.post(SEAMLESS_API_URL, headers=headers, json=payload)
+            finally:
+                await persist_provider_activity()
 
         response_headers = getattr(response, "headers", {})
         remaining_credits = (

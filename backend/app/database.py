@@ -25,8 +25,8 @@ def _require_database_url() -> str:
     return DATABASE_URL
 
 
-def _connect():
-    return psycopg.connect(_require_database_url(), row_factory=dict_row)
+def _connect(**kwargs):
+    return psycopg.connect(_require_database_url(), row_factory=dict_row, **kwargs)
 
 
 def _translate_placeholders(sql: str, parameters):
@@ -68,12 +68,12 @@ class _CompatConnection:
         return getattr(self._connection, name)
 
 
-def initialize_database(force: bool = False):
+def initialize_database(force: bool = False, **connection_options):
     global _initialized
     if _initialized and not force:
         return
 
-    connection = _connect()
+    connection = _connect(**connection_options)
     wrapped = _CompatConnection(connection)
     try:
         wrapped.execute(
@@ -175,6 +175,99 @@ def initialize_database(force: bool = False):
         )
         wrapped.execute(
             "CREATE INDEX IF NOT EXISTS idx_software_subscriptions_contact ON software_subscriptions (point_of_contact)"
+        )
+        wrapped.execute(
+            """
+            CREATE TABLE IF NOT EXISTS account_enrichment_history (
+                id UUID PRIMARY KEY,
+                dynamics_account_id TEXT NOT NULL,
+                account_name TEXT,
+                account_created_on TIMESTAMPTZ,
+                received_at TIMESTAMPTZ NOT NULL,
+                started_at TIMESTAMPTZ,
+                completed_at TIMESTAMPTZ,
+                status TEXT CHECK (status IN (
+                    'updated', 'no_match', 'no_updates_needed',
+                    'skipped_already_attempted', 'skipped_credit_limit', 'failed'
+                )),
+                reason_code TEXT,
+                error_category TEXT,
+                error_message TEXT,
+                provider TEXT NOT NULL DEFAULT 'seamless',
+                provider_called BOOLEAN NOT NULL DEFAULT FALSE,
+                provider_request_count INTEGER NOT NULL DEFAULT 0 CHECK (provider_request_count >= 0),
+                fields_updated TEXT[] NOT NULL DEFAULT '{}',
+                completion_uncertain BOOLEAN NOT NULL DEFAULT FALSE,
+                CHECK (provider_called = (provider_request_count > 0)),
+                CHECK ((completed_at IS NULL) = (status IS NULL))
+            )
+            """
+        )
+        wrapped.execute(
+            "CREATE INDEX IF NOT EXISTS idx_enrichment_history_account ON account_enrichment_history (dynamics_account_id, received_at DESC)"
+        )
+        wrapped.execute(
+            "CREATE INDEX IF NOT EXISTS idx_enrichment_history_completed ON account_enrichment_history (completed_at DESC) WHERE completed_at IS NOT NULL"
+        )
+        wrapped.execute(
+            "CREATE INDEX IF NOT EXISTS idx_enrichment_history_open ON account_enrichment_history (received_at) WHERE completed_at IS NULL"
+        )
+        wrapped.execute(
+            "CREATE INDEX IF NOT EXISTS idx_enrichment_history_created ON account_enrichment_history (account_created_on DESC) WHERE account_created_on IS NOT NULL"
+        )
+        wrapped.execute(
+            """CREATE TABLE IF NOT EXISTS maintenance_account_observations (
+                dynamics_account_id TEXT PRIMARY KEY,
+                account_name TEXT,
+                dynamics_created_on TIMESTAMPTZ NOT NULL,
+                enrichment_attempted BOOLEAN,
+                enrichment_last_attempted_on TIMESTAMPTZ,
+                first_observed_at TIMESTAMPTZ NOT NULL,
+                last_observed_at TIMESTAMPTZ NOT NULL
+            )"""
+        )
+        wrapped.execute("CREATE INDEX IF NOT EXISTS idx_maintenance_observed_created ON maintenance_account_observations (dynamics_created_on DESC, dynamics_account_id)")
+        wrapped.execute("CREATE INDEX IF NOT EXISTS idx_maintenance_observed_seen ON maintenance_account_observations (last_observed_at DESC)")
+        wrapped.execute("CREATE INDEX IF NOT EXISTS idx_maintenance_observed_attempted ON maintenance_account_observations (enrichment_attempted, dynamics_created_on DESC)")
+        wrapped.execute(
+            """CREATE TABLE IF NOT EXISTS maintenance_total_account_snapshot (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                value BIGINT NOT NULL CHECK (value >= 0),
+                fetched_at TIMESTAMPTZ NOT NULL,
+                source TEXT NOT NULL
+            )"""
+        )
+        wrapped.execute(
+            """CREATE TABLE IF NOT EXISTS maintenance_account_creation_counts (
+                reporting_date DATE PRIMARY KEY,
+                interval_start TIMESTAMPTZ NOT NULL,
+                interval_end TIMESTAMPTZ NOT NULL,
+                value BIGINT NOT NULL CHECK (value >= 0),
+                fetched_at TIMESTAMPTZ NOT NULL,
+                is_complete BOOLEAN NOT NULL,
+                CHECK (interval_end >= interval_start)
+            )"""
+        )
+        wrapped.execute(
+            """CREATE TABLE IF NOT EXISTS maintenance_sync_state (
+                sync_key TEXT PRIMARY KEY CHECK (sync_key IN ('discovery', 'total', 'counts')),
+                tracking_started_at TIMESTAMPTZ NOT NULL,
+                coverage_started_at TIMESTAMPTZ,
+                watermark TIMESTAMPTZ,
+                interval_start TIMESTAMPTZ,
+                interval_end TIMESTAMPTZ,
+                next_link TEXT,
+                page_size INTEGER,
+                status TEXT NOT NULL DEFAULT 'idle' CHECK (status IN ('idle', 'running', 'incomplete', 'error')),
+                coverage_complete BOOLEAN NOT NULL DEFAULT FALSE,
+                last_started_at TIMESTAMPTZ,
+                last_finished_at TIMESTAMPTZ,
+                last_succeeded_at TIMESTAMPTZ,
+                last_error TEXT,
+                last_error_at TIMESTAMPTZ,
+                requests_last_refresh INTEGER NOT NULL DEFAULT 0,
+                rows_last_refresh INTEGER NOT NULL DEFAULT 0
+            )"""
         )
         wrapped.execute(
             """
@@ -495,9 +588,9 @@ def initialize_database(force: bool = False):
 
 
 @contextmanager
-def get_database_connection():
+def get_database_connection(**connection_options):
     initialize_database()
-    connection = _connect()
+    connection = _connect(**connection_options)
     wrapped = _CompatConnection(connection)
 
     try:

@@ -15,6 +15,9 @@ from ..database import get_database_connection
 from .reporting_period import matches_reporting_date
 from .auth import get_access_token
 from .metrics import increment_processed, log_update
+from .account_enrichment_history import (
+    note_account, note_confirmed_fields, note_phase, note_uncertain_write,
+)
 from .seamless import enrich_with_seamless, normalize_naics_code
 from .usage import can_make_request, increment_usage, load_usage, WEEKLY_LIMIT
 from .locations import normalize_country_group, normalize_state_province
@@ -4345,7 +4348,7 @@ async def update_account(account_id: str, updates: dict):
 ENRICHMENT_ACCOUNT_FIELDS = (
     "accountid,name,websiteurl,telephone1,description,numberofemployees,"
     "address1_city,address1_stateorprovince,address1_country,address1_postalcode,"
-    "cr73c_naicscode,cr73c_enrichmentattempted"
+    "cr73c_naicscode,cr73c_enrichmentattempted,createdon"
 )
 ENRICHMENT_FIELD_NAMES = (
     "websiteurl",
@@ -4400,7 +4403,13 @@ async def _mark_enrichment_attempted(account_id: str, updates: dict[str, object]
         "cr73c_enrichmentattempted": True,
         "cr73c_enrichmentlastattemptedon": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    await update_account(account_id, attempt_updates)
+    note_phase("dynamics_write")
+    try:
+        await update_account(account_id, attempt_updates)
+    except httpx.TransportError:
+        note_uncertain_write()
+        raise
+    note_confirmed_fields(updates)
 
 
 async def enrich_one_account(account_id: str) -> dict[str, object]:
@@ -4417,6 +4426,8 @@ async def enrich_one_account(account_id: str) -> dict[str, object]:
             "skipped_reason": f"Unable to fetch Dynamics account: {exc}",
         }
 
+    note_account(account)
+    note_phase("internal")
     account_name = account.get("name")
     if account.get("cr73c_enrichmentattempted") is True:
         logger.info("Enrichment skipped for account_id=%s name=%r: already attempted", account_id, account_name)
@@ -4475,6 +4486,7 @@ async def enrich_one_account(account_id: str) -> dict[str, object]:
             "skipped_reason": "No credit-worthy automatic enrichment fields are missing.",
         }
 
+    note_phase("configuration")
     if not os.getenv("SEAMLESS_API_KEY"):
         logger.error("Seamless enrichment cannot run for account_id=%s: SEAMLESS_API_KEY is not configured", account_id)
         return {
@@ -4485,6 +4497,7 @@ async def enrich_one_account(account_id: str) -> dict[str, object]:
             "skipped_reason": "Seamless enrichment is not configured.",
         }
 
+    note_phase("credit_check")
     try:
         credit_available = can_make_request()
     except Exception:
@@ -4508,6 +4521,7 @@ async def enrich_one_account(account_id: str) -> dict[str, object]:
             "skipped_reason": f"Weekly Seamless credit limit ({WEEKLY_LIMIT}) has been reached.",
         }
 
+    note_phase("provider")
     try:
         # A credit is consumed once a Seamless request is attempted, even if it has no match or errors.
         try:
@@ -4529,6 +4543,7 @@ async def enrich_one_account(account_id: str) -> dict[str, object]:
             "skipped_reason": "Seamless enrichment request failed.",
         }
 
+    note_phase("internal")
     updates: dict[str, object] = {}
     for field_name in missing_fields:
         value = _normalise_enrichment_value(field_name, seamless_data.get(field_name))

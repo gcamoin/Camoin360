@@ -358,6 +358,51 @@ preflight credit-budget check stops enrichment conservatively, because the
 backend cannot establish whether another request is within the limit. The
 automatic path does not write the separate `metrics_tracker.json` update history.
 
+### Durable automatic enrichment history
+
+Accepted `POST /accounts/enrich-one/{accountid}` requests now write a separate
+PostgreSQL `account_enrichment_history` row before Account/provider processing.
+The existing idempotent database initializer creates this additive table and its
+Account, completion, open-attempt, and Account-created-on indexes. Rejected
+authentication requests do not create receipts. No new migration framework is
+required.
+
+Each UUID identifies one request, including duplicate deliveries. The row records
+Account identity/name/`createdon` when known; UTC received, started, and completed
+timestamps; the exact backend status; a structured reason and sanitized failure
+category/message; Seamless search activity; confirmed updated logical fields;
+and an explicit `completion_uncertain` flag for Dynamics transport failures.
+Account IDs remain text to preserve the endpoint's existing accepted input
+contract. `status` and `completed_at` are null until there is a terminal outcome.
+
+Provider telemetry counts actual HTTP search attempts, including the existing
+name-only fallback (one or two searches), and is checkpointed after each search
+settles. It does not change invocation-level credit accounting. A
+`no_updates_needed` result with zero searches is an unpaid preflight decision;
+the same result with searches means a paid lookup added no fields. Duplicate
+`skipped_already_attempted` rows never replace earlier attempts and must be
+excluded when selecting an Account's meaningful outcome for future Home metrics.
+Fields are recorded only after Dynamics confirms its PATCH, never merely because
+the provider supplied them. No field values, raw responses, credentials,
+authentication headers, exception strings, or stack traces are stored.
+
+History writes are best effort, use worker threads and bounded database connection,
+statement, and lock waits, and log only a fixed tracking-gap warning on failure.
+They do not retry enrichment, call Seamless again, change the HTTP response, or
+disable enrichment if history persistence fails. A later checkpoint/completion
+can insert the same request row if receipt persistence failed. A failed final
+write can leave an open row even after successful enrichment.
+
+Cancellation preserves an open attempt rather than inventing a terminal result.
+A hard process exit can lose the latest telemetry or completion checkpoint;
+open-attempt counters are therefore partial observations, not proof that the
+provider was never called. PostgreSQL and Dynamics/provider operations are not
+one transaction: a lost Dynamics PATCH response remains unconfirmed even if the
+write committed. The history does not infer success from the Dynamics attempted
+flag or reconstruct older outcomes. Home must represent such tracking gaps and
+uncertainty explicitly. The history step adds no Home UI, count aggregation, retry
+scheduler, or Power Automate changes.
+
 The future flow must inspect the returned `status`: enrichment failures currently
 return HTTP 200 with `status: failed`. No retry scheduling or queue is provided.
 If Dynamics commits a PATCH but its response is lost, the backend returns failed
@@ -373,6 +418,411 @@ curl -X POST "http://localhost:8000/accounts/enrich-one/<accountid>" \
   -H "x-api-key: $POWER_AUTOMATE_API_KEY" \
   -H "Content-Type: application/json"
 ```
+
+## Sophie Maintenance Account observation and counts (Home Step 2)
+
+`maintenance_observations.py` supplies reusable refresh services and PostgreSQL-only
+snapshot readers. It does not add the Home frontend, `/maintenance/home`, a
+scheduler, Power Automate changes, enrichment calls, or Dynamics writes.
+
+The existing additive database initializer creates:
+
+- `maintenance_account_observations`: Account ID/name/UTC creation time, observed
+  attempt flag/last-attempt time, and UTC first/last observation times. Indexed by
+  creation, observation, and attempt state. This is a bounded operational set,
+  not an Account mirror.
+- `maintenance_total_account_snapshot`: last valid total, fetched time, and source.
+- `maintenance_account_creation_counts`: reporting date, exact UTC count interval,
+  last valid count/fetched time, and whether the reporting day is complete.
+- `maintenance_sync_state`: independent discovery/total/count refresh status,
+  tracking start, coverage start, watermark, in-progress interval/paging cursor,
+  request/row counts, successful refresh time, and sanitized errors.
+
+### Invocation and freshness
+
+In a configured backend worker or an explicitly invoked maintenance job:
+
+```python
+from backend.app.services.maintenance_observations import refresh_maintenance_observations
+
+# Async caller; required DATABASE_URL and Dynamics OAuth environment must be configured.
+result = await refresh_maintenance_observations()
+```
+
+Individual async services are `refresh_account_discovery`,
+`refresh_total_account_count`, and `refresh_account_creation_counts`. Synchronous
+`read_count_snapshots` and `read_recent_account_observations` read only PostgreSQL;
+an async API can run them in a worker thread. Never invoke the refresh orchestrator
+from a browser request. The existing OAuth token cache is reused. PostgreSQL
+snapshots, due checks, and session advisory locks coordinate refreshes across
+workers; no process-local cache is treated as authoritative.
+
+Recommended future invocation: discovery every 1–2 minutes, today's count every
+2–5 minutes, and total count hourly. Defaults skip successful discovery for 120
+seconds, refresh today's count after 180 seconds, and refresh the total after
+3600 seconds. Completed reporting days are persisted and reused. Counts default
+to 14 days and support up to 30; a day first captured while open is finalized on
+the next day's refresh. The week count sums Monday through today's cached daily
+counts, avoiding another Dynamics request. Missing/incomplete prerequisite days
+produce an unknown week total, never a fabricated zero.
+
+### Discovery and coverage
+
+Discovery selects only `accountid`, `name`, `createdon`,
+`cr73c_enrichmentattempted`, and `cr73c_enrichmentlastattemptedon`. Every query has
+an explicit half-open creation-time filter and deterministic
+`createdon asc,accountid asc` ordering. Pagination uses `odata.maxpagesize`, not
+`$top`/`$skip`, and follows the server cursor unchanged with the same page size.
+Continuation URLs must match the configured Dynamics origin, Account path,
+selected fields, ordering, and fixed interval; credentials and unbounded or
+foreign continuation queries are rejected. Only the validated paging cursor is
+persisted, not headers or HTTP response bodies; snapshot readers omit it.
+
+First discovery establishes `tracking_started_at` and bootstraps the last 14 New
+York calendar days, including today. Defaults allow 10 pages of 500 rows per
+refresh. Each page's upserts and resume cursor commit together. Only completing
+the fixed interval advances the watermark; partial budgets and failures preserve
+confirmed coverage and report `coverage_complete=false`. Subsequent invocations
+resume unfinished intervals, then catch up if budget remains. Completed intervals
+overlap the preceding watermark by five minutes. A restarted worker can resume
+without replaying the entire bootstrap.
+
+Observations are retained for 30 days and capped at 50,000 rows by default. Hitting
+the cap pauses progress with an explicit incomplete state; it does not silently
+discard Accounts from the interval being covered. A backlog older than retention
+reports `discovery_retention_gap` without jumping the watermark. An operator must
+then choose a larger bounded retention/cap or explicitly establish a new tracking
+baseline and acknowledge the gap. Bootstrap coverage is not historical enrichment
+coverage. Attempt metadata reflects its last observation and is not continuously
+resynchronized outside discovery overlap. Backdated imports or Accounts becoming
+visible beyond the overlap can require an explicit bounded reconciliation; this
+is not an audit/change-tracking feed.
+
+### Count queries and reporting boundaries
+
+Total count uses `RetrieveTotalRecordCount` for logical table `account`, never
+`$count=true` or Account enumeration. This is the Dataverse snapshot (potentially
+up to 24 hours old when fetched), not an instantaneous live total. The snapshot
+reader returns fetched time, source, and refresh staleness separately.
+
+Creation counts use per-day FetchXML `count(accountid)` aggregates with explicit
+`createdon >= start` and `createdon < end` filters. New York local midnights are
+converted independently to UTC, handling 23/25-hour DST days and Monday-start
+weeks. Today's interval ends at the refresh reference time; completed days use
+their full reporting-day boundaries. No raw-datetime grouping is used.
+
+Dataverse aggregate-limit errors split the interval into nonoverlapping halves.
+There is a shared 64-request budget per creation-count refresh. Only a completely
+counted day replaces its snapshot; partial sums are never stored. If splitting
+cannot resolve a bulk import concentrated into a one-second interval, coverage
+remains incomplete and the old valid snapshot remains. No fallback downloads
+Account rows. Historical counts describe rows available in Dynamics when sampled;
+they cannot reconstruct previously deleted Accounts. Persisted complete-day
+counts are snapshots, not a live deletion-adjusted series; `force=True` supports
+an explicit bounded reconciliation.
+
+### Receipt presence, failures, and configuration
+
+The observation reader joins `account_enrichment_history` by Account ID for
+receipt presence. It returns facts, not final enrichment display statuses. An
+overdue-no-request flag requires fresh complete discovery coverage, creation
+after forward tracking began, and no recorded receipt after the grace period.
+The grace clock uses the later of creation or first observation, avoiding
+immediate alarms for late discovery. Default grace is 300 seconds. Historical
+bootstrap Accounts and stale/incomplete coverage are not declared missed delivery.
+No observed receipt is not an enrichment failure, and Step 1 history-write gaps
+still remain possible.
+
+All configuration uses `MAINTENANCE_<SETTING>` environment variables, validated
+within bounds. Available settings are `BOOTSTRAP_DAYS`, `RETENTION_DAYS`,
+`MAX_OBSERVATIONS`, `PAGE_SIZE`, `MAX_DISCOVERY_PAGES`, `OVERLAP_SECONDS`,
+`DISCOVERY_SECONDS`, `PENDING_GRACE_SECONDS`, `TODAY_SECONDS`, `TOTAL_SECONDS`, and
+`MAX_COUNT_REQUESTS`. Retention must cover the bootstrap window. Refreshes bound
+Dynamics requests, use 20-second HTTP timeouts, and bound PostgreSQL connection,
+statement, and lock waits. PostgreSQL operations run in worker threads.
+
+Dynamics failure preserves valid snapshots and stores only sanitized error codes.
+Missing snapshots stay unknown; successful zero counts remain distinguishable.
+PostgreSQL failure stops refresh safely. Cancellation and clock regression do not
+advance unconfirmed discovery coverage. No API keys, bearer tokens, unnecessary
+Account fields, Seamless data, or raw responses are stored or logged by these
+services. Home Step 3 must expose freshness, tracking gaps, and incomplete coverage.
+Scheduling, production query validation, final status mapping, and the Home API/UI
+remain future work.
+
+## Sophie Maintenance Home API (Home Step 3)
+
+`GET /maintenance/home` requires the existing user Bearer authentication and
+`main` module access (including existing administrator access). Power Automate
+`x-api-key` authentication does not authorize this route. All `/maintenance`
+paths are covered by the existing module middleware, and the router also has a
+`require_module("main")` dependency.
+
+Query parameters:
+
+- `days`: 7–30, default 14; controls the daily chart range.
+- `view`: `recent` (default) or `attention`.
+- `limit`: 1–100, default 25.
+- `cursor`: opaque, bounded continuation token returned as `next_cursor`.
+
+The response consists of:
+
+- `reporting`: timezone, Monday week start, tracking/coverage start timestamps,
+  and whether discovery coverage is complete and fresh.
+- `metrics.total_dynamics_accounts`: value (nullable), source, fetched timestamp,
+  source-age caveat (24 hours at fetch), and staleness. No valid snapshot means
+  unknown, never an invented zero.
+- `metrics.new_accounts_today` / `new_accounts_this_week`: nullable cached counts.
+- `metrics.enrichment_success_rate`: nullable percentage, successful and known
+  terminal unique Account counts, observed Account count, `this_week` period,
+  `observed_new_accounts` scope, and coverage flag.
+- `account_creation_by_day`: every requested local reporting date with nullable
+  count, completeness/staleness flags, and fetched timestamp. Today's count is
+  known through its snapshot cutoff even though the day is not complete. An
+  incomplete historical day returns null. A confirmed zero remains zero.
+- `recent_accounts`: Account ID/name/creation timestamp, display status and label,
+  underlying meaningful backend status, provider-call facts, confirmed logical
+  fields and friendly labels, fixed result summary, and attention boolean.
+  Provider-call facts are null when no meaningful history exists.
+- `next_cursor`: next page token or null.
+- `freshness`: generation time, 45-second cache TTL, total snapshot age,
+  discovery refresh times/watermark/lag/coverage, count refresh times/staleness,
+  and best-effort history tracking limitations.
+- `warnings`: fixed readable notices about missing/stale counts, incomplete
+  observation coverage, partial-week tracking, dependency on a separate worker,
+  and possible enrichment-history persistence gaps. Raw errors and paging
+  cookies are not returned.
+
+### One authoritative evidence mapping
+
+The PostgreSQL status expression is shared by table rows, attention filtering,
+and success-rate aggregation:
+
+| Persisted evidence | Display status | Attention |
+| --- | --- | --- |
+| `updated` | Enriched | No |
+| `no_updates_needed`, no provider call | No paid enrichment needed | No |
+| `no_updates_needed`, provider called | Completed — no fields added | No |
+| `no_match`, provider called | No usable match | Yes |
+| `no_match`, `missing_company_name` reason | Needs attention — missing company name | Yes |
+| `failed` | Failed | Yes |
+| `failed`, completion uncertain | Failed — update unconfirmed | Yes |
+| `skipped_credit_limit` | Credit limit | Yes |
+| Open meaningful attempt | Processing | No |
+| Open attempt past configured processing grace | Processing — delayed | Yes |
+| No receipt, within creation/first-observation grace | Pending | No |
+| No receipt past grace, eligible fresh forward coverage | Needs attention — no Sophie request observed | Yes |
+| Duplicate-only, unsupported outcome, or insufficient older coverage | History unavailable | No |
+
+The latest non-duplicate attempt is selected by receipt timestamp, then durable
+ID. A newer open meaningful attempt supersedes an earlier completed one.
+`skipped_already_attempted` never hides a meaningful result. The Dynamics
+attempted flag is never used to infer success. No derived statuses are written.
+Missing requests are delivery observations, not enrichment failures. Processing
+is delayed after 900 seconds by default, configurable via
+`MAINTENANCE_PROCESSING_GRACE_SECONDS` (60–86400). No-receipt grace uses Step 2's
+`MAINTENANCE_PENDING_GRACE_SECONDS`, measured from the later of creation and
+first observation. Attention requires no Alert Center or new alert persistence.
+
+This week's success numerator includes Enriched and No paid enrichment needed.
+The denominator includes all known meaningful terminal outcomes, including paid
+lookups adding no fields, no usable match, missing name, failures, and credit
+limits. Paid lookups adding no fields are **not successes**: they completed but
+did not deliver missing data. Pending, processing (including delayed), missing
+requests, and unavailable/duplicate-only history are excluded. Each observed
+Account contributes once. A zero denominator returns null. These are outcomes
+for observed new Accounts, not a promise of complete historical enrichment
+coverage. Coverage is false if discovery is stale/incomplete or tracking began
+after the reporting week started, or the retained observation window does not
+cover the week.
+
+Only persisted confirmed fields from successful updates are displayed:
+Website, Phone, Description, Employees, City, State, Country, Postal Code, and
+NAICS. No raw provider data or stored error messages are returned.
+
+### Pagination, caching, errors, and scheduling
+
+The table is a bounded PostgreSQL query over Step 2's retained observations,
+with indexed lateral history lookups and server-side attention filtering.
+Ordering is creation timestamp descending, then Account ID descending. Cursor
+pagination preserves a creation/first-observation upper boundary and a last-row
+key; newly discovered Accounts do not shift later pages. Tokens are scoped to
+the chart range and view and expire after 24 hours. Outcomes remain live between
+pages, so Accounts entering/leaving the attention view can change membership;
+pagination is not a frozen history export.
+
+The standard 25-row first page is cached for 45 seconds using `AsyncStaleCache`
+with no additional stale-serving period (48 possible range/view combinations).
+A cheap PostgreSQL refresh-version read invalidates old cached responses across
+web processes when the separate worker commits new refresh state/snapshots.
+Other page sizes and continuation pages read PostgreSQL directly. Completion
+becomes visible on expiry without changing enrichment or rerunning aggregates;
+cache expiration also works across processes. Authorization executes before
+cache access. Browser responses use `Cache-Control: private, no-store`.
+Invalid cursors return a fixed 400, invalid query bounds return 422, and
+PostgreSQL/configuration failures return a fixed sanitized 503 and safe log.
+
+Home never calls Dynamics, Seamless, or a refresh service and never writes to
+Dynamics or enrichment history. Snapshot refreshes and observation discovery
+remain Step 2 responsibilities. Home does not start a scheduler or a Dynamics
+refresh. The separate Step 4 worker below supplies production refreshes; it must
+be deployed independently. The Home frontend/navigation and durable history-write
+gap detection remain future capabilities.
+
+## Sophie Maintenance production refresh worker (Home Step 4)
+
+### Deployment evidence and process separation
+
+The repository documents the local Uvicorn target `backend.app.main:app`. The
+web module initializes PostgreSQL at import and starts the existing newsletter
+scheduler in FastAPI's lifespan. Newsletter also has an independent module/Render
+Cron Job command rooted at `backend`. There is no committed Render Blueprint,
+Procfile, Dockerfile, production web start command, or prior maintenance worker.
+The live web service's exact startup settings must be checked in Render; they
+cannot be established from this checkout. The normal module target from a
+`backend` root would be `uvicorn app.main:app --host 0.0.0.0 --port $PORT`; from
+a repository root it would be `uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT`.
+No web startup/lifespan or newsletter scheduling behavior was changed by Step 4.
+
+The maintenance worker is an independent Python process with no HTTP server,
+FastAPI import, newsletter scheduler, enrichment invocation, or Seamless import.
+It loads the existing dotenv locations before database/auth configuration,
+initializes the additive PostgreSQL schema with bounded connection/statement/
+lock waits, and calls the existing Step 2 services.
+
+Repository-root commands:
+
+```sh
+python -m backend.app.workers.maintenance_refresh
+python -m backend.app.workers.maintenance_refresh --once
+```
+
+From the `backend` directory (recommended Render Root Directory):
+
+```sh
+python -m app.workers.maintenance_refresh
+python -m app.workers.maintenance_refresh --once
+```
+
+`--once` runs one bounded **due** cycle without forcing refreshes or bypassing
+locks/page/request budgets. It exits 0 for successful/no-due work or another
+worker owning the cycle, 1 for incomplete/failed work, and 2 for invalid settings.
+A lock skip is not proof of complete coverage: validate the saved/API state.
+Repeated bounded invocations can resume a large bootstrap, but do not use a
+tight shell retry loop. No production refresh was executed during development.
+
+### Configuration and refresh cadence
+
+Use the backend's existing `DATABASE_URL` and Dynamics application credentials:
+`TENANT_ID`, `CLIENT_ID`, `CLIENT_SECRET`, `DYNAMICS_SCOPE`, `DYNAMICS_API_URL`.
+Existing OAuth aliases (`Tenant_ID`, `Application_ID`, `Client_Secret`) remain
+supported. The application user needs Account read access and permission to use
+the existing count mechanisms. No `SEAMLESS_API_KEY`, Power Automate API key,
+user-login secret, frontend setting, or queue/Redis service is needed.
+
+| Setting | Default | Worker validation / purpose |
+| --- | --- | --- |
+| `MAINTENANCE_REFRESH_INTERVAL_SECONDS` | 60 | 60–300; wait after each cycle, including failures |
+| `MAINTENANCE_DISCOVERY_SECONDS` | 120 | Existing Step 2 setting; worker requires at least 60 |
+| `MAINTENANCE_TODAY_SECONDS` | 180 | Existing Step 2 setting; worker requires at least 120 |
+| `MAINTENANCE_TOTAL_SECONDS` | 3600 | Existing Step 2 setting; worker requires at least 1800 |
+| `MAINTENANCE_RECONCILE_SECONDS` | 21600 | 3600–604800; recent completed-day reconciliation |
+
+Step 2's upper bounds and all existing window/page/request/row-cap settings
+continue to apply. Invalid values fail startup with a fixed sanitized log and
+exit 2; they are never silently interpreted as an aggressive cadence. A longer
+base wait rounds refreshes up to the next cycle; the 60-second default matches
+the default service cadence targets. Cycle time can add delay. Reporting timezone
+is fixed `America/New_York`, with Monday-start weeks and existing DST conversion;
+there is no second worker timezone configuration.
+
+The due plan uses persisted refresh timestamps/status and per-date snapshots,
+not local in-memory timers. Discovery normally runs every two minutes, today's
+count every three minutes, and total count hourly. Failed/incomplete tasks retry
+on a later base cycle. Fourteen daily dates are maintained: missing/incomplete
+dates bootstrap/finalize as needed; completed days are otherwise reused. Only
+the two most recent completed days are eligible for reconciliation every six
+hours, using their persisted `fetched_at`. All count work shares the existing
+request budget and aggregate interval splitting. No Account enumeration is used
+for counts. Older completed days require a deliberate service refresh if later
+changes must be reconciled. Home's optional 30-day chart can still show unknown
+older dates until those snapshots have been intentionally populated.
+
+### Concurrency, failures, cache signals, and shutdown
+
+A dedicated PostgreSQL session advisory lock (`66360, 4`) protects the whole
+cycle, including its due plan. Step 2's individual refresh locks remain in use
+for coexistence with manual/service callers. A second worker normally logs a
+safe skip, does no remote work, and waits for its next cycle. No permanent lock
+or new cursor implementation is introduced. Discovery retains all existing
+checkpoint, overlap, watermark, page-budget, retention, and coverage semantics.
+
+Tasks run sequentially: discovery, total, then counts. A Dynamics or unexpected
+individual task failure permits unrelated tasks to attempt their own database
+preflight and refresh. A recognized PostgreSQL failure aborts the remaining work;
+a planning/lock/startup database failure does no Dynamics work. Existing services
+preserve valid values and record fixed refresh errors; missing/stale values are
+never replaced with invented zeros. Unexpected exceptions and failed startup
+initialization take the normal base wait before retrying. Operational logs use
+fixed key/value events for start/end, due work, safe lock skips, request/row
+counts, coverage, failures, duration, and shutdown. Raw exception text, Account
+payloads/names, keys, tokens, and transport request URLs are not logged.
+
+Committed Step 2 refresh metadata and snapshot timestamps form a cheap durable
+Home refresh version. The worker logs a changed version; each authenticated Home
+request compares it with its local cache version, clears old cache entries, and
+uses a versioned key. This works across independent Render processes without
+importing the web router into the worker or adding a message broker. No-due
+cycles do not update state or change the version. Freshness/coverage changes also
+invalidate cached responses. Enrichment-only completion continues to become
+visible via the existing 45-second expiry. A version read failure returns a
+sanitized 503 rather than serving a falsely healthy cache entry. Neither version
+checks nor cache expiry query Dynamics. No new database table is required.
+
+SIGTERM/SIGINT stop new cycles and new tasks. The current cycle gets a 15-second
+grace period; if it is still active it is cancelled and awaited so Step 2 records
+interruption, closes HTTP connections, and releases its locks. Bounded database
+initialization threads are drained too. Signal shutdown exits normally. Render
+currently defaults to a 30-second shutdown delay; retain that margin for cleanup
+(or explicitly configure a larger delay if tenant validation requires it).
+Abrupt SIGKILL cannot run cleanup: PostgreSQL releases session locks, saved
+checkpoints survive, and `running` state is retried rather than claimed successful.
+
+### Render setup (instructions only; no live configuration changed)
+
+1. Create a separate **Background Worker**, Python runtime, from the same
+   repository and deployment branch as the backend, containing Steps 1–4. The
+   current checkout branch is `main`; verify the web service's actual linked
+   branch instead of assuming its dashboard settings.
+2. Set Root Directory `backend`; Build Command `pip install -r requirements.txt`;
+   Start Command `python -m app.workers.maintenance_refresh`. Use a supported
+   Python version aligned with the backend (prefer 3.11+). If Root Directory is
+   the repository root, use build `pip install -r backend/requirements.txt` and
+   start `python -m backend.app.workers.maintenance_refresh`; the root dependency
+   file is not the complete backend dependency set.
+3. Use the same Render region and exact backend `DATABASE_URL` (prefer its
+   internal URL), plus the Dynamics variables above. Share only needed settings
+   through an environment group. One worker instance is sufficient; overlapping
+   deployments are protected by advisory locks. No HTTP port/health endpoint,
+   persistent filesystem disk, Redis, or Seamless secret is needed.
+4. Before enabling continuous operation, run the `--once` command from a
+   deployment-side shell/one-off job with the same code/environment (or temporarily
+   use it as the worker start command). The same code/database initialization and
+   safety rules apply. A large initial bootstrap may return incomplete; inspect
+   saved coverage and rerun on the normal interval until complete, or deliberately
+   address the documented Step 2 row/page/retention limits.
+5. Verify fixed logs, saved total/daily snapshots, discovery watermark/cursor,
+   refresh status/coverage, and authenticated `/maintenance/home` freshness.
+   Confirm expected selected fields/continuation URLs and count support in the
+   production tenant. Inspect stale/unknown warnings rather than interpreting
+   exit 0 or HTTP 200 alone as complete coverage. Once validated, use the continuous
+   start command and monitor worker failures/lag in Render logs/Home freshness.
+   Test graceful redeploy/stop. No Power Automate or Dynamics data changes are needed.
+
+References: [Render Background Workers](https://render.com/docs/background-workers)
+and [Render deployment and graceful shutdown](https://render.com/docs/deploys).
+The frontend remains unbuilt; durable enrichment-history gap detection and
+operator handling of irrecoverable observation coverage gaps remain future work.
 
 ## Newsletter subscriber snapshots
 
