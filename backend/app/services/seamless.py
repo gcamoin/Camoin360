@@ -24,11 +24,11 @@ COUNTRY_ALIASES = {
     "ca": "canada",
 }
 def normalize_naics_code(value: object) -> str | None:
-    """Accept only six ASCII digits from a string or a JSON integer."""
+    """Accept 2–6 ASCII digits from a string or a JSON integer, preserving text."""
     if isinstance(value, bool) or not isinstance(value, (str, int)):
         return None
     code = str(value).strip()
-    return code if re.fullmatch(r"[0-9]{6}", code) else None
+    return code if re.fullmatch(r"[0-9]{2,6}", code) else None
 
 
 def normalize_text(value):

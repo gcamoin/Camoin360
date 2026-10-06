@@ -666,8 +666,8 @@ Home never calls Dynamics, Seamless, or a refresh service and never writes to
 Dynamics or enrichment history. Snapshot refreshes and observation discovery
 remain Step 2 responsibilities. Home does not start a scheduler or a Dynamics
 refresh. The separate Step 4 worker below supplies production refreshes; it must
-be deployed independently. The Home frontend/navigation and durable history-write
-gap detection remain future capabilities.
+be deployed independently. The Home frontend/navigation are implemented in Step 5 below; durable
+history-write gap detection remains a future capability.
 
 ## Sophie Maintenance production refresh worker (Home Step 4)
 
@@ -821,8 +821,142 @@ checkpoints survive, and `running` state is retried rather than claimed successf
 
 References: [Render Background Workers](https://render.com/docs/background-workers)
 and [Render deployment and graceful shutdown](https://render.com/docs/deploys).
-The frontend remains unbuilt; durable enrichment-history gap detection and
-operator handling of irrecoverable observation coverage gaps remain future work.
+The Home frontend is implemented in Step 5 below. Durable enrichment-history
+gap detection and operator handling of irrecoverable observation coverage gaps
+remain future work.
+
+## Sophie Maintenance Home frontend (Step 5)
+
+`/dashboard` opens Home. Maintenance navigation is Home, Enrichment, Duplicate
+Accounts, Summary Analytics. `/dashboard/enrichment` is the Account enrichment
+workspace; `/dashboard/seamless` and `/dashboard/data-quality` replace browser
+history with that canonical route. Duplicate Accounts, Summary Analytics, and
+module permissions retain their existing routes/behavior.
+
+Home contains four KPI cards, one responsive 14-day creation chart, and the
+Recent New Accounts & Enrichment table. It uses authenticated
+`GET /maintenance/home?days=14&view=recent&limit=25` through the shared frontend
+request/cache helper with a 30-second TTL. Home revalidates on focus and, while
+observation coverage is incomplete, every two minutes when visible. The Recent / Needs
+Attention toggle resets rows and pagination; Load more uses the opaque backend
+cursor. Late responses from an older view are ignored. Normal navigation/refetch
+is independent of Dynamics refreshes.
+
+The backend supplies status labels, attention flags, confirmed field labels,
+and result summaries; the frontend does not infer enrichment outcomes or
+updated fields. Timestamps use the reporting timezone (America/New_York).
+Unknown metrics display an em dash; null chart counts create gaps and never
+become zero. Snapshot freshness stays subtle on the total card. Stale/incomplete
+structured freshness produces one compact information notice; permanent
+best-effort history/worker notices do not create a banner on a healthy page.
+Skeletons, concise empty states, and sanitized retry errors cover loading and
+failures. Narrow screens stack cards and keep table scrolling inside its panel.
+No direct Dynamics/Seamless requests or backend behavior changes are introduced.
+
+## Consolidated Enrichment workspace
+
+`/dashboard/enrichment` focuses on Accounts to Enrich, without summary cards.
+Recent automatic-enrichment outcomes remain on Home.
+The standalone Seamless/Data Quality navigation and dashboards are no longer
+rendered. Legacy components/endpoints remain available internally; no provider,
+credit accounting, automatic enrichment, or legacy Dynamics fields were deleted.
+
+`GET /maintenance/enrichment/credits` requires the existing main-module access
+and reads only existing credit usage/balance data. It returns nullable `remaining`,
+`weekly_remaining`, `weekly_limit`, `reported_at`, and `is_stale` (24-hour reported
+balance age). It does not load `/metrics`, refresh Account caches, or call providers.
+Unknown balances remain unknown; zero is valid. Existing usage-file storage and
+its deployment/persistence limitations are unchanged.
+
+Accounts load only after Search Dynamics. The workspace uses the existing live
+`GET /accounts/data-quality/search` with `enrichment_fields=true`, 25-row pages,
+server-side name/text, canonical missing-information, country/location and sector
+filters. No legacy facet cache or Account mirror is loaded. Canonical mode selects
+Account identity, location, sector details, and the nine manual targets. It returns
+canonical employee/postal/NAICS values and missing keys directly without legacy
+field aliases or cache persistence. Other search consumers retain their original
+contract. The existing five-bucket completeness score uses canonical Employees;
+its tooltip explains that it measures Website/Phone/Description/Employees/location,
+not provider eligibility or enrichment outcome. Postal/NAICS gaps are shown
+independently in Missing Information.
+
+Each canonical search has a 20-Dataverse-page budget and a 5,000-result paging
+window, with deterministic name/Account-ID ordering and same-origin Account-only
+continuations. Users must narrow filters beyond those budgets; there is no total
+population download or count. Pagination is still page based and may replay earlier
+pages; it is not a new cursor search service. Search failures are sanitized/retryable.
+
+The table shows selection, Account, combined Location, Missing Information,
+Completeness, and Details. Country is a primary filter; State/Province, City and
+Sector sit inside More filters. Selection is page scoped. A compact field selector
+and Enrich Selected appear only after selection, with explicit nonempty fields.
+Confirm enrichment states the blank-only policy, then calls the existing manual
+endpoint. Results show actual per-Account statuses/confirmed fields and partial
+failures, with optional outcome details. There are no extra summary cards, charts,
+exports, audit dashboards or duplicate activity tables. Durable manual history is
+still a separate future task; automatic outcomes remain on Home.
+
+### Selected/manual enrichment field contract
+
+`POST /accounts/enrichment-run` requires nonempty `account_ids` and an explicit,
+nonempty `fields_to_update` selection. Supported canonical Dynamics logical fields:
+`websiteurl`, `telephone1`, `description`, `numberofemployees`, `address1_city`,
+`address1_stateorprovince`, `address1_country`, `address1_postalcode`, and
+`cr73c_naicscode`. Unsupported fields and empty selections return HTTP 422 before
+any Account/provider processing. The existing field dropdown uses these names;
+Data Source is not an enrichment target. `new_employees` and `new_naicstext` remain
+legacy Data Quality display/classification fields, not aliases or synchronized
+copies of provider-enriched Employees/NAICS. Future consolidated search/table
+work must read the canonical fields as well.
+
+Manual enrichment reads all supported Dynamics targets, including Description,
+before deciding what is blank. Only explicitly selected blank fields can update;
+zero is populated, whitespace is blank. A valid provider employee count becomes a
+nonnegative Dynamics integer. Postal codes remain text (including leading zeros).
+NAICS accepts only six ASCII digits and writes `cr73c_naicscode` as text. Invalid
+or absent optional values are ignored without preventing other selected updates.
+Selected blank Description/location fields can justify a manual lookup; the
+automatic credit-worthy subset is not applied. No eligible selected blank fields
+means `no_updates_needed` with no provider call or usage increment.
+
+The selected endpoint returns aggregate `processed`, `updated`, `skipped`, and
+per-Account `results`: `account_id`, `account_name`, `status`, `updated`, confirmed
+`fields_updated`, and the compatible `updates` object. Statuses are `updated`,
+`no_updates_needed`, `no_match`, `skipped_credit_limit`, and `failed`. Non-updated
+outcomes include a fixed `reason`/`reason_code`; failures include sanitized
+`error`/`error_category`. Failed writes never return intended fields as confirmed.
+Transport write failures include `completion_uncertain=true`; confirmation is
+not invented and no new retry behavior is added. A failed legacy audit write does
+not erase a confirmed Dynamics update.
+
+Legacy single/all-Account manual callers that omit selection retain their original
+seven targets (excluding Postal Code/NAICS); explicit empty selection never means
+all fields. Manual provider matching, name-only fallback, one usage increment per
+successful adapter invocation, and the batch delay remain unchanged. Automatic
+`/accounts/enrich-one`, history, preflight, mappings, retries, and machine auth are
+unchanged. Manual durable history remains a separate future task.
+
+### Total Accounts cache-aside fallback
+
+Dynamics remains the Account source of truth. PostgreSQL stores a singleton
+`maintenance_total_account_snapshot`, not a copy of the Account population.
+The maintenance worker remains the normal proactive refresher. Home reads a
+present snapshot immediately, including a stale valid value with freshness
+warnings. Only when the total snapshot is missing does the authenticated Home
+route call the existing read-only `RetrieveTotalRecordCount` for `account`, save
+the singleton snapshot, and return that value in the same response. No Account
+records, daily counts, discovery, or enrichment are fetched by this fallback.
+
+A shared 60-second async cache coalesces concurrent fallback requests across
+Home views/page sizes within each web process; failed lookups are briefly cached
+as well. Independent web processes may each make one initial lookup. A worker
+snapshot committed during a race is rechecked before contacting Dynamics.
+Successful Dynamics counts (including zero) survive snapshot persistence failure
+and remain reusable in memory. Lookup failure returns unknown, never fabricated
+zero, with a sanitized warning. No raw errors or credentials are logged. Existing
+Home refresh-version invalidation detects committed snapshot writes normally.
+A failure of the wider PostgreSQL Home read model still returns its existing
+controlled 503; the fallback does not replace observation/history storage.
 
 ## Newsletter subscriber snapshots
 

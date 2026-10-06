@@ -8,9 +8,6 @@ import {
   Button,
   Chip,
   CircularProgress,
-  Dialog,
-  DialogActions,
-  DialogContent,
   Paper,
   Snackbar,
   Stack,
@@ -26,7 +23,6 @@ import {
 } from "@mui/material";
 import { API_BASE_URL, getAuthHeaders, handleUnauthorized } from "../auth";
 import { getCached, invalidateApiCache } from "../apiClient";
-import { ModalTitle } from "./UiPrimitives";
 
 const API_URL = `${API_BASE_URL}/metrics`;
 const ENRICH_ALL_URL = `${API_BASE_URL}/accounts/enrich-all`;
@@ -157,14 +153,12 @@ export default function MetricsDashboard() {
     total_credits_updated_at: null,
     accounts_updated: 0,
     audit_history: [],
-    data_quality_pipeline: [],
     recent_activity: [],
   });
   const [expandedAuditRun, setExpandedAuditRun] = useState("");
   const [isRunningEnrichment, setIsRunningEnrichment] = useState(false);
   const [actionError, setActionError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
-  const [selectedPipelineCategory, setSelectedPipelineCategory] = useState(null);
   const [isLoadingMetrics, setIsLoadingMetrics] = useState(true);
   const [hasLoadedMetrics, setHasLoadedMetrics] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -173,14 +167,7 @@ export default function MetricsDashboard() {
   const [recentPage, setRecentPage] = useState(0);
   const [recentRowsPerPage, setRecentRowsPerPage] = useState(5);
   const auditHistory = metrics.audit_history || [];
-  const dataQualityPipeline = metrics.data_quality_pipeline || [];
   const recentActivity = metrics.recent_activity || [];
-  const selectedPipelineRecords = selectedPipelineCategory?.records || [];
-  const totalAccounts = dataQualityPipeline.length
-    ? dataQualityPipeline.reduce((total, item) => total + Number(item.count || 0), 0)
-    : null;
-  const readyCategory = dataQualityPipeline.find((item) => item.category === "Ready for Enrichment");
-  const enrichedCategory = dataQualityPipeline.find((item) => item.category === "Already Enriched");
   const paginatedAuditHistory = auditHistory.slice(
     auditPage * auditRowsPerPage,
     auditPage * auditRowsPerPage + auditRowsPerPage
@@ -302,14 +289,6 @@ export default function MetricsDashboard() {
     }
   }
 
-  function viewPipelineCategory(category) {
-    const pipelineCategory = dataQualityPipeline.find((item) => item.category === category);
-
-    if (pipelineCategory) {
-      setSelectedPipelineCategory(pipelineCategory);
-    }
-  }
-
   useEffect(() => {
     let isMounted = true;
 
@@ -402,19 +381,6 @@ export default function MetricsDashboard() {
           {loadError}
         </Alert>
       ) : null}
-
-      <Stack component="section" spacing={2} aria-labelledby="sophie-data-quality">
-        <Typography id="sophie-data-quality" component="h2" variant="h6" color="primary.main">Data Quality</Typography>
-        <Box sx={{ display: "grid", gap: 3, gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", md: "repeat(3, minmax(0, 1fr))" } }}>
-          <MetricCard title="Total Accounts" value={totalAccounts == null ? "—" : totalAccounts.toLocaleString()} subtitle="Accounts in the current Dynamics snapshot" />
-          <MetricCard title="Ready for Enrichment" value={readyCategory?.count ?? "—"} subtitle="Accounts eligible for enrichment" />
-          <MetricCard title="Already Enriched" value={enrichedCategory ? `${Number(enrichedCategory.percentage || 0).toFixed(1)}%` : "—"} subtitle="Share of accounts marked enriched" />
-        </Box>
-        <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
-          <Button disabled={!readyCategory?.records?.length} onClick={() => viewPipelineCategory("Ready for Enrichment")} variant="outlined">View Accounts Ready</Button>
-          <Button disabled={!dataQualityPipeline.find((item) => item.category === "Requires Manual Review")?.records?.length} onClick={() => viewPipelineCategory("Requires Manual Review")} variant="outlined">View Manual Review</Button>
-        </Stack>
-      </Stack>
 
       <Stack component="section" spacing={2} aria-labelledby="sophie-enrichment">
         <Typography id="sophie-enrichment" component="h2" variant="h6" color="primary.main">Enrichment</Typography>
@@ -702,51 +668,6 @@ export default function MetricsDashboard() {
       </Paper>
 
       </Box>
-
-      <Dialog
-        fullWidth
-        maxWidth="md"
-        onClose={() => setSelectedPipelineCategory(null)}
-        open={Boolean(selectedPipelineCategory)}
-      >
-        <ModalTitle
-          onClose={() => setSelectedPipelineCategory(null)}
-          subtitle="Accounts included in this readiness category."
-        >
-          {selectedPipelineCategory?.category || "Pipeline Records"}
-        </ModalTitle>
-        <DialogContent dividers>
-          <TableContainer sx={{ overflowX: "auto" }}>
-            <Table size="small" sx={{ minWidth: 720 }}>
-              <TableHead>
-                <TableRow>
-                  <TableCell sx={{ fontWeight: 800 }}>Account Name</TableCell>
-                  <TableCell sx={{ fontWeight: 800 }}>Website</TableCell>
-                  <TableCell sx={{ fontWeight: 800 }}>Location</TableCell>
-                  <TableCell sx={{ fontWeight: 800 }}>Missing Fields</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {selectedPipelineRecords.map((record, index) => (
-                  <TableRow key={record.account_id || `${record.account_name}-${index}`} hover>
-                    <TableCell>{record.account_name || "Missing"}</TableCell>
-                    <TableCell sx={{ overflowWrap: "anywhere" }}>{record.website || "Missing"}</TableCell>
-                    <TableCell>{record.location || "Missing"}</TableCell>
-                    <TableCell sx={{ overflowWrap: "anywhere" }}>
-                      {record.missing_fields?.length ? record.missing_fields.join(", ") : "None"}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setSelectedPipelineCategory(null)} sx={{ fontWeight: 800 }}>
-            Close
-          </Button>
-        </DialogActions>
-      </Dialog>
 
       <Snackbar
         autoHideDuration={4000}

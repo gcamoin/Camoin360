@@ -321,6 +321,21 @@ class MaintenanceObservationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["fetched_at"], NOW)
         self.assertIn("RetrieveTotalRecordCount(EntityNames=@p1)", self.client.get.await_args.args[0])
 
+    async def test_official_total_response_persists_multimillion_integer_and_string(self):
+        for value in (3125000, "3125000"):
+            with self.subTest(value=value):
+                self.client.get.side_effect = None
+                self.client.get.return_value = self.response({
+                    "EntityRecordCountCollection": {"Count": 1, "IsReadOnly": False,
+                                                     "Keys": ["account"], "Values": [value]}})
+                result = await service.refresh_total_account_count(now=NOW, config=self.config, force=True)
+                self.assertEqual(result["status"], "idle")
+                snapshot = service.read_count_snapshots(now=NOW)["total"]
+                self.assertEqual(snapshot["value"], 3125000)
+                self.assertIs(type(snapshot["value"]), int)
+                self.assertEqual(snapshot["fetched_at"], NOW)
+                self.assertEqual(snapshot["source"], query.TOTAL_SOURCE)
+
     async def test_failed_total_refresh_retains_previous_value_and_reports_error(self):
         await service.refresh_total_account_count(now=NOW, config=self.config)
         self.client.get.side_effect = httpx.ConnectError("Bearer secret-bearer-token")

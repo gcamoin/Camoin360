@@ -5,7 +5,7 @@ import httpx
 import re
 import logging
 import json
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from dotenv import load_dotenv
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -580,17 +580,22 @@ def _dynamics_data_quality_filter(
     *, search: str = "", sector: str = "all", missing_field: str = "all",
     states: list[str] | None = None, country: str = "all", cities: list[str] | None = None,
     needs_attention: bool = False, column_filters: dict[str, str] | None = None,
+    enrichment_fields: bool = False,
 ) -> str:
+    fields = tuple((field, field) for field in MANUAL_ENRICHMENT_FIELDS) if enrichment_fields else DATA_QUALITY_FIELDS
+
     def literal(value: str) -> str:
         return "'" + str(value).strip().replace("'", "''") + "'"
 
     def missing(field: str) -> str:
-        if field == "new_employees":
+        if field in {"new_employees", "numberofemployees"}:
             return f"{field} eq null"
         return f"({field} eq null or {field} eq '')"
 
     clauses = []
-    searchable = [field for field, _ in DATA_QUALITY_FIELDS if field != "new_employees"]
+    searchable = [field for field, _ in fields if field not in {"new_employees", "numberofemployees"}]
+    if enrichment_fields:
+        searchable = ["name", "new_sector", "new_subsector", *searchable]
     if search.strip():
         clauses.append("(" + " or ".join(f"contains({field},{literal(search)})" for field in searchable) + ")")
     if sector != "all":
@@ -610,10 +615,10 @@ def _dynamics_data_quality_filter(
         clauses.append("(" + " or ".join(f"address1_city eq {literal(value)}" for value in cities) + ")")
     if missing_field == "incomplete_location":
         clauses.append("(" + " or ".join(missing(field) for field in DATA_QUALITY_LOCATION_FIELDS) + ")")
-    elif missing_field in dict(DATA_QUALITY_FIELDS):
+    elif missing_field in dict(fields):
         clauses.append(missing(missing_field))
     if needs_attention:
-        clauses.append("(" + " or ".join(missing(field) for field, _ in DATA_QUALITY_FIELDS) + ")")
+        clauses.append("(" + " or ".join(missing(field) for field, _ in fields) + ")")
     for field, value in (column_filters or {}).items():
         if field in searchable and str(value or "").strip():
             clauses.append(f"contains({field},{literal(value)})")
@@ -621,15 +626,16 @@ def _dynamics_data_quality_filter(
 
 
 def _matches_data_quality_missing_filter(
-    account: dict, missing_field: str = "all", needs_attention: bool = False
+    account: dict, missing_field: str = "all", needs_attention: bool = False, enrichment_fields: bool = False
 ) -> bool:
     """Validate missing-field results after Dynamics applies the OData filter."""
+    fields = tuple((field, field) for field in MANUAL_ENRICHMENT_FIELDS) if enrichment_fields else DATA_QUALITY_FIELDS
     if missing_field == "incomplete_location":
         matches_selected_field = any(
             _is_missing_data_quality_value(account.get(field))
             for field in DATA_QUALITY_LOCATION_FIELDS
         )
-    elif missing_field in dict(DATA_QUALITY_FIELDS):
+    elif missing_field in dict(fields):
         matches_selected_field = _is_missing_data_quality_value(account.get(missing_field))
     else:
         matches_selected_field = True
@@ -639,7 +645,7 @@ def _matches_data_quality_missing_filter(
     if needs_attention:
         return any(
             _is_missing_data_quality_value(account.get(field))
-            for field, _label in DATA_QUALITY_FIELDS
+            for field, _label in fields
         )
     return True
 
@@ -650,8 +656,10 @@ async def search_accounts_data_quality_from_dynamics(
     """Read only the Dynamics pages needed for the requested result page."""
     page = max(0, page)
     page_size = max(1, min(page_size, 250))
+    enrichment_mode = filters.get("enrichment_fields", False)
     where = _dynamics_data_quality_filter(**filters)
-    select = "accountid," + ",".join(field for field, _ in DATA_QUALITY_FIELDS)
+    fields = MANUAL_ENRICHMENT_FIELDS if enrichment_mode else tuple(field for field, _ in DATA_QUALITY_FIELDS)
+    select = "accountid,name,new_sector,new_subsector," + ",".join(fields) if enrichment_mode else "accountid," + ",".join(fields)
     sort_field = sort_key if sort_key in DATA_QUALITY_FILTERABLE_COLUMNS and sort_key not in {"missing_fields_summary", "data_quality_score", "new_employees"} else "name"
     direction = "desc" if sort_direction == "desc" else "asc"
     url = f"{API_URL}/accounts?$select={select}&$orderby={sort_field} {direction},accountid asc"
@@ -664,10 +672,20 @@ async def search_accounts_data_quality_from_dynamics(
         "Prefer": "odata.maxpagesize=250",
     }
     target = (page + 1) * page_size
+    if enrichment_mode and target > 5000:
+        raise ValueError("Search page limit reached. Narrow the search filters.")
+    requests = 0
     accounts = []
     next_url = url
     async with httpx.AsyncClient(timeout=httpx.Timeout(DATA_QUALITY_REQUEST_TIMEOUT_SECONDS)) as client:
-        while next_url and len(accounts) <= target:
+        while next_url and (len(accounts) < target if enrichment_mode else len(accounts) <= target):
+            if enrichment_mode:
+                parsed, expected = urlsplit(next_url), urlsplit(f"{API_URL}/accounts")
+                if (parsed.scheme, parsed.netloc, parsed.path) != (expected.scheme, expected.netloc, expected.path):
+                    raise ValueError("Invalid Dynamics search continuation.")
+            if enrichment_mode and requests >= 20:
+                raise ValueError("Search request limit reached. Narrow the search filters.")
+            requests += 1
             response = await client.get(next_url, headers=headers)
             if response.status_code != 200:
                 raise Exception(f"Dynamics GET error: {response.text}")
@@ -679,14 +697,22 @@ async def search_accounts_data_quality_from_dynamics(
                     account,
                     missing_field=filters.get("missing_field", "all"),
                     needs_attention=filters.get("needs_attention", False),
+                    enrichment_fields=enrichment_mode,
                 )
             )
             next_url = payload.get("@odata.nextLink")
     start = page * page_size
     selected = accounts[start:target]
-    prepared = [_prepare_data_quality_cache_row(account, "") for account in selected]
+    prepared = [_prepare_data_quality_cache_row(account, "") for account in selected] if not enrichment_mode else None
+    if enrichment_mode:
+        prepared = []
+        for account in selected:
+            row = {field: account.get(field) for field in ("accountid", "name", "new_sector", "new_subsector", *MANUAL_ENRICHMENT_FIELDS)}
+            row["missing_field_keys"] = [field for field in MANUAL_ENRICHMENT_FIELDS if _is_blank(row.get(field))]
+            row["data_quality_score"] = sum(20 for field in ("websiteurl", "telephone1", "description", "numberofemployees") if not _is_blank(row.get(field))) + (20 if all(not _is_blank(row.get(field)) for field in DATA_QUALITY_LOCATION_FIELDS) else 0)
+            prepared.append(row)
     return {
-        "data": _rows_to_data_quality_accounts(prepared),
+        "data": prepared if enrichment_mode else _rows_to_data_quality_accounts(prepared),
         "count": len(selected),
         "page": page,
         "page_size": page_size,
@@ -4642,142 +4668,145 @@ async def revert_account_fields(account_id: str, fields: dict = None):
     }
 
 
-def should_update_field(field_key: str, fields_to_update: set[str] | None):
-    return fields_to_update is None or field_key in fields_to_update
+MANUAL_ENRICHMENT_FIELDS = (
+    "websiteurl", "telephone1", "description", "numberofemployees",
+    "address1_city", "address1_stateorprovince", "address1_country",
+    "address1_postalcode", "cr73c_naicscode",
+)
+# Older /enrich/{id} and /enrich-all callers omit selection. Preserve their
+# original target set; selected runs must never interpret [] as all fields.
+LEGACY_MANUAL_ENRICHMENT_FIELDS = MANUAL_ENRICHMENT_FIELDS[:7]
+MANUAL_ACCOUNT_FIELDS = "accountid,name,new_sector," + ",".join(MANUAL_ENRICHMENT_FIELDS)
+
+
+def validate_manual_fields(fields: list[str]) -> list[str]:
+    if not fields or any(field not in MANUAL_ENRICHMENT_FIELDS for field in fields):
+        raise ValueError("Select at least one supported manual enrichment field.")
+    return list(dict.fromkeys(fields))
+
+
+def _normalise_manual_value(field: str, value: object) -> object | None:
+    # Keep manual validation separate from automatic policy/mappings.
+    if field == "cr73c_naicscode":
+        return normalize_naics_code(value)
+    if field == "numberofemployees":
+        if isinstance(value, bool) or not isinstance(value, (int, str)):
+            return None
+        text = str(value).strip().replace(",", "")
+        if not text.isascii() or not text.isdigit():
+            return None
+        count = int(text)
+        return count if count <= 2147483647 else None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if field == "websiteurl":
+        if "://" not in text:
+            text = "https://" + text
+        from urllib.parse import urlsplit
+        try:
+            url = urlsplit(text)
+            if url.scheme.lower() not in {"http", "https"} or not url.hostname or url.username or url.password or any(char.isspace() for char in text):
+                return None
+        except ValueError:
+            return None
+    if field == "address1_stateorprovince":
+        text = normalize_state_province(text) or text
+    return text
 
 
 async def enrich_account(account_id: str, fields_to_update: list[str] | None = None):
+    requested_fields = (list(LEGACY_MANUAL_ENRICHMENT_FIELDS) if fields_to_update is None
+                        else validate_manual_fields(fields_to_update))
     increment_processed()
-    requested_fields = set(fields_to_update) if fields_to_update else None
+    account_name = None
 
-    account = await get_account(
-        account_id,
-        "name,websiteurl,telephone1,address1_city,address1_stateorprovince,address1_country,numberofemployees,new_sector"
-    )
+    def result(status, *, updates=None, reason=None, reason_code=None, error_category=None, uncertain=False):
+        confirmed = updates or {}
+        payload = {"account_id": account_id, "account_name": account_name, "status": status,
+                   "updated": status == "updated", "fields_updated": list(confirmed),
+                   "updates": confirmed or None}
+        if reason:
+            payload.update(reason=reason, reason_code=reason_code)
+        if error_category:
+            payload.update(error=reason, error_category=error_category)
+        if uncertain:
+            payload["completion_uncertain"] = True
+        if status in {"no_updates_needed", "skipped_credit_limit"} or reason_code == "missing_company_name":
+            payload["skipped"] = True
+        return payload
 
-    company_name = account.get("name")
-    sector = account.get("new_sector") or ""
-
-    if not company_name or not str(company_name).strip():
-        return {"account_id": account_id, "updated": False, "skipped": True, "reason": "Account has no company name"}
-
-    print(f"🔍 Enriching: {company_name}")
-    print(f"🏭 Sector: {sector}")
-    print("✅ Proceeding with enrichment")
-
-    usage = load_usage()
-    credits_used = usage.get("credits_used", 0)
-    print(f"📊 Credits used: {credits_used}/{WEEKLY_LIMIT}")
-
-    if not can_make_request():
-        print("🚫 Weekly credit cap reached (2000)")
-        print("🚫 Cap reached — stopping enrichment")
-        return {
-            "account_id": account_id,
-            "updated": False,
-            "reason": "Weekly credit cap reached"
-        }
-
-    seamless_data = await enrich_with_seamless(account)
-    usage = increment_usage()
-    print("✅ Credit consumed")
-    print(f"📊 Credits used: {usage.get('credits_used', 0)}/{WEEKLY_LIMIT}")
-
-    print(f"🌐 Seamless result: {seamless_data}")
-
-    confidence_score = int(seamless_data.get("confidence_score", 0))
-    matched_fields = seamless_data.get("matched_fields", [])
+    try:
+        account = await get_account(account_id, MANUAL_ACCOUNT_FIELDS)
+    except Exception:
+        return result("failed", reason="Unable to read the Dynamics Account.",
+                      reason_code="dynamics_read_failed", error_category="dynamics_read")
+    account_name = account.get("name")
+    if _is_blank(account_name):
+        return result("no_match", reason="Account has no company name.", reason_code="missing_company_name")
+    eligible = [field for field in requested_fields if _is_blank(account.get(field))]
+    if not eligible:
+        return result("no_updates_needed", reason="Selected fields are already populated.", reason_code="selected_fields_populated")
+    try:
+        credit_available = can_make_request()
+    except Exception:
+        return result("failed", reason="Unable to check the enrichment credit budget.",
+                      reason_code="credit_check_failed", error_category="credit_check")
+    if not credit_available:
+        return result("skipped_credit_limit", reason="Weekly credit cap reached.", reason_code="credit_limit")
+    try:
+        seamless_data = await enrich_with_seamless(account)
+    except Exception:
+        return result("failed", reason="The enrichment provider lookup failed.",
+                      reason_code="provider_request_failed", error_category="provider")
+    # Preserve manual usage accounting: one increment per successful adapter
+    # invocation, including no match and the adapter's existing name fallback.
+    try:
+        increment_usage()
+    except Exception:
+        return result("failed", reason="Unable to record enrichment credit usage.",
+                      reason_code="credit_record_failed", error_category="credit_check")
+    if not seamless_data:
+        return result("no_match", reason="No usable company match was found.", reason_code="no_match")
     updates = {}
-
-    # WEBSITE
-    website = seamless_data.get("websiteurl")
-    if should_update_field("websiteurl", requested_fields) and not account.get("websiteurl") and website:
-        if not website.startswith("http"):
-            website = f"https://{website}"
-        updates["websiteurl"] = website
-
-    # PHONE
-    phone = seamless_data.get("telephone1")
-    if should_update_field("telephone1", requested_fields) and not account.get("telephone1") and phone:
-        updates["telephone1"] = phone
-
-    # STATE
-    state = seamless_data.get("address1_stateorprovince")
-    print(f"📍 Raw state: {state}")
-    if should_update_field("address1_stateorprovince", requested_fields) and state:
-        state_clean = state.strip()
-        state_abbr = normalize_state_province(state_clean) or state_clean
-        print(f"📍 Converted state: {state_abbr}")
-        if not account.get("address1_stateorprovince"):
-            updates["address1_stateorprovince"] = state_abbr
-
-    # COUNTRY
-    country = seamless_data.get("address1_country")
-    if should_update_field("address1_country", requested_fields) and not account.get("address1_country") and country:
-        updates["address1_country"] = country
-
-    # EMPLOYEES
-    employees = seamless_data.get("numberofemployees")
-    if should_update_field("new_employees", requested_fields) and not account.get("numberofemployees") and employees:
-        try:
-            updates["numberofemployees"] = int(employees)
-        except Exception:
-            pass
-
-    # DESCRIPTION
-    description = seamless_data.get("description")
-    if should_update_field("description", requested_fields) and description:
-        print(f"📝 Description found: {description[:100]}")
-        if not account.get("description") or account.get("description").strip() == "":
-            updates["description"] = description
-            print("📝 Description updated")
-
-    city = seamless_data.get("address1_city")
-    if not account.get("address1_city") and city:
-        updates["address1_city"] = city
-
-    if updates:
-        print(f"🚀 Updating: {updates}")
+    for field in eligible:
+        value = _normalise_manual_value(field, seamless_data.get(field))
+        if value is not None:
+            updates[field] = value
+    if not updates:
+        return result("no_updates_needed", reason="No usable values were returned for the selected fields.",
+                      reason_code="no_selected_values")
+    try:
         await update_account(account_id, updates)
-        log_update(company_name, updates)
-
-    return {
-        "account_id": account_id,
-        "updated": bool(updates),
-        "updates": updates or None,
-        "confidence_score": confidence_score,
-        "matched_fields": matched_fields,
-    }
+    except Exception as exc:
+        return result("failed", reason="Dynamics did not confirm the Account update.",
+                      reason_code="dynamics_write_failed", error_category="dynamics_write",
+                      uncertain=isinstance(exc, httpx.TransportError))
+    # An audit-log failure cannot turn a confirmed Dynamics write into failure.
+    try:
+        log_update(account_name, updates)
+    except Exception:
+        logger.warning("Manual enrichment audit recording unavailable; Dynamics update confirmed")
+    return result("updated", updates=updates)
 
 
 async def enrich_selected_accounts(account_ids: list[str], fields_to_update: list[str]):
+    selected_fields = validate_manual_fields(fields_to_update)
     results = []
-
     for account_id in account_ids:
         if not account_id:
             continue
-
         try:
-            result = await enrich_account(account_id, fields_to_update)
-        except Exception as exc:
-            result = {
-                "account_id": account_id,
-                "updated": False,
-                "error": str(exc),
-            }
-
-        results.append(result)
+            item = await enrich_account(account_id, selected_fields)
+        except Exception:
+            item = {"account_id": account_id, "account_name": None, "status": "failed",
+                    "updated": False, "fields_updated": [], "updates": None,
+                    "reason": "Manual enrichment could not complete.", "error": "Manual enrichment could not complete.",
+                    "reason_code": "internal_failure", "error_category": "internal"}
+        results.append(item)
         await asyncio.sleep(1)
-
-    updated_count = sum(1 for result in results if result.get("updated"))
-    skipped_count = sum(1 for result in results if result.get("skipped"))
-
-    return {
-        "processed": len(results),
-        "updated": updated_count,
-        "skipped": skipped_count,
-        "results": results
-    }
+    return {"processed": len(results), "updated": sum(item["updated"] for item in results),
+            "skipped": sum(bool(item.get("skipped")) for item in results), "results": results}
 
 
 async def enrich_accounts():

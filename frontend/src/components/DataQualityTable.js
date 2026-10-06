@@ -175,11 +175,12 @@ const fieldUpdateOptions = [
   { key: "websiteurl", label: "Website" },
   { key: "telephone1", label: "Business Phone" },
   { key: "description", label: "Description" },
-  { key: "new_employees", label: "Employee Count" },
+  { key: "numberofemployees", label: "Employees" },
   { key: "address1_country", label: "Country" },
   { key: "address1_stateorprovince", label: "State/Province" },
   { key: "address1_city", label: "City" },
-  { key: "new_datasource", label: "Data Source" },
+  { key: "address1_postalcode", label: "Postal Code" },
+  { key: "cr73c_naicscode", label: "NAICS Code" },
 ];
 
 const scoreFields = [

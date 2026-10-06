@@ -217,6 +217,20 @@ class AutomaticEnrichmentPolicyTest(unittest.IsolatedAsyncioTestCase):
                 self.assert_completed(result, "updated", {"cr73c_naicscode": "511210"})
                 self.assertIn("cr73c_naicscode", self.get_account.await_args.args[1].split(","))
 
+    async def test_naics_hierarchy_codes_use_one_lookup_and_one_patch(self):
+        for code in ("31", "311", "3118", "31181", "311811"):
+            for value in (code, int(code), f" {code} "):
+                with self.subTest(value=value):
+                    self.account = {"name": "Acme", "cr73c_enrichmentattempted": False, **self.populated_targets(), "cr73c_naicscode": None}
+                    self.provider.reset_mock(); self.update.reset_mock()
+                    self.credit_check.reset_mock(); self.record_usage.reset_mock()
+                    self.provider.return_value = {"cr73c_naicscode": value}
+                    result = await dynamics.enrich_one_account("account-1")
+                    self.assert_completed(result, "updated", {"cr73c_naicscode": code})
+                    self.provider.assert_awaited_once()
+                    self.credit_check.assert_called_once_with()
+                    self.record_usage.assert_called_once_with()
+
     async def test_existing_naics_is_preserved(self):
         self.account["cr73c_naicscode"] = "541511"
         self.provider.return_value = {"cr73c_naicscode": "511210"}
@@ -226,7 +240,7 @@ class AutomaticEnrichmentPolicyTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_invalid_naics_does_not_interfere_with_other_fields(self):
         for fields in [{}, *({"cr73c_naicscode": v} for v in
-                            (None, "", "Technology", "51121", "511210.0", 511210.0, True, [], {}))]:
+                            (None, "", "Technology", "1", "1234567", "31-33", "511210.0", 511210.0, True, [], {}))]:
             with self.subTest(fields=fields):
                 self.account = {"name": "Acme", "cr73c_enrichmentattempted": False}
                 self.update.reset_mock()

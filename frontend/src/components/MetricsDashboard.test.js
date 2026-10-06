@@ -42,15 +42,12 @@ const render = async () => act(async () => root.render(<MetricsDashboard />));
 
 it("uses existing snapshot metrics and hides removed sections and audit detail by default", async () => {
   await render();
-  expect(container.textContent).toContain("Total Accounts20");
-  expect(container.textContent).toContain("Already Enriched60.0%");
+  expect(container.textContent).toContain("Accounts Updated12");
   expect(container.textContent).toContain("Seamless Credits Remaining—");
   expect(container.textContent).toContain("Weekly allowance: 90 remaining of 100 credits.");
   expect(container.textContent).toContain("Recent Company");
-  ["Alert Center", "Trend Tracking", "Unwanted alert", "Preview Next Batch", "Field Impact Analytics", "Enrichment Outcome Breakdown"].forEach((text) => expect(container.textContent).not.toContain(text));
+  ["Data Quality", "Total Accounts", "Ready for Enrichment", "Already Enriched", "View Accounts Ready", "View Manual Review", "Alert Center", "Trend Tracking", "Unwanted alert", "Preview Next Batch", "Field Impact Analytics", "Enrichment Outcome Breakdown"].forEach((text) => expect(container.textContent).not.toContain(text));
   expect(container.querySelector("details").open).toBe(false);
-  await click("View Accounts Ready");
-  expect(document.body.textContent).toContain("Ready Company");
 });
 
 it("preserves the authenticated enrichment request and refreshes metrics on success", async () => {
@@ -83,7 +80,7 @@ it("reports enrichment failure and re-enables the action", async () => {
 it("keeps unavailable data distinct from zero", async () => {
   getCached.mockResolvedValue({ data: { data_quality_pipeline: [], recent_activity: [], audit_history: [] } });
   await render();
-  expect(container.textContent).toContain("Total Accounts—");
-  expect(container.textContent).toContain("Ready for Enrichment—");
+  expect(container.textContent).toContain("Accounts Updated—");
+  expect(container.textContent).toContain("Seamless Credits Remaining—");
   expect(container.textContent).toContain("No recent Seamless activity has been recorded yet.");
 });

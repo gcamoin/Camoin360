@@ -5,6 +5,21 @@ from . import seamless
 from .seamless import company_names_match, get_match_confidence
 
 
+class NaicsNormalizationTest(unittest.TestCase):
+    def test_accepts_hierarchy_codes_as_text_without_padding(self):
+        for code in ("12", "123", "1234", "12345", "123456", "31", "311", "3118", "31181", "311811", "031"):
+            for value in (code, f" {code} ", int(code)):
+                with self.subTest(value=value):
+                    expected = str(value).strip()
+                    self.assertEqual(seamless.normalize_naics_code(value), expected)
+
+    def test_rejects_invalid_values_without_deriving_a_code(self):
+        for value in ("1", 1, "1234567", 1234567, "", "   ", None, True, False,
+                      "Technology", "31-33", "311.0", 311.5, 311.0, "３１１", "٣١", -31, [], {}):
+            with self.subTest(value=value):
+                self.assertIsNone(seamless.normalize_naics_code(value))
+
+
 class MatchConfidenceTest(unittest.TestCase):
     def test_company_name_matching_allows_formatting_but_rejects_different_businesses(self):
         self.assertTrue(company_names_match("North Star Economic Development, Inc.", "North Star Economic Development LLC"))
@@ -59,9 +74,9 @@ class MatchConfidenceTest(unittest.TestCase):
 
 class SparseCompanyMatchTest(unittest.IsolatedAsyncioTestCase):
     async def test_naics_mapping_uses_only_selected_company_actual_code(self):
-        cases = [(511210, "511210"), ("511210", "511210"),
+        cases = [(value, str(value).strip()) for code in ("31", "311", "3118", "31181", "311811") for value in (code, int(code), f" {code} ")] + [(511210, "511210"), ("511210", "511210"),
                  (" 511210 ", "511210"), (None, None), ("", None),
-                 ("Technology", None), (51121, None), ("511210.0", None),
+                 ("Technology", None), (51121, "51121"), ("511210.0", None),
                  (511210.0, None), (True, None), ([511210], None),
                  ("５１１２１０", None), ({"code": 511210}, None)]
         for value, expected in cases + [("missing", None)]:

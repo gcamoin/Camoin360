@@ -38,6 +38,7 @@ from ..services.dynamics import (
     enrich_account,
     enrich_accounts,
     enrich_selected_accounts,
+    validate_manual_fields,
     revert_account_fields,
 )
 
@@ -61,6 +62,23 @@ def invalidate_account_endpoint_caches():
 class EnrichmentPreviewRequest(BaseModel):
     account_ids: list[str] = Field(default_factory=list)
     fields_to_update: list[str] = Field(default_factory=list)
+
+
+class ManualEnrichmentRequest(BaseModel):
+    account_ids: list[str] = Field(min_length=1)
+    fields_to_update: list[str] = Field(min_length=1)
+
+    @field_validator("fields_to_update")
+    @classmethod
+    def supported_fields(cls, value):
+        return validate_manual_fields(value)
+
+    @field_validator("account_ids")
+    @classmethod
+    def nonempty_account_ids(cls, value):
+        if any(not account_id.strip() for account_id in value):
+            raise ValueError("Account IDs must not be blank.")
+        return value
 
 
 class EnrichmentPreviewResponse(BaseModel):
@@ -183,6 +201,7 @@ async def fetch_accounts_data_quality(
 @router.get("/accounts/data-quality/search")
 async def search_accounts_data_quality(
     page: int = Query(default=0, ge=0),
+    enrichment_fields: bool = Query(default=False),
     page_size: int = Query(default=25, ge=1, le=250),
     search: str = Query(default=""),
     sector: str = Query(default="all"),
@@ -205,12 +224,12 @@ async def search_accounts_data_quality(
             missing_field=missing_field, states=[value for value in states.split("|") if value],
             country=country, cities=[value for value in cities.split("|") if value],
             needs_attention=needs_attention, column_filters=parsed_filters,
-            sort_key=sort_key, sort_direction=sort_direction,
+            sort_key=sort_key, sort_direction=sort_direction, enrichment_fields=enrichment_fields,
         )
     except (ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Unable to search Dynamics accounts: {exc}") from exc
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Unable to search Dynamics accounts.") from exc
 
 
 async def get_duplicate_account_response(limit: int):
@@ -544,7 +563,7 @@ async def create_enrichment_preview(request: EnrichmentPreviewRequest, _user=Dep
 
 
 @router.post("/accounts/enrichment-run", response_model=EnrichmentRunResponse)
-async def run_enrichment(request: EnrichmentPreviewRequest, _user=Depends(require_user)):
+async def run_enrichment(request: ManualEnrichmentRequest, _user=Depends(require_user)):
     try:
         result = await enrich_selected_accounts(request.account_ids, request.fields_to_update)
         invalidate_account_endpoint_caches()
@@ -552,7 +571,7 @@ async def run_enrichment(request: EnrichmentPreviewRequest, _user=Depends(requir
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Unable to enrich selected accounts: {exc}",
+            detail="Unable to enrich selected accounts.",
         ) from exc
 
 

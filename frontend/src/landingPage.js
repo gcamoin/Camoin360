@@ -12,30 +12,27 @@ import {
   useTheme,
 } from "@mui/material";
 
-import DataQualityTable from "./components/DataQualityTable";
+import EnrichmentWorkspace from "./components/EnrichmentWorkspace";
 import DuplicateAccounts from "./components/DuplicateAccounts";
-import MetricsDashboard from "./components/MetricsDashboard";
-import SummaryAnalytics from "./components/SummaryAnalytics";
+import MaintenanceHome from "./components/MaintenanceHome";
 import { API_BASE_URL, getAuthHeaders } from "./auth";
 import { prefetch } from "./apiClient";
 import { SidebarResizeHandle, useResizableSidebar } from "./useResizableSidebar";
 
 const views = {
-  seamless: {
-    label: "Seamless",
-    icon: "sync",
+  home: {
+    label: "Home",
+    icon: "home",
     route: "/dashboard",
     title: "Sophie Maintenance",
-    description:
-      "Keep your Dynamics account data clean and enriched.",
+    description: "Operational overview of Dynamics account activity and enrichment.",
   },
-  dataQuality: {
-    label: "Data Quality",
-    icon: "checklist",
-    route: "/dashboard/data-quality",
-    title: "Data Quality",
-    description:
-      "Review Dynamics account fields used for enrichment quality: name, state or province, sector, description, and website.",
+  enrichment: {
+    label: "Enrichment",
+    icon: "sync",
+    route: "/dashboard/enrichment",
+    title: "Enrichment",
+    description: "Keep Dynamics account information complete and up to date.",
   },
   duplicateAccounts: {
     label: "Duplicate Accounts",
@@ -44,16 +41,11 @@ const views = {
     title: "Duplicate Accounts",
     description: "Find and review possible duplicate Dynamics account records before enrichment updates.",
   },
-  summaryAnalytics: {
-    label: "Summary Analytics",
-    icon: "chart",
-    route: "/dashboard/summary-analytics",
-    title: "Summary Analytics",
-    description: "See how many Dynamics accounts belong to each sector with cards, a bar chart, and a count table.",
-  }
+
 };
 
 const iconPaths = {
+  home: "m12 3 9 8h-3v9h-5v-6h-2v6H6v-9H3l9-8Z",
   chart: "M5 19V9h3v10H5Zm5 0V5h3v14h-3Zm5 0v-7h3v7h-3Z",
   checklist: "M5.5 7.5 7 9l3-3 .9.9L7 10.8 4.6 8.4l.9-.9ZM13 8h7v2h-7V8ZM5.5 14.5 7 16l3-3 .9.9L7 17.8l-2.4-2.4.9-.9ZM13 15h7v2h-7v-2Z",
   collapse: "M15.5 5 8.5 12l7 7-1.4 1.4L5.7 12l8.4-8.4L15.5 5Zm4 0-7 7 7 7-1.4 1.4L9.7 12l8.4-8.4L19.5 5Z",
@@ -64,10 +56,9 @@ const iconPaths = {
 };
 
 const prefetchUrls = {
-  seamless: `${API_BASE_URL}/metrics`,
-  dataQuality: `${API_BASE_URL}/accounts/data-quality`,
+  home: `${API_BASE_URL}/maintenance/home`,
+  enrichment: `${API_BASE_URL}/maintenance/enrichment/credits`,
   duplicateAccounts: `${API_BASE_URL}/accounts/duplicates`,
-  summaryAnalytics: `${API_BASE_URL}/accounts/summary-analytics`,
 };
 
 function NavIcon({ name }) {
@@ -79,9 +70,10 @@ function NavIcon({ name }) {
 }
 
 function getViewForPath(pathname) {
+  if (["/dashboard/seamless", "/dashboard/data-quality"].includes(pathname)) return "enrichment";
   const matchingView = Object.entries(views).find(([_viewKey, view]) => view.route === pathname);
 
-  return matchingView?.[0] || "seamless";
+  return matchingView?.[0] || "home";
 }
 
 export default function LandingPage({ onLogout }) {
@@ -103,16 +95,19 @@ export default function LandingPage({ onLogout }) {
   function prefetchView(viewKey) {
     prefetch(prefetchUrls[viewKey], {
       headers: getAuthHeaders(),
-      params: viewKey === "dataQuality" ? { limit: 100000 } : undefined,
-      timeout: viewKey === "dataQuality" ? 5 * 60 * 1000 : undefined,
-      ttl: viewKey === "summaryAnalytics" ? 10 * 60 * 1000 : 5 * 60 * 1000,
+      params: viewKey === "home" ? { days: 14, limit: 25, view: "recent" } : undefined,
+      ttl: ["home", "enrichment"].includes(viewKey) ? 30 * 1000 : 5 * 60 * 1000,
     });
   }
 
   useEffect(() => {
     function handlePopState() {
+      const path = window.location.pathname;
+      if (path === "/dashboard/summary-analytics") window.history.replaceState(window.history.state, "", "/dashboard" + window.location.search + window.location.hash);
+      if (["/dashboard/seamless", "/dashboard/data-quality"].includes(path)) window.history.replaceState(window.history.state, "", "/dashboard/enrichment" + window.location.search + window.location.hash);
       setActiveView(getViewForPath(window.location.pathname));
     }
+    handlePopState();
 
     window.addEventListener("popstate", handlePopState);
 
@@ -132,7 +127,7 @@ export default function LandingPage({ onLogout }) {
         sx={{
           display: "grid",
           gridTemplateColumns: {
-            xs: activeView === "seamless" ? "minmax(0, 1fr)" : "1fr",
+            xs: "minmax(0, 1fr)",
             md: sidebarCollapsed ? "88px minmax(0, 1fr)" : `${sidebarResize.width}px minmax(0, 1fr)`,
           },
           minHeight: "100vh",
@@ -143,6 +138,7 @@ export default function LandingPage({ onLogout }) {
           component="aside"
           sx={{
             alignSelf: { md: "start" },
+            minWidth: 0,
             backgroundColor: "primary.main",
             color: "common.white",
             height: { md: "100vh" },
@@ -246,6 +242,7 @@ export default function LandingPage({ onLogout }) {
                   <Tooltip arrow disableHoverListener={!sidebarCollapsed} key={viewKey} placement="right" title={view.label}>
                     <Button
                       fullWidth
+                      aria-current={isActive ? "page" : undefined}
                       onFocus={() => prefetchView(viewKey)}
                       onMouseEnter={() => prefetchView(viewKey)}
                       onClick={() => navigateToView(viewKey)}
@@ -268,7 +265,7 @@ export default function LandingPage({ onLogout }) {
                         transition: "background-color 150ms ease, color 150ms ease, transform 150ms ease, box-shadow 150ms ease",
                         whiteSpace: sidebarCollapsed ? "nowrap" : "normal",
                         width: { xs: "auto", md: "100%" },
-                        flexShrink: activeView === "seamless" ? 0 : undefined,
+                        flexShrink: 0,
                         "&::before": {
                           backgroundColor: "secondary.main",
                           borderRadius: 999,
@@ -296,7 +293,7 @@ export default function LandingPage({ onLogout }) {
                           transform: { md: "translateX(2px)" },
                         },
                       }}
-                      title={view.label}
+                      aria-label={view.label}
                     >
                       {!sidebarCollapsed && view.label}
                     </Button>
@@ -339,7 +336,7 @@ export default function LandingPage({ onLogout }) {
           </Stack>
         </Box>
 
-        <Box component="main" sx={{ py: { xs: 3, md: 5.5 } }}>
+        <Box component="main" sx={{ minWidth: 0, py: { xs: 3, md: 5.5 } }}>
           <Container
             maxWidth={false}
             sx={{
@@ -367,11 +364,11 @@ export default function LandingPage({ onLogout }) {
                   },
                 }}
               >
-                <Typography
+                {activeView !== "home" && <Typography
                   sx={{ color: "secondary.dark", fontSize: "0.7rem", fontWeight: 800, letterSpacing: "0.11em", mb: 0.75, textTransform: "uppercase" }}
                 >
                   Sophie Maintenance
-                </Typography>
+                </Typography>}
                 <Typography
                   component="h2"
                   sx={{
@@ -396,10 +393,9 @@ export default function LandingPage({ onLogout }) {
                 </Typography>
               </Box>
 
-              {activeView === "seamless" && <MetricsDashboard />}
-              {activeView === "dataQuality" && <DataQualityTable />}
+              {activeView === "home" && <MaintenanceHome />}
+              {activeView === "enrichment" && <EnrichmentWorkspace />}
               {activeView === "duplicateAccounts" && <DuplicateAccounts />}
-              {activeView === "summaryAnalytics" && <SummaryAnalytics />}
             </Stack>
           </Container>
         </Box>

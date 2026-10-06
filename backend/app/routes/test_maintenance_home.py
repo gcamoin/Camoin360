@@ -3,7 +3,7 @@ import json
 import os
 import unittest
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from backend.app import main, database
 from backend.app.routes import maintenance, auth
 from backend.app.services import maintenance_home as home
+from backend.app.services import maintenance_total as total_fallback
 from backend.app.services import maintenance_observations as observations
 from backend.app.services.test_maintenance_observations import NOW
 from backend.app.testing_support import temporary_database
@@ -25,6 +26,8 @@ class HomeApiTest(unittest.TestCase):
         self.client = TestClient(main.app)
         self.addCleanup(self.client.close)
         maintenance.home_cache.invalidate()
+        total_fallback.total_fallback_cache.invalidate()
+        self.addCleanup(total_fallback.total_fallback_cache.invalidate)
         self.addCleanup(maintenance.home_cache.invalidate)
         for module in (main, auth):
             patcher = patch.object(module, "get_user_from_token", side_effect=self.user)
@@ -200,11 +203,88 @@ class HomeApiTest(unittest.TestCase):
         self.assertIsNone(result["account_creation_by_day"][0]["count"])
         self.assertTrue(result["warnings"])
 
+    def test_total_independent_of_missing_history_and_observation_coverage(self):
+        with database.get_database_connection() as connection:
+            observations._save_total(connection, 3125000, NOW)
+            connection.execute("DELETE FROM account_enrichment_history")
+            connection.execute("UPDATE maintenance_sync_state SET coverage_complete = FALSE, status = 'incomplete', coverage_started_at = ? WHERE sync_key = 'discovery'", (NOW,))
+        result = self.get().json()
+        self.assertFalse(result["reporting"]["coverage_complete"])
+        self.assertFalse(result["metrics"]["enrichment_success_rate"]["coverage_complete"])
+        self.assertEqual(result["metrics"]["total_dynamics_accounts"]["value"], 3125000)
+
+    def test_fresh_and_stale_snapshots_never_call_fallback(self):
+        with patch.object(maintenance, "missing_total_snapshot", AsyncMock()) as fallback:
+            self.assertEqual(self.get().json()["metrics"]["total_dynamics_accounts"]["value"], 3124821)
+            with database.get_database_connection() as connection:
+                connection.execute("UPDATE maintenance_total_account_snapshot SET fetched_at = ?", (NOW - timedelta(days=2),))
+            result = self.get().json()
+            self.assertEqual(result["metrics"]["total_dynamics_accounts"]["value"], 3124821)
+            self.assertTrue(result["metrics"]["total_dynamics_accounts"]["is_stale"])
+            fallback.assert_not_awaited()
+
+    def test_missing_snapshot_fallback_returns_and_persists_total_independent_of_coverage(self):
+        with database.get_database_connection() as connection:
+            connection.execute("DELETE FROM maintenance_total_account_snapshot")
+            connection.execute("UPDATE maintenance_sync_state SET coverage_complete = FALSE, status = 'incomplete' WHERE sync_key = 'discovery'")
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.total_count.return_value = 1749732
+        with patch.object(total_fallback, "MaintenanceDynamicsClient", return_value=client), patch.object(total_fallback, "utc_now", return_value=NOW):
+            result = self.get().json()
+            self.assertEqual(result["metrics"]["total_dynamics_accounts"]["value"], 1749732)
+            self.assertFalse(result["reporting"]["coverage_complete"])
+            self.assertFalse(result["metrics"]["enrichment_success_rate"]["coverage_complete"])
+            self.assertNotIn("Total Account snapshot is unavailable.", result["warnings"])
+            with database.get_database_connection() as connection:
+                self.assertEqual(observations._total_snapshot(connection)["value"], 1749732)
+            self.assertEqual(self.get("/maintenance/home?view=attention").json()["metrics"]["total_dynamics_accounts"]["value"], 1749732)
+        client.total_count.assert_awaited_once()
+
+    def test_fallback_persistence_failure_retains_valid_total_and_sanitizes_warning(self):
+        with database.get_database_connection() as connection:
+            connection.execute("DELETE FROM maintenance_total_account_snapshot")
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.total_count.return_value = 1749732
+        with patch.object(total_fallback, "MaintenanceDynamicsClient", return_value=client), patch.object(total_fallback, "_save_total", side_effect=RuntimeError("Bearer SECRET")), self.assertLogs(total_fallback.logger, level="WARNING") as logs:
+            result = self.get().json()
+            self.assertEqual(result["metrics"]["total_dynamics_accounts"]["value"], 1749732)
+            self.assertNotIn("SECRET", json.dumps(result) + str(logs.output))
+            self.assertEqual(self.get("/maintenance/home?days=7").json()["metrics"]["total_dynamics_accounts"]["value"], 1749732)
+        client.total_count.assert_awaited_once()
+
+    def test_fallback_dynamics_failure_returns_unknown_and_actual_zero_is_preserved(self):
+        with database.get_database_connection() as connection:
+            connection.execute("DELETE FROM maintenance_total_account_snapshot")
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.total_count.side_effect = RuntimeError("Bearer SECRET")
+        with patch.object(total_fallback, "MaintenanceDynamicsClient", return_value=client), self.assertLogs(total_fallback.logger, level="WARNING") as logs:
+            result = self.get().json()
+            self.assertIsNone(result["metrics"]["total_dynamics_accounts"]["value"])
+            self.assertIn("Dynamics total Account count is temporarily unavailable.", result["warnings"])
+            self.assertNotIn("SECRET", json.dumps(result) + str(logs.output))
+        maintenance.home_cache.invalidate()
+        total_fallback.total_fallback_cache.invalidate()
+        client.total_count.side_effect = None
+        client.total_count.return_value = 0
+        with patch.object(total_fallback, "MaintenanceDynamicsClient", return_value=client):
+            self.assertEqual(self.get().json()["metrics"]["total_dynamics_accounts"]["value"], 0)
+        with database.get_database_connection() as connection:
+            self.assertEqual(observations._total_snapshot(connection)["value"], 0)
+
+    def test_actual_zero_total_is_not_unknown(self):
+        with database.get_database_connection() as connection:
+            observations._save_total(connection, 0, NOW)
+        self.assertEqual(self.get().json()["metrics"]["total_dynamics_accounts"]["value"], 0)
+
     def test_missing_snapshots_never_zero(self):
         with database.get_database_connection() as connection:
             connection.execute("DELETE FROM maintenance_total_account_snapshot")
             connection.execute("DELETE FROM maintenance_account_creation_counts")
-        result = self.get().json()
+        with patch.object(maintenance, "missing_total_snapshot", AsyncMock(return_value={"snapshot": None, "persisted": False})):
+            result = self.get().json()
         self.assertIsNone(result["metrics"]["total_dynamics_accounts"]["value"])
         self.assertIsNone(result["metrics"]["new_accounts_today"])
         self.assertIsNone(result["metrics"]["new_accounts_this_week"])
