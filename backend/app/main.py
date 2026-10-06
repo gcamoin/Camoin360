@@ -48,20 +48,6 @@ MODULE_PATH_RULES = [
     ("main", ("/metrics", "/accounts", "/maintenance")),
 ]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "https://camoin360.vercel.app",
-        "https://camoin360.com",
-        "https://www.camoin360.com",
-    ],
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 @app.middleware("http")
@@ -106,6 +92,23 @@ async def enforce_module_access(request, call_next):
 
     request.state.authenticated_user = user
     return await call_next(request)
+
+# Register CORS last so it wraps authentication rejections as well as route responses.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "https://camoin360.vercel.app",
+        "https://camoin360.com",
+        "https://www.camoin360.com",
+    ],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 app.include_router(accounts_router)
 app.include_router(ai_router)

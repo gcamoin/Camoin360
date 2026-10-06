@@ -580,7 +580,7 @@ def _dynamics_data_quality_filter(
     *, search: str = "", sector: str = "all", missing_field: str = "all",
     states: list[str] | None = None, country: str = "all", cities: list[str] | None = None,
     needs_attention: bool = False, column_filters: dict[str, str] | None = None,
-    enrichment_fields: bool = False,
+    enrichment_fields: bool = False, missing_fields: list[str] | None = None, missing_operator: str = "and",
 ) -> str:
     fields = tuple((field, field) for field in MANUAL_ENRICHMENT_FIELDS) if enrichment_fields else DATA_QUALITY_FIELDS
 
@@ -613,7 +613,13 @@ def _dynamics_data_quality_filter(
         clauses.append("(" + " or ".join(choices) + ")")
     if cities:
         clauses.append("(" + " or ".join(f"address1_city eq {literal(value)}" for value in cities) + ")")
-    if missing_field == "incomplete_location":
+    if missing_operator not in {"and", "or"}:
+        raise ValueError("Unsupported missing-information operator.")
+    if missing_fields:
+        if any(field not in dict(fields) for field in missing_fields):
+            raise ValueError("Unsupported missing-information field.")
+        clauses.append("(" + f" {missing_operator} ".join(missing(field) for field in dict.fromkeys(missing_fields)) + ")")
+    elif missing_field == "incomplete_location":
         clauses.append("(" + " or ".join(missing(field) for field in DATA_QUALITY_LOCATION_FIELDS) + ")")
     elif missing_field in dict(fields):
         clauses.append(missing(missing_field))
@@ -626,11 +632,16 @@ def _dynamics_data_quality_filter(
 
 
 def _matches_data_quality_missing_filter(
-    account: dict, missing_field: str = "all", needs_attention: bool = False, enrichment_fields: bool = False
+    account: dict, missing_field: str = "all", needs_attention: bool = False, enrichment_fields: bool = False,
+    missing_fields: list[str] | None = None, missing_operator: str = "and",
 ) -> bool:
     """Validate missing-field results after Dynamics applies the OData filter."""
     fields = tuple((field, field) for field in MANUAL_ENRICHMENT_FIELDS) if enrichment_fields else DATA_QUALITY_FIELDS
-    if missing_field == "incomplete_location":
+    if missing_fields:
+        matches_selected_field = (all if missing_operator == "and" else any)(
+            _is_missing_data_quality_value(account.get(field)) for field in missing_fields
+        )
+    elif missing_field == "incomplete_location":
         matches_selected_field = any(
             _is_missing_data_quality_value(account.get(field))
             for field in DATA_QUALITY_LOCATION_FIELDS
@@ -698,6 +709,8 @@ async def search_accounts_data_quality_from_dynamics(
                     missing_field=filters.get("missing_field", "all"),
                     needs_attention=filters.get("needs_attention", False),
                     enrichment_fields=enrichment_mode,
+                    missing_fields=filters.get("missing_fields"),
+                    missing_operator=filters.get("missing_operator", "and"),
                 )
             )
             next_url = payload.get("@odata.nextLink")

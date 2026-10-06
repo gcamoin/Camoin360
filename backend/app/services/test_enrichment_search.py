@@ -74,6 +74,36 @@ class EnrichmentSearchTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("new_sector eq 'Services'", url)
         self.assertIn("address1_city eq 'Boston'", url)
 
+    async def test_multiple_missing_fields_match_all_selected_fields_only(self):
+        self.client.get.return_value = httpx.Response(200, json={"value": [
+            self.account(accountid="both", websiteurl=None, telephone1=""),
+            self.account(accountid="website", websiteurl=None),
+            self.account(accountid="phone", telephone1=""),
+            self.account(accountid="other", cr73c_naicscode=None),
+            self.account(accountid="complete"),
+        ]})
+        result = await dynamics.search_accounts_data_quality_from_dynamics(
+            enrichment_fields=True, missing_fields=["websiteurl", "telephone1"], country="United States")
+        self.assertEqual([row["accountid"] for row in result["data"]], ["both"])
+        url = unquote(self.client.get.await_args.args[0])
+        self.assertIn("((websiteurl eq null or websiteurl eq '') and (telephone1 eq null or telephone1 eq ''))", url)
+        self.assertNotIn("cr73c_naicscode eq null", url)
+        self.assertIn("address1_country eq 'United States'", url)
+
+    async def test_missing_fields_keep_zero_employees_populated(self):
+        self.client.get.return_value = httpx.Response(200, json={"value": [
+            self.account(accountid="zero", numberofemployees=0),
+            self.account(accountid="missing", numberofemployees=None),
+        ]})
+        result = await dynamics.search_accounts_data_quality_from_dynamics(enrichment_fields=True, missing_fields=["numberofemployees"])
+        self.assertEqual([row["accountid"] for row in result["data"]], ["missing"])
+        self.assertNotIn("numberofemployees eq ''", unquote(self.client.get.await_args.args[0]))
+
+    async def test_unknown_missing_fields_rejected_before_dynamics_call(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported missing-information"):
+            await dynamics.search_accounts_data_quality_from_dynamics(enrichment_fields=True, missing_fields=["new_employees"])
+        self.client.get.assert_not_awaited()
+
     async def test_pagination_reads_only_needed_pages(self):
         self.client.get.side_effect = [httpx.Response(200, json={"value": [self.account()], "@odata.nextLink": BASE + "/accounts?$skiptoken=opaque"}),
                                       httpx.Response(200, json={"value": [self.account(accountid="b")]})]

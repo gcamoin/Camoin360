@@ -68,6 +68,12 @@ class EnrichmentWorkspaceApiTest(unittest.TestCase):
         self.assertEqual(search.await_args.kwargs["missing_field"], "cr73c_naicscode")
         self.assertEqual(search.await_args.kwargs["page_size"], 25)
 
+    def test_search_passes_multiple_missing_fields(self):
+        with patch.object(accounts, "search_accounts_data_quality_from_dynamics", new=AsyncMock(return_value={"data": [], "has_more": False})) as search:
+            response = self.get("/accounts/data-quality/search?enrichment_fields=true&missing_fields=websiteurl%7Ctelephone1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(search.await_args.kwargs["missing_fields"], ["websiteurl", "telephone1"])
+
     def test_search_provider_error_is_not_exposed(self):
         with patch.object(accounts, "search_accounts_data_quality_from_dynamics", new=AsyncMock(side_effect=RuntimeError("Bearer SECRET raw response"))):
             response = self.get("/accounts/data-quality/search?enrichment_fields=true")

@@ -206,6 +206,8 @@ async def search_accounts_data_quality(
     search: str = Query(default=""),
     sector: str = Query(default="all"),
     missing_field: str = Query(default="all"),
+    missing_fields: str = Query(default=""),
+    missing_operator: str = Query(default="and", pattern="^(and|or)$"),
     states: str = Query(default=""),
     country: str = Query(default="all"),
     cities: str = Query(default=""),
@@ -221,7 +223,7 @@ async def search_accounts_data_quality(
             raise ValueError("column_filters must be an object")
         return await search_accounts_data_quality_from_dynamics(
             page=page, page_size=page_size, search=search, sector=sector,
-            missing_field=missing_field, states=[value for value in states.split("|") if value],
+            missing_field=missing_field, missing_fields=[value for value in missing_fields.split("|") if value], missing_operator=missing_operator, states=[value for value in states.split("|") if value],
             country=country, cities=[value for value in cities.split("|") if value],
             needs_attention=needs_attention, column_filters=parsed_filters,
             sort_key=sort_key, sort_direction=sort_direction, enrichment_fields=enrichment_fields,

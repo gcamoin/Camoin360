@@ -2,6 +2,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import axios from "axios";
 import EnrichmentWorkspace from "./EnrichmentWorkspace";
+import { handleUnauthorized } from "../auth";
 import { getCached, invalidateApiCache } from "../apiClient";
 window.IS_REACT_ACT_ENVIRONMENT = true;
 jest.mock("axios");
@@ -11,6 +12,7 @@ const account = (id = "a", options = {}) => ({ accountid: id, name: `Account ${i
 let root, container;
 beforeEach(() => {
   jest.clearAllMocks();
+  handleUnauthorized.mockReturnValue(false);
   getCached.mockReset().mockResolvedValue({ data: { data: [account()], has_more: false } });
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
 });
@@ -22,6 +24,14 @@ const check = async (label) => { const node = container.querySelector(`input[ari
 const input = async (label, value) => {
   const node = Array.from(container.querySelectorAll('input')).find((el) => el.id && container.querySelector(`label[for="${el.id}"]`)?.textContent === label);
   expect(node).toBeTruthy(); await act(async () => { Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(node, value); node.dispatchEvent(new Event('input', { bubbles: true })); });
+};
+const chooseCountry = async (value) => {
+  const select = container.querySelector('select');
+  await act(async () => { select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })); });
+};
+const chooseState = async (value) => {
+  const select = container.querySelectorAll('select')[1];
+  await act(async () => { select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })); });
 };
 const chooseField = async (label) => {
   await act(async () => container.querySelector('[aria-labelledby="manual-fields-label"]').dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
@@ -42,7 +52,7 @@ it('shows the Account workspace without credit cards or automatic data fetching'
   for (const text of ['Active', 'Accounts Updated', 'Data Quality', 'Alert Center', 'Trend Tracking', 'CSV', 'Preview Enrichment', 'Run Enrichment']) expect(container.textContent).not.toContain(text);
 });
 it('uses explicit bounded search, canonical missing fields, combined location and details', async () => {
-  await render(); await input('Search Accounts', 'Acme'); await input('Country', 'United States'); await click('Search Dynamics');
+  await render(); await input('Search Accounts', 'Acme'); await chooseCountry('United States'); await click('Search Dynamics');
   expect(getCached.mock.calls[0][1]).toEqual(expect.objectContaining({ headers: { Authorization: 'Bearer test' }, params: expect.objectContaining({ enrichment_fields: true, search: 'Acme', country: 'United States', page: 0, page_size: 25, needs_attention: true }) }));
   expect(Array.from(container.querySelectorAll('thead th')).map((node) => node.textContent)).toEqual(['', 'Account', 'Location', 'Missing Information', 'Completeness', 'Details']);
   expect(container.textContent).toContain('Boston, MA, United States'); expect(container.textContent).toContain('Postal Code, NAICS'); expect(container.textContent).toContain('100%');
@@ -92,8 +102,8 @@ it('handles manual API failure without treating it as successful enrichment', as
   expect(document.body.textContent).toContain('Unable to complete enrichment.'); expect(document.body.textContent).not.toContain('SECRET'); expect(container.textContent).not.toContain('Enrichment complete');
 });
 it('supports compact location/sector filters', async () => {
-  await render();
-  await input('State / Province', 'MA'); await input('City', 'Boston'); await input('Sector', 'Technology'); await click('Search Dynamics');
+  await render(); await chooseCountry('United States');
+  await chooseState('MA'); await input('City', 'Boston'); await input('Sector', 'Technology'); await click('Search Dynamics');
   expect(getCached.mock.calls[0][1].params).toEqual(expect.objectContaining({ states: 'MA', cities: 'Boston', sector: 'Technology' }));
 });
 
@@ -101,7 +111,51 @@ it('sends the chosen canonical Missing Information filter without a broad eligib
   await render();
   await act(async () => container.querySelector('[role="combobox"]').dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
   const option = Array.from(document.querySelectorAll('[role="option"]')).find((node) => node.textContent === 'NAICS');
-  await act(async () => option.click()); await click('Search Dynamics');
-  expect(getCached.mock.calls[0][1].params).toEqual(expect.objectContaining({ missing_field: 'cr73c_naicscode', needs_attention: false, enrichment_fields: true }));
+  await act(async () => option.click());
+  await act(async () => document.querySelector('.MuiBackdrop-root').click()); await click('Search Dynamics');
+  expect(getCached.mock.calls[0][1].params).toEqual(expect.objectContaining({ missing_fields: 'cr73c_naicscode', needs_attention: false, enrichment_fields: true }));
   expect(axios.post).not.toHaveBeenCalled();
+});
+
+it('enables State / Province only for United States or Canada and clears it on country changes', async () => {
+  await render();
+  const stateInput = () => container.querySelectorAll('select')[1];
+  expect(stateInput().disabled).toBe(true);
+  expect(container.querySelector('select').textContent).toContain('All countries');
+  expect(getCached).not.toHaveBeenCalled();
+  await chooseCountry('United States'); expect(stateInput().disabled).toBe(false);
+  expect(stateInput().textContent).toContain('Massachusetts'); expect(stateInput().textContent).not.toContain('Ontario');
+  expect(stateInput().options).toHaveLength(52);
+  await chooseState('MA'); await click('Search Dynamics');
+  expect(getCached.mock.calls[0][1].params).toEqual(expect.objectContaining({ country: 'United States', states: 'MA' }));
+  await chooseCountry('Canada'); expect(stateInput().disabled).toBe(false); expect(stateInput().value).toBe('');
+  expect(stateInput().textContent).toContain('Ontario'); expect(stateInput().textContent).not.toContain('Massachusetts');
+  expect(stateInput().options).toHaveLength(14);
+  await chooseState('ON'); await click('Search Dynamics');
+  expect(getCached.mock.calls[1][1].params).toEqual(expect.objectContaining({ country: 'Canada', states: 'ON' }));
+  await chooseCountry('France'); expect(stateInput().disabled).toBe(true); expect(stateInput().value).toBe('');
+  await click('Search Dynamics'); expect(getCached.mock.calls[2][1].params).toEqual(expect.objectContaining({ country: 'France', states: '' }));
+  await chooseCountry(''); expect(stateInput().disabled).toBe(true);
+});
+
+it('delegates a rejected session to authentication without showing a search failure', async () => {
+  const unauthorized = { response: { status: 401, data: { detail: 'Invalid token' } } };
+  handleUnauthorized.mockReturnValue(true);
+  getCached.mockRejectedValue(unauthorized);
+  await render(); await click('Search Dynamics');
+  expect(handleUnauthorized).toHaveBeenCalledWith(unauthorized);
+  expect(container.textContent).not.toContain('Unable to search Accounts.');
+});
+
+it('searches for all selected missing fields and resets pagination', async () => {
+  await render(); await click('Search Dynamics');
+  await act(async () => container.querySelector('[role="combobox"]').dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
+  for (const label of ['Website', 'Phone']) {
+    const option = Array.from(document.querySelectorAll('[role="option"]')).find((node) => node.textContent === label);
+    await act(async () => option.click());
+  }
+  await act(async () => document.querySelector('.MuiBackdrop-root').click());
+  await click('Search Dynamics');
+  expect(getCached.mock.calls[1][1].params).toEqual(expect.objectContaining({ missing_fields: 'websiteurl|telephone1', needs_attention: false, page: 0 }));
+  expect(container.textContent).toContain('Missing all selected fields');
 });
