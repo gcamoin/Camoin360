@@ -21,6 +21,7 @@ import PEQualifiedLeads from "./components/PEQualifiedLeads";
 import ProductivityProjects from "./components/ProductivityProjects";
 import ServiceLineFinancials from "./components/ServiceLineFinancials";
 import SoftwareInventory from "./components/SoftwareInventory";
+import SurveyComponent from "./components/SurveyComponent";
 import AiChatBox from "./components/AiChatBox";
 import DashboardDateFilters, { EMPTY_DATE_FILTERS } from "./components/DashboardDateFilters";
 import RfpOverallSuccessRate from "./components/RfpOverallSuccessRate";
@@ -121,6 +122,12 @@ const views = {
     title: "Software Inventory",
     description:
       "Current software and data subscriptions, ownership, access, renewal timing, vendor contacts, and cost history.",
+  },
+  surveys: {
+    label: "Survey Component",
+    icon: "projects",
+    title: "Survey Component",
+    description: "Completed client surveys from Dynamics projects.",
   },
   employeeProductivity: {
     label: "Employee Productivity",
@@ -426,11 +433,11 @@ export default function ManagementDashboard({ onLogout }) {
                 />
               ) : null}
 
-              <AiChatBox
+              {activeView !== "surveys" && <AiChatBox
                 context={analystContext}
                 placeholder={`Ask the AI Analyst about ${currentView.title.toLowerCase()}...`}
                 section={currentView.title}
-              />
+              />}
 
               {activeView === "economicIndicators" && <EconomicIndicators />}
               {activeView === "companyFinancials" && <CompanyFinancials />}
@@ -448,6 +455,7 @@ export default function ManagementDashboard({ onLogout }) {
                 <ProductivityProjects />
               )}
               {activeView === "softwareInventory" && <SoftwareInventory />}
+              {activeView === "surveys" && <SurveyComponent />}
               {activeView === "employeeProductivity" && (
                 <EmployeeProductivity />
               )}
