@@ -23,7 +23,7 @@ SAFE_ERRORS = frozenset({
     "invalid_discovery_cursor", "invalid_discovery_page", "invalid_count_response",
     "invalid_dynamics_response", "dynamics_query_failed", "aggregate_interval_unsplittable",
     "dynamics_configuration_unavailable", "database_unavailable", "dynamics_unavailable",
-    "refresh_clock_regression", "refresh_interrupted",
+    "refresh_clock_regression", "refresh_interrupted", "invalid_data_health_aggregate",
 })
 
 
@@ -115,7 +115,7 @@ async def _refresh_lock(key):
         nonlocal connection
         connection = cm.__enter__()
         connection.execute("SET LOCAL statement_timeout = '2000ms'")
-        locked = connection.execute("SELECT pg_try_advisory_lock(66360, ?) AS acquired", ({"discovery": 1, "total": 2, "counts": 3, "worker": 4}[key],)).fetchone()["acquired"]
+        locked = connection.execute("SELECT pg_try_advisory_lock(66360, ?) AS acquired", ({"discovery": 1, "total": 2, "counts": 3, "worker": 4, "data_health": 5}[key],)).fetchone()["acquired"]
         connection.commit()
         return locked
     task = asyncio.create_task(asyncio.to_thread(acquire))

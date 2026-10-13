@@ -2599,54 +2599,11 @@ async def get_account_sector_counts():
     if _SUMMARY_CACHE["data"] is not None and _SUMMARY_CACHE["expires_at"] > now:
         return _SUMMARY_CACHE["data"]
 
-    token = await get_access_token()
+    from .account_sector_summary import load_sector_summary
 
-    url = (
-        f"{API_URL}/accounts?"
-        "$select=new_sector"
-    )
-
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-        "OData-Version": "4.0",
-        "Prefer": 'odata.include-annotations="OData.Community.Display.V1.FormattedValue",odata.maxpagesize=5000',
-    }
-
-    sector_counts = {}
-
-    async with httpx.AsyncClient() as client:
-        while url:
-            response = await client.get(url, headers=headers)
-
-            if response.status_code != 200:
-                raise Exception(f"Dynamics GET error: {response.text}")
-
-            payload = response.json()
-
-            for account in payload.get("value", []):
-                raw_sector = account.get("new_sector@OData.Community.Display.V1.FormattedValue", account.get("new_sector"))
-                sector = str(raw_sector).strip() if raw_sector is not None else ""
-                sector = sector or "Unspecified"
-                sector_counts[sector] = sector_counts.get(sector, 0) + 1
-
-            url = payload.get("@odata.nextLink")
-
-    sectors = [
-        {"sector": sector, "account_count": account_count}
-        for sector, account_count in sector_counts.items()
-    ]
-    sectors.sort(key=lambda item: (-item["account_count"], item["sector"].casefold()))
-
-    total_accounts = sum(item["account_count"] for item in sectors)
-
-    summary = {
-        "total_accounts": total_accounts,
-        "sector_count": len(sectors),
-        "sectors": sectors
-    }
+    summary = await load_sector_summary()
     _SUMMARY_CACHE["data"] = summary
-    _SUMMARY_CACHE["expires_at"] = now + SUMMARY_CACHE_TTL_SECONDS
+    _SUMMARY_CACHE["expires_at"] = time.time() + SUMMARY_CACHE_TTL_SECONDS
 
     return summary
 

@@ -74,6 +74,15 @@ class EnrichmentWorkspaceApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(search.await_args.kwargs["missing_fields"], ["websiteurl", "telephone1"])
 
+    def test_search_operator_contract(self):
+        with patch.object(accounts, "search_accounts_data_quality_from_dynamics", new=AsyncMock(return_value={"data": [], "has_more": False})) as search:
+            response = self.get("/accounts/data-quality/search?enrichment_fields=true&missing_fields=websiteurl%7Ctelephone1&missing_operator=or")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(search.await_args.kwargs["missing_operator"], "or")
+            search.reset_mock()
+            self.assertEqual(self.get("/accounts/data-quality/search?missing_operator=xor").status_code, 422)
+            search.assert_not_awaited()
+
     def test_search_provider_error_is_not_exposed(self):
         with patch.object(accounts, "search_accounts_data_quality_from_dynamics", new=AsyncMock(side_effect=RuntimeError("Bearer SECRET raw response"))):
             response = self.get("/accounts/data-quality/search?enrichment_fields=true")

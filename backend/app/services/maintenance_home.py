@@ -5,6 +5,8 @@ import hashlib
 import os
 from datetime import timedelta
 
+from .maintenance_data_health import read_snapshot as read_health_snapshot, home_data_health
+
 from .maintenance_observations import (
     MaintenanceConfig, REPORTING_ZONE, _db, read_count_snapshots, reporting_week_bounds, utc_now,
 )
@@ -75,7 +77,7 @@ def read_home_refresh_version():
             FROM maintenance_sync_state ORDER BY sync_key""").fetchall()
         total = connection.execute("SELECT fetched_at FROM maintenance_total_account_snapshot WHERE id = 1").fetchone()
         counts = connection.execute("SELECT MAX(fetched_at) AS fetched_at, COUNT(*) AS days FROM maintenance_account_creation_counts").fetchone()
-        return hashlib.sha256(repr(([dict(row) for row in states], dict(total) if total else None, dict(counts))).encode()).hexdigest()
+        return hashlib.sha256(repr(([dict(row) for row in states], dict(total) if total else None, dict(counts), dict(connection.execute("SELECT fetched_at FROM maintenance_data_health_snapshot WHERE id = 1").fetchone() or {}))).encode()).hexdigest()
     return _db(read)
 
 
@@ -169,8 +171,13 @@ def read_home(*, days=14, view="recent", limit=25, cursor=None, now=None):
         ) SELECT COUNT(*) FILTER (WHERE display_status = ANY(%(successful)s)) AS successful,
                  COUNT(*) FILTER (WHERE display_status = ANY(%(terminal)s)) AS terminal,
                  COUNT(*) AS observed FROM accounts""", params).fetchone()
-        return [dict(row) for row in rows], dict(counts)
-    rows, counts = _db(read)
+        return [dict(row) for row in rows], dict(counts), read_health_snapshot(connection)
+    rows, counts, health_snapshot = _db(read)
+    try:
+        health_cadence = max(900, min(86400, int(os.getenv("MAINTENANCE_DATA_HEALTH_SECONDS", "1800"))))
+    except ValueError:
+        health_cadence = 1800
+    health = home_data_health(health_snapshot, snapshots["sync"].get("data_health", {}), now, health_cadence)
     known = counts["terminal"]
     warnings = []
     if not snapshots["total"]:
@@ -189,6 +196,10 @@ def read_home(*, days=14, view="recent", limit=25, cursor=None, now=None):
         warnings.append("The observed Account window does not cover the entire reporting week.")
     warnings.append("Snapshot freshness depends on the separately deployed maintenance refresh worker.")
     warnings.append("Enrichment history is best-effort; unrecorded requests or completions cannot be ruled out.")
+    if not health_snapshot:
+        warnings.append("Data Health snapshot is unavailable.")
+    elif health["freshness"]["is_stale"]:
+        warnings.append("Data Health snapshot is stale; showing the last valid values.")
     def refresh_info(key):
         state = snapshots["sync"].get(key, {})
         return {"last_successful_refresh_at": state.get("last_succeeded_at"),
@@ -199,6 +210,7 @@ def read_home(*, days=14, view="recent", limit=25, cursor=None, now=None):
                       "tracking_started_at": tracking, "coverage_started_at": discovery.get("coverage_started_at"),
                       "coverage_complete": fresh},
         "metrics": {
+            **health["metrics"],
             "total_dynamics_accounts": snapshots["total"] or {"value": None, "source": None, "fetched_at": None, "maximum_source_age_hours": 24, "is_stale": True},
             "new_accounts_today": snapshots["today"]["value"] if snapshots["today"] else None,
             "new_accounts_this_week": snapshots["this_week"]["value"],
@@ -208,6 +220,8 @@ def read_home(*, days=14, view="recent", limit=25, cursor=None, now=None):
                 "coverage_complete": week_covered,
                 "scope": "observed_new_accounts", "paid_no_fields_added_is_success": False},
         },
+        "data_health_distribution": health["data_health_distribution"],
+        "data_health": health["data_health"],
         "account_creation_by_day": [{"date": day["date"], "count": day["value"] if day["is_complete"] or day["date"] == today else None,
             "complete": day["is_complete"], "stale": day["is_stale"], "fetched_at": day["fetched_at"]} for day in snapshots["daily"]],
         "recent_accounts": [_account(row) for row in rows[:limit]],
@@ -217,6 +231,7 @@ def read_home(*, days=14, view="recent", limit=25, cursor=None, now=None):
             "discovery": {**refresh_info("discovery"), "observed_through": watermark, "lag_seconds": lag, "coverage_complete": fresh},
             "creation_counts": {**refresh_info("counts"), "today_stale": snapshots["today"]["is_stale"] if snapshots["today"] else True,
                                 "week_stale": snapshots["this_week"]["is_stale"]},
+            "data_health": health["freshness"],
             "history": {"persistence": "best_effort", "tracking_gaps_known": None},
         },
         "warnings": warnings,

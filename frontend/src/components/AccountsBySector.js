@@ -15,7 +15,7 @@ export default function AccountsBySector() {
   useEffect(() => {
     let active = true;
     setLoading(true); setError(false);
-    getCached(SUMMARY_URL, { headers: getAuthHeaders(), ttl: 10 * 60 * 1000, force: retry > 0 })
+    getCached(SUMMARY_URL, { headers: getAuthHeaders(), ttl: 10 * 60 * 1000, timeout: 130000, force: retry > 0 })
       .then(({ data }) => { if (active) setSectors(data?.sectors || []); })
       .catch((err) => { if (active && !handleUnauthorized(err)) setError(true); })
       .finally(() => { if (active) setLoading(false); });

@@ -1004,3 +1004,49 @@ is reachable. It is safe to run alongside the in-process scheduler.
 
 References: [Dynamics segment Web API](https://learn.microsoft.com/en-us/dynamics365/customer-insights/journeys/real-time-marketing-api-segment)
 and [Render cron jobs](https://render.com/docs/cronjobs).
+
+## Sophie Home Data Health
+
+Home reads persisted Dataverse Account health; it does not calculate scores or
+change the Power Automate scoring flows. Account metadata was verified read-only
+on October 6, 2026: `cr73c_datahealthscore` is Whole Number; `cr73c_datahealth` is
+Choice with Poor `732660000`, Needs Enrichment `732660001`, Good `732660002`,
+and Excellent `732660003`.
+
+The existing maintenance worker refreshes the singleton
+`maintenance_data_health_snapshot` every 30 minutes by default. Set
+`MAINTENANCE_DATA_HEALTH_SECONDS=1800` on the **same existing Render Background
+Worker and backend**; supported values are 900–86400 seconds. The worker uses
+its existing Dynamics credentials and `DATABASE_URL`. No extra worker or
+Seamless key is needed for this refresh. Deploy/restart the backend and existing
+worker to initialize the additive table and sync-state allowlist. Validate with
+`python -m app.workers.maintenance_refresh --once`; leave the normal continuous
+start command unchanged. Do not manually insert production snapshot data.
+
+Refreshes use FetchXML grouped by health Choice, server-side Account counts,
+non-null score counts, and score sums. Oversized aggregates are split into
+half-open creation-time intervals and combined with a weighted average. Only
+one earliest creation timestamp is read; no Account population is downloaded.
+A refresh allows at most 256 read requests, four concurrent queries, and 120
+seconds. Limit exhaustion, an indivisible bulk-import interval, cancellation,
+or unavailable Dynamics preserves the previous snapshot and records a sanitized
+failure. Failed worker refreshes back off at least five minutes. PostgreSQL
+failure prevents remote work. Advisory locks protect overlapping workers.
+
+The API reads this small snapshot and exposes average score, score coverage,
+classified coverage, the four distinct distribution categories, and grouped
+KPIs. **Needs Enrichment = Poor + Needs Enrichment**. **Good or Excellent = Good
++ Excellent**. Both percentages divide by Accounts with one of the four valid
+classifications; unclassified Accounts never enter these denominators. Average
+score divides the score sum by non-null score count. Score-null and unclassified
+counts are reported separately because they can differ during backfill. Missing
+snapshots are unknown, not zero; zero denominators have null percentages.
+
+Snapshot commits participate in the existing cross-process Home cache version.
+The 45-second Home API cache never triggers a Data Health refresh. A snapshot is
+stale after two refresh cadences or a failed refresh; last valid values remain
+visible. Home contains four health KPI cards, one Account Data Health chart,
+and the existing recent/attention Account table. The Needs Enrichment card has
+no link because the Enrichment workspace does not yet filter by the same
+persisted Data Health Choice definition. The sector chart component/API remain
+available internally but are no longer mounted on Home.

@@ -21,8 +21,8 @@ NOW = fixtures.NOW
 class WorkerConfigurationTest(unittest.TestCase):
     def test_safe_defaults_and_environment(self):
         self.assertEqual(worker.WorkerConfig(), worker.WorkerConfig(60, 21600))
-        with patch.dict(os.environ, {"MAINTENANCE_REFRESH_INTERVAL_SECONDS": "90", "MAINTENANCE_RECONCILE_SECONDS": "43200"}):
-            self.assertEqual(worker.WorkerConfig.from_env(), worker.WorkerConfig(90, 43200))
+        with patch.dict(os.environ, {"MAINTENANCE_REFRESH_INTERVAL_SECONDS": "90", "MAINTENANCE_RECONCILE_SECONDS": "43200", "MAINTENANCE_DATA_HEALTH_SECONDS": "900"}):
+            self.assertEqual(worker.WorkerConfig.from_env(), worker.WorkerConfig(90, 43200, 900))
 
     def test_invalid_configuration_is_sanitized(self):
         for value in ("SECRET", "1", "0", "301", "-60"):
@@ -64,7 +64,12 @@ class WorkerRefreshTest(unittest.IsolatedAsyncioTestCase):
     account = staticmethod(fixtures.MaintenanceObservationTest.account)
     response = staticmethod(fixtures.MaintenanceObservationTest.response)
     interval = fixtures.MaintenanceObservationTest.interval
-    respond = fixtures.MaintenanceObservationTest.respond
+    async def respond(self, url, *, params=None, headers=None):
+        if params and params.get("$select") == "createdon":
+            return self.response({"value": [{"createdon": service.aware_timestamp(NOW - timedelta(days=14)).isoformat()}]})
+        if params and "fetchXml" in params and 'alias="health"' in params["fetchXml"]:
+            return self.response({"value": [{"health": 732660002, "total_accounts": 100, "scored_accounts": 100, "score_sum": 7500}]})
+        return await fixtures.MaintenanceObservationTest.respond(self, url, params=params, headers=headers)
     rows = fixtures.MaintenanceObservationTest.rows
     link = fixtures.MaintenanceObservationTest.link
 
@@ -96,9 +101,9 @@ class WorkerRefreshTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_initial_cycle_and_second_cycle_reuses_all_data(self):
         result = await self.cycle()
-        self.assertEqual(result["tasks"], {"discovery": "idle", "total": "idle", "counts": "idle"})
+        self.assertEqual(result["tasks"], {"discovery": "idle", "total": "idle", "counts": "idle", "data_health": "idle"})
         self.assertTrue(result["changed"])
-        self.assertEqual(self.client.get.await_count, 16)
+        self.assertEqual(self.client.get.await_count, 18)
         self.assertEqual(len(self.rows("maintenance_account_observations")), 1)
         self.assertEqual(len(self.rows("maintenance_account_creation_counts")), 14)
         version = read_home_refresh_version()
@@ -106,7 +111,7 @@ class WorkerRefreshTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["tasks"], {})
         self.assertFalse(result["changed"])
         self.assertEqual(version, read_home_refresh_version())
-        self.assertEqual(self.client.get.await_count, 16)
+        self.assertEqual(self.client.get.await_count, 18)
 
     async def test_discovery_today_and_total_individual_cadences(self):
         await self.cycle()
@@ -118,9 +123,22 @@ class WorkerRefreshTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["tasks"], {"discovery": "idle"})
         result = await self.cycle(now=NOW + timedelta(seconds=180))
         self.assertEqual(result["tasks"], {"counts": "idle"})
-        self.assertEqual(self.client.get.await_count, 18)
+        self.assertEqual(self.client.get.await_count, 20)
         self.assertFalse(worker.read_due_plan(NOW + timedelta(seconds=3599), self.config, self.worker_config)["total"])
         self.assertTrue(worker.read_due_plan(NOW + timedelta(seconds=3600), self.config, self.worker_config)["total"])
+
+    async def test_data_health_cadence_and_worker_cache_invalidation(self):
+        await self.cycle()
+        self.assertFalse(worker.read_due_plan(NOW + timedelta(seconds=1799), self.config, self.worker_config)["data_health"])
+        self.assertTrue(worker.read_due_plan(NOW + timedelta(seconds=1800), self.config, self.worker_config)["data_health"])
+        before = read_home_refresh_version()
+        self.discovery_pages = [{"value": []}]
+        result = await self.cycle(now=NOW + timedelta(seconds=1800))
+        self.assertEqual(result["tasks"]["data_health"], "idle")
+        self.assertNotEqual(before, read_home_refresh_version())
+        snapshot = service._db(worker.data_health.read_snapshot)
+        self.assertEqual(snapshot["average_score"], 75)
+        self.assertEqual(snapshot["good_count"], 100)
 
     async def test_reconciliation_only_two_recent_completed_days(self):
         await self.cycle()
@@ -129,7 +147,7 @@ class WorkerRefreshTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(worker.read_due_plan(NOW + timedelta(hours=5), self.config, self.worker_config)["count_days_due"], 1)
         result = await self.cycle(now=NOW + timedelta(hours=6))
         self.assertEqual(result["tasks"]["counts"], "idle")
-        self.assertEqual(self.client.get.await_count, 21)  # discovery + total + three dates
+        self.assertEqual(self.client.get.await_count, 25)  # discovery + total + three dates
         current = {row["reporting_date"]: row["fetched_at"] for row in self.rows("maintenance_account_creation_counts")}
         today = NOW.astimezone(service.REPORTING_ZONE).date()
         for offset in range(14):
@@ -179,7 +197,7 @@ class WorkerRefreshTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(acquired)
             result = await self.cycle()
         self.assertEqual(result["tasks"]["discovery"], "busy")
-        self.assertEqual(self.client.get.await_count, 15)  # total + daily counts only
+        self.assertEqual(self.client.get.await_count, 17)  # total + daily counts + Data Health
 
     async def test_failure_releases_lock_and_next_cycle_recovers(self):
         with patch.object(worker, "read_due_plan", side_effect=RuntimeError("SECRET")), self.assertLogs(worker.logger, "WARNING") as logs:
@@ -200,7 +218,7 @@ class WorkerRefreshTest(unittest.IsolatedAsyncioTestCase):
         self.discovery_pages = [{"value": []}]
         with self.assertLogs(level="WARNING") as logs:
             result = await self.cycle(now=NOW + timedelta(hours=1))
-        self.assertEqual(result["tasks"], {"discovery": "idle", "total": "error", "counts": "idle"})
+        self.assertEqual(result["tasks"], {"discovery": "idle", "total": "error", "counts": "idle", "data_health": "idle"})
         self.assertNotIn("SECRET", str(logs.output))
         self.assertEqual(self.rows("maintenance_total_account_snapshot")[0]["value"], 3000001)
         state = next(row for row in self.rows("maintenance_sync_state") if row["sync_key"] == "total")
@@ -225,8 +243,8 @@ class WorkerRefreshTest(unittest.IsolatedAsyncioTestCase):
     async def test_unexpected_task_failure_is_isolated(self):
         with patch.object(service, "refresh_account_discovery", AsyncMock(side_effect=RuntimeError("SECRET"))):
             result = await self.cycle()
-        self.assertEqual(result["tasks"], {"discovery": "error", "total": "idle", "counts": "idle"})
-        self.assertEqual(self.client.get.await_count, 15)
+        self.assertEqual(result["tasks"], {"discovery": "error", "total": "idle", "counts": "idle", "data_health": "idle"})
+        self.assertEqual(self.client.get.await_count, 17)
 
     async def test_cancellation_checkpoints_and_releases_both_locks(self):
         entered = asyncio.Event()
@@ -267,7 +285,7 @@ class WorkerRefreshTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(service, "utc_now", return_value=NOW), patch.object(worker, "_initialize", AsyncMock(return_value={"status": "idle"})) as initialize:
             code = await worker.run_worker(once=True, config=self.config, worker_config=self.worker_config, install_signals=False)
         self.assertEqual(code, 0)
-        self.assertEqual(self.client.get.await_count, 16)
+        self.assertEqual(self.client.get.await_count, 18)
         initialize.assert_awaited_once()
 
     async def test_once_respects_lock_and_incomplete_exit(self):

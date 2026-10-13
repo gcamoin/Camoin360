@@ -159,3 +159,26 @@ it('searches for all selected missing fields and resets pagination', async () =>
   expect(getCached.mock.calls[1][1].params).toEqual(expect.objectContaining({ missing_fields: 'websiteurl|telephone1', needs_attention: false, page: 0 }));
   expect(container.textContent).toContain('Missing all selected fields');
 });
+
+it('switches AND and OR inside the dropdown without losing selected fields', async () => {
+  await render();
+  await act(async () => container.querySelector('[role="combobox"]').dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
+  const operator = (label) => Array.from(document.querySelectorAll('button')).find((node) => node.textContent === label);
+  expect(operator('AND · All').getAttribute('aria-pressed')).toBe('true');
+  for (const label of ['Website', 'Phone']) {
+    const option = Array.from(document.querySelectorAll('[role="option"]')).find((node) => node.textContent === label);
+    await act(async () => option.click());
+  }
+  await act(async () => operator('OR · Any').click());
+  expect(operator('OR · Any').getAttribute('aria-pressed')).toBe('true');
+  expect(document.querySelector('[role="listbox"]')).toBeTruthy();
+  await act(async () => document.querySelector('.MuiBackdrop-root').click());
+  await click('Search Dynamics');
+  expect(getCached.mock.calls[0][1].params).toEqual(expect.objectContaining({ missing_fields: 'websiteurl|telephone1', missing_operator: 'or' }));
+  expect(container.textContent).toContain('Missing any selected fields');
+  await act(async () => container.querySelector('[role="combobox"]').dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
+  await act(async () => operator('AND · All').click());
+  await act(async () => document.querySelector('.MuiBackdrop-root').click());
+  await click('Search Dynamics');
+  expect(getCached.mock.calls[1][1].params).toEqual(expect.objectContaining({ missing_fields: 'websiteurl|telephone1', missing_operator: 'and', page: 0 }));
+});

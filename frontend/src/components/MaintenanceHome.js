@@ -7,7 +7,7 @@ import {
 import { API_BASE_URL, getAuthHeaders, handleUnauthorized } from "../auth";
 import { getCached } from "../apiClient";
 
-import AccountsBySector from "./AccountsBySector";
+import AccountDataHealthChart from "./AccountDataHealthChart";
 
 const HOME_URL = `${API_BASE_URL}/maintenance/home`;
 const REQUEST_PARAMS = { days: 14, limit: 25 };
@@ -50,14 +50,11 @@ function warningMessage(data) {
       ? "Account activity is out of date. Last available data is shown."
       : "Some recent Account activity may be incomplete.";
   }
-  if (data.metrics?.enrichment_success_rate?.coverage_complete === false) {
-    return "Some recent Account activity may be incomplete.";
-  }
-  if (data.metrics?.total_dynamics_accounts?.is_stale || freshness.creation_counts?.today_stale || freshness.creation_counts?.week_stale) {
+  if (data.metrics?.total_dynamics_accounts?.is_stale || freshness.data_health?.is_stale) {
     return "Some dashboard data is out of date. Last available values are shown.";
   }
-  if (data.metrics?.total_dynamics_accounts?.value == null || data.metrics?.new_accounts_today == null || data.metrics?.new_accounts_this_week == null) {
-    return "Some Account counts are not yet available.";
+  if (data.metrics?.total_dynamics_accounts?.value == null || data.data_health?.fetched_at == null) {
+    return "Some Account Data Health information is not yet available.";
   }
   // Permanent best-effort-history/scheduling notices do not indicate an unhealthy snapshot.
   return "";
@@ -149,7 +146,9 @@ export default function MaintenanceHome() {
 
   const metrics = data?.metrics || {};
   const total = metrics.total_dynamics_accounts || {};
-  const rate = metrics.enrichment_success_rate || {};
+  const average = metrics.average_data_health || {};
+  const healthy = metrics.healthy_accounts || {};
+  const needs = metrics.needs_enrichment || {};
   const timezone = data?.reporting?.timezone || "America/New_York";
   const warning = warningMessage(data);
   const rows = data?.recent_accounts || [];
@@ -169,11 +168,15 @@ export default function MaintenanceHome() {
     <Box data-testid="home-kpis" sx={{ display: "grid", gridTemplateColumns: { xs: "minmax(0, 1fr)", sm: "repeat(2, minmax(0, 1fr))", lg: "repeat(4, minmax(0, 1fr))" }, gap: 2 }}>
       <MetricCard title="Total Dynamics Accounts" value={formatNumber(total.value)} subtitle={snapshot} loading={loading}
         tooltip={`Dynamics snapshot. Counts may be up to ${total.maximum_source_age_hours || 24} hours old when fetched.`} />
-      <MetricCard title="New Accounts Today" value={formatNumber(metrics.new_accounts_today)} loading={loading} />
-      <MetricCard title="New Accounts This Week" value={formatNumber(metrics.new_accounts_this_week)} subtitle="Week starts Monday" loading={loading} />
-      <MetricCard title="Enrichment Success Rate" value={rate.value == null ? "—" : `${formatNumber(rate.value)}%`} loading={loading}
-        subtitle={rate.known_terminal_accounts > 0 ? `${formatNumber(rate.successful_accounts)} of ${formatNumber(rate.known_terminal_accounts)} completed` : "No completed outcomes yet"} />
+      <MetricCard title="Average Data Health Score" value={average.value == null ? "—" : `${Math.round(average.value)} / 100`} loading={loading}
+        subtitle={average.scored_accounts == null ? "Score coverage unavailable" : `${formatNumber(average.scored_accounts)} scored Accounts`} />
+      <MetricCard title="Good or Excellent" value={healthy.percentage == null ? "—" : `${formatNumber(healthy.percentage)}%`} loading={loading}
+        subtitle={healthy.count == null ? "Classification unavailable" : `${formatNumber(healthy.count)} Accounts`} />
+      <MetricCard title="Needs Enrichment" value={needs.percentage == null ? "—" : `${formatNumber(needs.percentage)}%`} loading={loading}
+        subtitle={needs.count == null ? "Classification unavailable" : `${formatNumber(needs.count)} Accounts`}
+        tooltip="Poor and Needs Enrichment combined. Percentages exclude Accounts without a valid classification." />
     </Box>
+    <AccountDataHealthChart distribution={data?.data_health_distribution} health={data?.data_health} loading={loading} />
     <Paper elevation={0} sx={{ ...panelSx, p: 0, overflow: "hidden" }} component="section" aria-labelledby="home-accounts-title">
       <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ xs: "flex-start", sm: "center" }} justifyContent="space-between" sx={{ p: { xs: 2, sm: 3 } }}>
         <Typography id="home-accounts-title" component="h3" variant="h6">Recent New Accounts &amp; Enrichment</Typography>
@@ -202,6 +205,5 @@ export default function MaintenanceHome() {
       {moreError && <Alert severity="error" sx={{ mx: 2, mt: 2 }} action={<Button color="inherit" onClick={loadMore}>Retry</Button>}>{moreError}</Alert>}
       {!loading && data?.next_cursor && <Box sx={{ p: 2, textAlign: "center" }}><Button variant="outlined" disabled={loadingMore} onClick={loadMore}>{loadingMore ? "Loading more…" : "Load more"}</Button></Box>}
     </Paper>
-    <AccountsBySector />
   </Stack>;
 }

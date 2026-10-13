@@ -25,7 +25,7 @@ const views = {
     icon: "home",
     route: "/dashboard",
     title: "Sophie Maintenance",
-    description: "Operational overview of Dynamics account activity and enrichment.",
+    description: "Account data health and enrichment overview.",
   },
   enrichment: {
     label: "Enrichment",

@@ -90,6 +90,23 @@ class EnrichmentSearchTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("cr73c_naicscode eq null", url)
         self.assertIn("address1_country eq 'United States'", url)
 
+    async def test_or_missing_operator_matches_any_selected_field(self):
+        self.client.get.return_value = httpx.Response(200, json={"value": [
+            self.account(accountid="both", websiteurl=None, telephone1=""),
+            self.account(accountid="website", websiteurl=None),
+            self.account(accountid="phone", telephone1=""),
+            self.account(accountid="other", cr73c_naicscode=None),
+        ]})
+        result = await dynamics.search_accounts_data_quality_from_dynamics(
+            enrichment_fields=True, missing_fields=["websiteurl", "telephone1"], missing_operator="or")
+        self.assertEqual([row["accountid"] for row in result["data"]], ["both", "website", "phone"])
+        self.assertIn("((websiteurl eq null or websiteurl eq '') or (telephone1 eq null or telephone1 eq ''))", unquote(self.client.get.await_args.args[0]))
+
+    async def test_invalid_missing_operator_rejected_before_network(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported missing-information operator"):
+            await dynamics.search_accounts_data_quality_from_dynamics(enrichment_fields=True, missing_fields=["websiteurl"], missing_operator="xor")
+        self.client.get.assert_not_awaited()
+
     async def test_missing_fields_keep_zero_employees_populated(self):
         self.client.get.return_value = httpx.Response(200, json={"value": [
             self.account(accountid="zero", numberofemployees=0),

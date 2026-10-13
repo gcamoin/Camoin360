@@ -352,7 +352,7 @@ async def fetch_account_summary_analytics(_user=Depends(require_user)):
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Unable to load Dynamics sector summary: {exc}",
+            detail="Unable to load Dynamics sector summary. Please try again shortly.",
         ) from exc
 
 

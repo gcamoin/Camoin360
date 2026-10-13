@@ -238,6 +238,27 @@ def initialize_database(force: bool = False, **connection_options):
             )"""
         )
         wrapped.execute(
+            """CREATE TABLE IF NOT EXISTS maintenance_data_health_snapshot (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                average_score DOUBLE PRECISION CHECK (average_score BETWEEN 0 AND 100),
+                score_sum BIGINT NOT NULL CHECK (score_sum >= 0),
+                total_accounts BIGINT NOT NULL CHECK (total_accounts >= 0),
+                scored_accounts BIGINT NOT NULL CHECK (scored_accounts >= 0),
+                unscored_accounts BIGINT NOT NULL CHECK (unscored_accounts >= 0),
+                poor_count BIGINT NOT NULL CHECK (poor_count >= 0),
+                needs_enrichment_count BIGINT NOT NULL CHECK (needs_enrichment_count >= 0),
+                good_count BIGINT NOT NULL CHECK (good_count >= 0),
+                excellent_count BIGINT NOT NULL CHECK (excellent_count >= 0),
+                classified_accounts BIGINT NOT NULL CHECK (classified_accounts >= 0),
+                unclassified_accounts BIGINT NOT NULL CHECK (unclassified_accounts >= 0),
+                fetched_at TIMESTAMPTZ NOT NULL,
+                source TEXT NOT NULL,
+                CHECK (total_accounts = scored_accounts + unscored_accounts),
+                CHECK (classified_accounts = poor_count + needs_enrichment_count + good_count + excellent_count),
+                CHECK (total_accounts = classified_accounts + unclassified_accounts)
+            )"""
+        )
+        wrapped.execute(
             """CREATE TABLE IF NOT EXISTS maintenance_account_creation_counts (
                 reporting_date DATE PRIMARY KEY,
                 interval_start TIMESTAMPTZ NOT NULL,
@@ -269,6 +290,18 @@ def initialize_database(force: bool = False, **connection_options):
                 rows_last_refresh INTEGER NOT NULL DEFAULT 0
             )"""
         )
+        # Add the new task to the existing state allowlist on already-deployed databases.
+        wrapped.execute("""DO $$ BEGIN
+            IF EXISTS (SELECT 1 FROM pg_constraint
+                       WHERE conrelid = 'maintenance_sync_state'::regclass
+                         AND conname = 'maintenance_sync_state_sync_key_check'
+                         AND position('data_health' in pg_get_constraintdef(oid)) = 0) THEN
+                ALTER TABLE maintenance_sync_state DROP CONSTRAINT maintenance_sync_state_sync_key_check;
+                ALTER TABLE maintenance_sync_state ADD CONSTRAINT maintenance_sync_state_sync_key_check
+                    CHECK (sync_key IN ('discovery', 'total', 'counts', 'data_health'));
+            END IF;
+        END $$""")
+
         wrapped.execute(
             """
             CREATE TABLE IF NOT EXISTS account_data_quality_cache (

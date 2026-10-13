@@ -11,6 +11,8 @@ from fastapi.testclient import TestClient
 
 from backend.app import main, database
 from backend.app.routes import maintenance, auth
+from backend.app.services import maintenance_data_health as health
+from backend.app.services.test_maintenance_data_health import snapshot as health_snapshot
 from backend.app.services import maintenance_home as home
 from backend.app.services import maintenance_total as total_fallback
 from backend.app.services import maintenance_observations as observations
@@ -79,6 +81,34 @@ class HomeApiTest(unittest.TestCase):
                 day = today - timedelta(days=offset)
                 start, end = observations.reporting_day_bounds(day)
                 observations._save_day(connection, day, start, min(end, NOW), 0 if offset == 2 else 10, NOW, offset > 0)
+
+    def test_data_health_metrics_grouped_distribution_and_recent_table(self):
+        with database.get_database_connection() as connection:
+            health.save_snapshot(connection, health_snapshot(), NOW)
+            observations._ensure_state(connection, "data_health", NOW)
+            observations._finish(connection, "data_health", NOW, "idle", 1)
+        self.account("health-account", "updated", called=True, fields=["websiteurl"])
+        result = self.get().json()
+        self.assertEqual(result["metrics"]["average_data_health"]["value"], 73)
+        self.assertEqual(result["metrics"]["needs_enrichment"], {"count": 30, "percentage": 37.5})
+        self.assertEqual(result["metrics"]["healthy_accounts"], {"count": 50, "percentage": 62.5})
+        self.assertEqual([row["category"] for row in result["data_health_distribution"]], ["excellent", "good", "needs_enrichment", "poor"])
+        self.assertEqual(result["data_health"]["unscored_accounts"], 20)
+        self.assertEqual(result["metrics"]["total_dynamics_accounts"]["value"], 3124821)
+        self.assertEqual(result["recent_accounts"][0]["account_id"], "health-account")
+        self.assertFalse(result["freshness"]["data_health"]["is_stale"])
+
+    def test_missing_health_snapshot_does_not_hide_total_or_fabricate_zero(self):
+        result = self.get().json()
+        self.assertIsNone(result["metrics"]["average_data_health"]["value"])
+        self.assertIsNone(result["metrics"]["needs_enrichment"]["count"])
+        self.assertEqual(result["metrics"]["total_dynamics_accounts"]["value"], 3124821)
+
+    def test_health_refresh_invalidates_cached_home(self):
+        self.assertIsNone(self.get().json()["metrics"]["average_data_health"]["value"])
+        with database.get_database_connection() as connection:
+            health.save_snapshot(connection, health_snapshot(), NOW)
+        self.assertEqual(self.get().json()["metrics"]["average_data_health"]["value"], 73)
 
     def account(self, account_id, status=None, *, called=False, fields=None, uncertain=False,
                 reason=None, age=10, received_age=9, history=True, created=None):

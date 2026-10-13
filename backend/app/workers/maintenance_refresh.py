@@ -18,6 +18,7 @@ load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 from ..database import initialize_database
 from ..services import maintenance_observations as observations
 from ..services.maintenance_home import read_home_refresh_version
+from ..services import maintenance_data_health as data_health
 
 logger = logging.getLogger(__name__)
 RECONCILE_DAYS = 2
@@ -28,17 +29,20 @@ SHUTDOWN_GRACE_SECONDS = 15
 class WorkerConfig:
     interval_seconds: int = 60
     reconcile_seconds: int = 21600
+    data_health_seconds: int = 1800
 
     def __post_init__(self):
         if (type(self.interval_seconds) is not int or not 60 <= self.interval_seconds <= 300 or
-            type(self.reconcile_seconds) is not int or not 3600 <= self.reconcile_seconds <= 604800):
+            type(self.reconcile_seconds) is not int or not 3600 <= self.reconcile_seconds <= 604800 or
+            type(self.data_health_seconds) is not int or not 900 <= self.data_health_seconds <= 86400):
             raise ValueError("Invalid maintenance worker configuration")
 
     @classmethod
     def from_env(cls):
         try:
             return cls(interval_seconds=int(os.getenv("MAINTENANCE_REFRESH_INTERVAL_SECONDS", "60")),
-                       reconcile_seconds=int(os.getenv("MAINTENANCE_RECONCILE_SECONDS", "21600")))
+                       reconcile_seconds=int(os.getenv("MAINTENANCE_RECONCILE_SECONDS", "21600")),
+                       data_health_seconds=int(os.getenv("MAINTENANCE_DATA_HEALTH_SECONDS", "1800")))
         except (ValueError, TypeError):
             raise ValueError("Invalid maintenance worker configuration") from None
 
@@ -63,7 +67,13 @@ def read_due_plan(now, config, worker_config):
         cached = observations._daily_rows(connection, today - timedelta(days=13), today)
         days = observations.creation_days_due(cached, today, now, 14, config,
             reconcile_days=RECONCILE_DAYS, reconcile_before=now - timedelta(seconds=worker_config.reconcile_seconds))
-        return {"discovery": bool(discovery_due), "total": bool(total_due), "counts": bool(days),
+        health = data_health.read_snapshot(connection)
+        health_due = not (health and states.get("data_health", {}).get("status") == "idle" and
+                          now - health["fetched_at"] < timedelta(seconds=worker_config.data_health_seconds))
+        health_state = states.get("data_health", {})
+        if health_state.get("status") in {"error", "running"} and health_state.get("last_started_at") and now - health_state["last_started_at"] < timedelta(minutes=5):
+            health_due = False
+        return {"data_health": bool(health_due), "discovery": bool(discovery_due), "total": bool(total_due), "counts": bool(days),
                 "count_days_due": len(days)}
     return observations._db(read)
 
@@ -88,7 +98,8 @@ async def run_cycle(*, now=None, config=None, worker_config=None, stop=None):
             before = await asyncio.to_thread(read_home_refresh_version)
             logger.info("event=maintenance_due discovery=%s total=%s counts=%s count_days=%s",
                         plan["discovery"], plan["total"], plan["counts"], plan["count_days_due"])
-            for task in ("discovery", "total", "counts"):
+            logger.info("event=maintenance_due data_health=%s", plan["data_health"])
+            for task in ("discovery", "total", "counts", "data_health"):
                 if stop.is_set():
                     break
                 if not plan[task]:
@@ -98,6 +109,8 @@ async def run_cycle(*, now=None, config=None, worker_config=None, stop=None):
                         result = await observations.refresh_account_discovery(now=now, config=config)
                     elif task == "total":
                         result = await observations.refresh_total_account_count(now=now, config=config)
+                    elif task == "data_health":
+                        result = await data_health.refresh_data_health(now=now, cadence_seconds=worker_config.data_health_seconds)
                     else:
                         result = await observations.refresh_account_creation_counts(now=now, config=config, days=14,
                             reconcile_days=RECONCILE_DAYS,
