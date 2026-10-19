@@ -23,6 +23,7 @@ jest.mock("./components/PEQualifiedLeads", () => (props) => mockPanel(props));
 jest.mock("./components/ProductivityProjects", () => (props) => mockPanel(props));
 jest.mock("./components/EmployeeProductivity", () => (props) => mockPanel(props));
 jest.mock("./components/RfpOverallSuccessRate", () => (props) => mockPanel(props));
+jest.mock("./components/SoftwareInventory", () => () => <div>Inventory table</div>);
 jest.mock("./components/MarketingMetrics", () => ({
   __esModule: true, default: (props) => mockPanel(props), MarketingOverview: (props) => mockPanel(props),
 }));
@@ -50,4 +51,16 @@ test("every reporting tab receives its selection and keeps it when switching tab
   }
   await click(tabs[0]);
   expect(JSON.parse(container.querySelector("[data-period]").textContent).year).toBe("2024");
+});
+
+test("Overview shortcuts open Marketing and Software Inventory", async () => {
+  await act(async () => root.render(<ManagementDashboard />));
+
+  await click("Open Marketing");
+  expect(container.querySelector("h2").textContent).toBe("Marketing");
+
+  await click("Overview");
+  await click("Open Software Inventory");
+  expect(container.querySelector("h2").textContent).toBe("Software Inventory");
+  expect(container.textContent).toContain("Inventory table");
 });

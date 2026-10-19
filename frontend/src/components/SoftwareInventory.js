@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import {
-  Autocomplete, Dialog, DialogTitle, DialogContent, DialogActions, Alert, Button, CircularProgress, MenuItem, Paper, Stack, Table, TableBody,
+  Autocomplete, Box, Dialog, DialogTitle, DialogContent, DialogActions, Alert, Button, CircularProgress, MenuItem, Paper, Stack, Table, TableBody,
   TableCell, TableContainer, TableHead, TablePagination, TableRow,
   TableSortLabel, TextField, Typography,
 } from "@mui/material";
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
-import { subtleTableHeadCellSx } from "./UiPrimitives";
+import { ManagementSectionHeading, managementButtonSx, managementCardSx, subtleTableHeadCellSx } from "./UiPrimitives";
 
 const columns = [
   { key: "status", label: "Service Status" },
@@ -178,26 +178,48 @@ export default function SoftwareInventory() {
     anchor.click();
     URL.revokeObjectURL(url);
   }
-  return <Stack spacing={2}>
+  return <Stack spacing={3}>
     {success && <Alert severity="success" onClose={() => setSuccess("")}>{success}</Alert>}
     {error && <Alert severity="error">{error}</Alert>}
-    <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems="center">
-      <Typography fontWeight={800} sx={{ flexGrow: 1 }}>Software Inventory · {rows.length} services</Typography>
-      <Button variant="contained" disabled={loading || saving} onClick={() => openEditor()}>Add Service</Button>
-      <Button variant="outlined" disabled={loading || saving} onClick={load}>Refresh</Button>
-      <Button variant="outlined" disabled={!filtered.length} onClick={exportCsv}>Export CSV</Button>
-    </Stack>
-    <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-      <TextField fullWidth size="small" label="Search inventory" value={query} onChange={event => { setQuery(event.target.value); setPage(0); }} />
-      <TextField select size="small" label="Service Status" sx={{ minWidth: 220 }} value={status} onChange={event => { setStatus(event.target.value); setPage(0); }}>
-        <MenuItem value="">All statuses</MenuItem>
-        {statuses.map(value => <MenuItem key={value} value={value}>{value}</MenuItem>)}
-      </TextField>
-    </Stack>
+    <Paper elevation={0} sx={{ ...managementCardSx, p: { xs: 2.5, md: 3 } }}>
+      <ManagementSectionHeading
+        action={
+          <Stack direction="row" flexWrap="wrap" gap={1}>
+            <Button disabled={loading || saving} onClick={() => openEditor()} sx={managementButtonSx} variant="contained">Add Service</Button>
+            <Button disabled={loading || saving} onClick={load} sx={managementButtonSx} variant="outlined">Refresh</Button>
+            <Button disabled={!filtered.length} onClick={exportCsv} sx={managementButtonSx} variant="outlined">Export CSV</Button>
+          </Stack>
+        }
+        description={`${rows.length.toLocaleString()} services available to review and maintain.`}
+        eyebrow="Inventory actions"
+        title="Subscription inventory"
+      />
+    </Paper>
+    <Paper elevation={0} sx={{ ...managementCardSx, p: { xs: 2.5, md: 3 } }}>
+      <Stack spacing={2}>
+        <ManagementSectionHeading
+          description={`${filtered.length.toLocaleString()} matching services. Search and status filters update the table below.`}
+          title="Find services"
+        />
+        <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "1fr", md: "minmax(0, 2fr) minmax(220px, 1fr)" } }}>
+          <TextField fullWidth size="small" label="Search inventory" value={query} onChange={event => { setQuery(event.target.value); setPage(0); }} />
+          <TextField fullWidth select size="small" label="Service Status" value={status} onChange={event => { setStatus(event.target.value); setPage(0); }}>
+            <MenuItem value="">All statuses</MenuItem>
+            {statuses.map(value => <MenuItem key={value} value={value}>{value}</MenuItem>)}
+          </TextField>
+        </Box>
+      </Stack>
+    </Paper>
     {loading && <Stack alignItems="center"><CircularProgress size={24} /></Stack>}
-    <Paper variant="outlined">
-      <TableContainer>
-        <Table size="small" sx={{ minWidth: 1800 }}>
+    <Paper elevation={0} sx={{ ...managementCardSx, overflow: "hidden" }}>
+      <Box sx={{ borderBottom: "1px solid", borderColor: "divider", p: { xs: 2.5, md: 3 } }}>
+        <ManagementSectionHeading
+          description="Scroll horizontally to inspect all service details. Select a column heading to sort."
+          title="Services"
+        />
+      </Box>
+      <TableContainer sx={{ maxWidth: "100%" }}>
+        <Table size="small" sx={{ minWidth: 1800, "& tbody tr:nth-of-type(even)": { backgroundColor: "#f8fafb" } }}>
           <TableHead><TableRow>{columns.map(column => <TableCell key={column.key} sx={{ ...subtleTableHeadCellSx, minWidth: column.key === "description" ? 260 : 160 }}>
             <TableSortLabel active={sort.key === column.key} direction={sort.key === column.key ? sort.direction : "asc"} onClick={() => setSort({ key: column.key, direction: sort.key === column.key && sort.direction === "asc" ? "desc" : "asc" })}>{column.label}</TableSortLabel>
           </TableCell>)}<TableCell sx={subtleTableHeadCellSx}>Actions</TableCell></TableRow></TableHead>
@@ -210,7 +232,7 @@ export default function SoftwareInventory() {
           </TableBody>
         </Table>
       </TableContainer>
-      <TablePagination component="div" count={filtered.length} page={page} rowsPerPage={pageSize} rowsPerPageOptions={[10, 25, 50, 100]} onPageChange={(_, value) => setPage(value)} onRowsPerPageChange={event => { setPageSize(Number(event.target.value)); setPage(0); }} />
+      <TablePagination component="div" count={filtered.length} page={page} rowsPerPage={pageSize} rowsPerPageOptions={[10, 25, 50, 100]} onPageChange={(_, value) => setPage(value)} onRowsPerPageChange={event => { setPageSize(Number(event.target.value)); setPage(0); }} sx={{ borderTop: "1px solid", borderColor: "divider" }} />
     </Paper>
     <Dialog open={Boolean(editor)} onClose={() => { if (!saving) setEditor(null); }} fullWidth maxWidth="md">
       <DialogTitle>{editor?.row ? "Edit Service" : "Add Service"}</DialogTitle>

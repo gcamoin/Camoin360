@@ -13,7 +13,7 @@ import {
   useTheme,
 } from "@mui/material";
 import EconomicIndicators from "./components/EconomicIndicators";
-import { EmptyState } from "./components/UiPrimitives";
+import { EmptyState, ManagementSectionHeading, managementButtonSx, managementCardSx } from "./components/UiPrimitives";
 import CompanyFinancials from "./components/CompanyFinancials";
 import EmployeeProductivity from "./components/EmployeeProductivity";
 import MarketingMetrics, { MarketingOverview } from "./components/MarketingMetrics";
@@ -45,6 +45,8 @@ const graphViews = new Set([
   "salesOutlookRfp",
   "contractBacklogSelected",
 ]);
+
+const visualRefreshViews = new Set(["overview", "marketing", "softwareInventory"]);
 
 const views = {
   overview: {
@@ -185,6 +187,7 @@ export default function ManagementDashboard({ onLogout }) {
   const [dateFiltersByView, setDateFiltersByView] = useState({});
   const theme = useTheme();
   const currentView = views[activeView];
+  const isVisualRefreshView = visualRefreshViews.has(activeView);
   const activeDateFilters = dateFiltersByView[activeView] || EMPTY_DATE_FILTERS;
   const analystContext = useMemo(
     () => ({
@@ -401,10 +404,23 @@ export default function ManagementDashboard({ onLogout }) {
           </Stack>
         </Box>
 
-        <Box component="main" sx={{ minWidth: 0, py: { xs: 3, md: 6 } }}>
-          <Container maxWidth={false} sx={{ minWidth: 0, width: "100%" }}>
+        <Box component="main" sx={{ minWidth: 0, py: { xs: 3, md: 5 } }}>
+          <Container maxWidth={false} sx={{ maxWidth: 1600, minWidth: 0, width: "100%" }}>
             <Stack spacing={3} sx={{ minWidth: 0, width: "100%" }}>
-              <Box>
+              <Box
+                sx={isVisualRefreshView ? {
+                  ...managementCardSx,
+                  background: "linear-gradient(120deg, #ffffff 55%, #f1f8f6 100%)",
+                  borderLeft: "4px solid",
+                  borderLeftColor: "secondary.main",
+                  p: { xs: 2.5, md: 3.5 },
+                } : undefined}
+              >
+                {isVisualRefreshView ? (
+                  <Typography color="secondary.main" fontWeight={800} sx={{ letterSpacing: "0.1em", mb: 0.75 }} variant="overline">
+                    Management / {currentView.label}
+                  </Typography>
+                ) : null}
                 <Typography
                   component="h2"
                   sx={{
@@ -428,11 +444,11 @@ export default function ManagementDashboard({ onLogout }) {
                 </Typography>
               </Box>
 
-              <AiChatBox
+              {!isVisualRefreshView ? <AiChatBox
                 context={analystContext}
                 placeholder={`Ask the AI Analyst about ${currentView.title.toLowerCase()}...`}
                 section={currentView.title}
-              />
+              /> : null}
 
               {graphViews.has(activeView) ? (
                 <DashboardDateFilters
@@ -468,24 +484,47 @@ export default function ManagementDashboard({ onLogout }) {
                 <EmployeeProductivity filters={activeDateFilters} />
               )}
               {activeView === "overview" && (
-                <Paper
-                  elevation={0}
-                  sx={{
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: 2,
-                    overflow: "hidden",
-                  }}
-                >
-                  <EmptyState
-                    actionLabel="Refresh"
-                    description={`${currentView.title} data will appear here after its reporting source is connected.`}
-                    icon="database"
-                    onAction={() => window.location.reload()}
-                    title={`${currentView.title} is not available yet`}
+                <Stack spacing={3}>
+                  <ManagementSectionHeading
+                    description="Open a report or manage your services from one place."
+                    eyebrow="Quick access"
+                    title="Explore Management"
                   />
-                </Paper>
+                  <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" } }}>
+                    {[
+                      { label: "Marketing", detail: "Website, search, and target-industry trends", view: "marketing" },
+                      { label: "Software Inventory", detail: "Find and maintain your software services", view: "softwareInventory" },
+                    ].map((item) => (
+                      <Paper elevation={0} key={item.view} sx={{ ...managementCardSx, p: { xs: 2.5, md: 3 } }}>
+                        <Stack alignItems="flex-start" spacing={1.5}>
+                          <Typography color="text.primary" component="h3" sx={{ fontSize: "1.125rem", fontWeight: 800 }}>
+                            {item.label}
+                          </Typography>
+                          <Typography color="text.secondary" variant="body2">{item.detail}</Typography>
+                          <Button onClick={() => setActiveView(item.view)} sx={managementButtonSx} variant="outlined">
+                            Open {item.label}
+                          </Button>
+                        </Stack>
+                      </Paper>
+                    ))}
+                  </Box>
+                  <Paper elevation={0} sx={{ ...managementCardSx, overflow: "hidden" }}>
+                    <EmptyState
+                      actionLabel="Refresh"
+                      description={`${currentView.title} data will appear here after its reporting source is connected.`}
+                      icon="database"
+                      onAction={() => window.location.reload()}
+                      title={`${currentView.title} is not available yet`}
+                    />
+                  </Paper>
+                </Stack>
               )}
+
+              {isVisualRefreshView ? <AiChatBox
+                context={analystContext}
+                placeholder={`Ask the AI Analyst about ${currentView.title.toLowerCase()}...`}
+                section={currentView.title}
+              /> : null}
 
             </Stack>
           </Container>

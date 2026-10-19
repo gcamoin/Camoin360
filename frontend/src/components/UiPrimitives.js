@@ -36,6 +36,48 @@ export function FullWidthFilterRow({ children, minItemWidth = 170 }) {
   );
 }
 
+export const managementCardSx = {
+  backgroundColor: "common.white",
+  border: "1px solid",
+  borderColor: "divider",
+  borderRadius: 3,
+  boxShadow: "0 10px 30px rgba(18, 59, 100, 0.045)",
+};
+
+export const managementButtonSx = {
+  borderRadius: 1.5,
+  fontWeight: 700,
+  minHeight: 38,
+};
+
+export function ManagementSectionHeading({ action, description, eyebrow, title }) {
+  return (
+    <Stack
+      alignItems={{ xs: "stretch", sm: "center" }}
+      direction={{ xs: "column", sm: "row" }}
+      justifyContent="space-between"
+      spacing={2}
+    >
+      <Box sx={{ minWidth: 0 }}>
+        {eyebrow ? (
+          <Typography color="secondary.main" fontWeight={800} variant="overline">
+            {eyebrow}
+          </Typography>
+        ) : null}
+        <Typography color="text.primary" component="h3" sx={{ fontSize: "1.125rem", fontWeight: 800, lineHeight: 1.3 }}>
+          {title}
+        </Typography>
+        {description ? (
+          <Typography color="text.secondary" sx={{ mt: 0.5 }} variant="body2">
+            {description}
+          </Typography>
+        ) : null}
+      </Box>
+      {action}
+    </Stack>
+  );
+}
+
 export function AppIcon({ name = "inbox", ...props }) {
   return (
     <SvgIcon viewBox="0 0 24 24" {...props}>
