@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import DateRange, Dimension, Metric, RunReportRequest
 from ..database import get_database_connection
+from .reporting_period import matches_reporting_date
 from .auth import get_access_token
 from .metrics import increment_processed, log_update
 from .seamless import enrich_with_seamless
@@ -34,7 +35,6 @@ load_dotenv(BACKEND_ROOT / ".env")
 
 API_URL = os.getenv("DYNAMICS_API_URL")
 DATA_QUALITY_CACHE_TTL_SECONDS = 300
-DATA_QUALITY_ACCOUNT_LIMIT = int(os.getenv("DATA_QUALITY_ACCOUNT_LIMIT", "100000"))
 SUMMARY_CACHE_TTL_SECONDS = 600
 DATA_QUALITY_REQUEST_TIMEOUT_SECONDS = 300
 DATA_QUALITY_SYNC_STALE_SECONDS = int(os.getenv("DATA_QUALITY_SYNC_STALE_SECONDS", "3600"))
@@ -334,22 +334,25 @@ def _prepare_data_quality_cache_row(account: dict, synced_at: str) -> dict:
 
 
 async def _fetch_accounts_data_quality_from_dynamics(limit: int | None = None):
-    account_limit = max(1, min(limit or DATA_QUALITY_ACCOUNT_LIMIT, DATA_QUALITY_ACCOUNT_LIMIT))
+    account_limit = max(1, limit) if limit is not None else None
     now = time.time()
     if (
         _DATA_QUALITY_CACHE["data"] is not None
         and _DATA_QUALITY_CACHE["expires_at"] > now
-        and _DATA_QUALITY_CACHE["limit"] >= account_limit
+        and (
+            _DATA_QUALITY_CACHE["limit"] is None
+            or (account_limit is not None and _DATA_QUALITY_CACHE["limit"] >= account_limit)
+        )
     ):
-        return _DATA_QUALITY_CACHE["data"][:account_limit]
+        return _DATA_QUALITY_CACHE["data"][:account_limit] if account_limit is not None else _DATA_QUALITY_CACHE["data"]
 
     token = await get_access_token()
 
     url = (
         f"{API_URL}/accounts?"
         "$select=accountid,name,address1_stateorprovince,address1_country,address1_city,new_sector,new_subsector,new_naicstext,description,websiteurl,telephone1,new_datasource,new_employees&"
-        "$orderby=name asc&"
-        f"$top={account_limit}"
+        "$orderby=name asc"
+        + (f"&$top={account_limit}" if account_limit is not None else "")
     )
 
     headers = {
@@ -366,7 +369,7 @@ async def _fetch_accounts_data_quality_from_dynamics(limit: int | None = None):
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            while next_url and len(accounts) < account_limit:
+            while next_url and (account_limit is None or len(accounts) < account_limit):
                 response = await client.get(next_url, headers=headers)
 
                 if response.status_code != 200:
@@ -380,7 +383,8 @@ async def _fetch_accounts_data_quality_from_dynamics(limit: int | None = None):
             f"Dynamics request timed out after {DATA_QUALITY_REQUEST_TIMEOUT_SECONDS} seconds while loading data quality accounts"
         ) from exc
 
-    accounts = accounts[:account_limit]
+    if account_limit is not None:
+        accounts = accounts[:account_limit]
     _DATA_QUALITY_CACHE["data"] = accounts
     _DATA_QUALITY_CACHE["limit"] = account_limit
     _DATA_QUALITY_CACHE["expires_at"] = now + DATA_QUALITY_CACHE_TTL_SECONDS
@@ -424,7 +428,6 @@ def _is_data_quality_cache_stale(sync_status: dict) -> bool:
 
 
 async def refresh_accounts_data_quality_cache(limit: int | None = None) -> dict:
-    account_limit = max(1, min(limit or DATA_QUALITY_ACCOUNT_LIMIT, DATA_QUALITY_ACCOUNT_LIMIT))
     started_at = datetime.now(timezone.utc).isoformat()
     with get_database_connection() as connection:
         connection.execute(
@@ -439,7 +442,7 @@ async def refresh_accounts_data_quality_cache(limit: int | None = None) -> dict:
         )
 
     try:
-        accounts = await _fetch_accounts_data_quality_from_dynamics(account_limit)
+        accounts = await _fetch_accounts_data_quality_from_dynamics(limit)
         synced_at = datetime.now(timezone.utc).isoformat()
         prepared_rows = [_prepare_data_quality_cache_row(account, synced_at) for account in accounts if account.get("accountid")]
 
@@ -570,15 +573,135 @@ def _rows_to_data_quality_accounts(rows) -> list[dict]:
     return accounts
 
 
+def _dynamics_data_quality_filter(
+    *, search: str = "", sector: str = "all", missing_field: str = "all",
+    states: list[str] | None = None, country: str = "all", cities: list[str] | None = None,
+    needs_attention: bool = False, column_filters: dict[str, str] | None = None,
+) -> str:
+    def literal(value: str) -> str:
+        return "'" + str(value).strip().replace("'", "''") + "'"
+
+    def missing(field: str) -> str:
+        if field == "new_employees":
+            return f"{field} eq null"
+        return f"({field} eq null or {field} eq '')"
+
+    clauses = []
+    searchable = [field for field, _ in DATA_QUALITY_FIELDS if field != "new_employees"]
+    if search.strip():
+        clauses.append("(" + " or ".join(f"contains({field},{literal(search)})" for field in searchable) + ")")
+    if sector != "all":
+        clauses.append(f"new_sector eq {literal(sector)}")
+    if country != "all":
+        country_aliases = {
+            "unitedstates": ["United States", "United States of America", "USA", "US"],
+            "canada": ["Canada", "CA", "CAN"],
+        }
+        options = country_aliases.get(_normalize_data_quality_country(country), [country])
+        clauses.append("(" + " or ".join(f"address1_country eq {literal(value)}" for value in options) + ")")
+    if states:
+        choices = [missing("address1_stateorprovince") if value == MISSING_STATE_PROVINCE_FILTER_VALUE
+                   else f"address1_stateorprovince eq {literal(value)}" for value in states]
+        clauses.append("(" + " or ".join(choices) + ")")
+    if cities:
+        clauses.append("(" + " or ".join(f"address1_city eq {literal(value)}" for value in cities) + ")")
+    if missing_field == "incomplete_location":
+        clauses.append("(" + " or ".join(missing(field) for field in DATA_QUALITY_LOCATION_FIELDS) + ")")
+    elif missing_field in dict(DATA_QUALITY_FIELDS):
+        clauses.append(missing(missing_field))
+    if needs_attention:
+        clauses.append("(" + " or ".join(missing(field) for field, _ in DATA_QUALITY_FIELDS) + ")")
+    for field, value in (column_filters or {}).items():
+        if field in searchable and str(value or "").strip():
+            clauses.append(f"contains({field},{literal(value)})")
+    return " and ".join(clauses)
+
+
+def _matches_data_quality_missing_filter(
+    account: dict, missing_field: str = "all", needs_attention: bool = False
+) -> bool:
+    """Validate missing-field results after Dynamics applies the OData filter."""
+    if missing_field == "incomplete_location":
+        matches_selected_field = any(
+            _is_missing_data_quality_value(account.get(field))
+            for field in DATA_QUALITY_LOCATION_FIELDS
+        )
+    elif missing_field in dict(DATA_QUALITY_FIELDS):
+        matches_selected_field = _is_missing_data_quality_value(account.get(missing_field))
+    else:
+        matches_selected_field = True
+
+    if not matches_selected_field:
+        return False
+    if needs_attention:
+        return any(
+            _is_missing_data_quality_value(account.get(field))
+            for field, _label in DATA_QUALITY_FIELDS
+        )
+    return True
+
+
+async def search_accounts_data_quality_from_dynamics(
+    *, page: int = 0, page_size: int = 25, sort_key: str = "", sort_direction: str = "asc", **filters,
+) -> dict:
+    """Read only the Dynamics pages needed for the requested result page."""
+    page = max(0, page)
+    page_size = max(1, min(page_size, 250))
+    where = _dynamics_data_quality_filter(**filters)
+    select = "accountid," + ",".join(field for field, _ in DATA_QUALITY_FIELDS)
+    sort_field = sort_key if sort_key in DATA_QUALITY_FILTERABLE_COLUMNS and sort_key not in {"missing_fields_summary", "data_quality_score", "new_employees"} else "name"
+    direction = "desc" if sort_direction == "desc" else "asc"
+    url = f"{API_URL}/accounts?$select={select}&$orderby={sort_field} {direction},accountid asc"
+    if where:
+        url += f"&$filter={quote(where, safe='')}"
+    headers = {
+        "Authorization": f"Bearer {await get_access_token()}",
+        "Accept": "application/json",
+        "OData-Version": "4.0",
+        "Prefer": "odata.maxpagesize=250",
+    }
+    target = (page + 1) * page_size
+    accounts = []
+    next_url = url
+    async with httpx.AsyncClient(timeout=httpx.Timeout(DATA_QUALITY_REQUEST_TIMEOUT_SECONDS)) as client:
+        while next_url and len(accounts) <= target:
+            response = await client.get(next_url, headers=headers)
+            if response.status_code != 200:
+                raise Exception(f"Dynamics GET error: {response.text}")
+            payload = response.json()
+            accounts.extend(
+                account
+                for account in payload.get("value", [])
+                if _matches_data_quality_missing_filter(
+                    account,
+                    missing_field=filters.get("missing_field", "all"),
+                    needs_attention=filters.get("needs_attention", False),
+                )
+            )
+            next_url = payload.get("@odata.nextLink")
+    start = page * page_size
+    selected = accounts[start:target]
+    prepared = [_prepare_data_quality_cache_row(account, "") for account in selected]
+    return {
+        "data": _rows_to_data_quality_accounts(prepared),
+        "count": len(selected),
+        "page": page,
+        "page_size": page_size,
+        "has_more": bool(next_url or len(accounts) > target),
+    }
+
+
 def _get_data_quality_facets(connection, where_clause: str, values: list) -> dict:
     def distinct_values(column_name: str) -> list[str]:
         rows = connection.execute(
             f"""
-            SELECT DISTINCT {column_name} AS value
-            FROM account_data_quality_cache
-            {where_clause}
-              {"AND" if where_clause else "WHERE"} {column_name} != ''
-            ORDER BY {column_name} COLLATE NOCASE ASC
+            SELECT value FROM (
+                SELECT DISTINCT {column_name} AS value
+                FROM account_data_quality_cache
+                {where_clause}
+                  {"AND" if where_clause else "WHERE"} {column_name} != ''
+            ) distinct_column_values
+            ORDER BY LOWER(value) ASC
             LIMIT 1000
             """,
             values,
@@ -663,9 +786,9 @@ def _get_data_quality_facets(connection, where_clause: str, values: list) -> dic
         FROM account_data_quality_cache
         {where_clause}
           {"AND" if where_clause else "WHERE"} (
-            (',' || missing_field_keys || ',') LIKE '%,address1_city,%'
-            OR (',' || missing_field_keys || ',') LIKE '%,address1_stateorprovince,%'
-            OR (',' || missing_field_keys || ',') LIKE '%,address1_country,%'
+            (',' || missing_field_keys || ',') LIKE '%%,address1_city,%%'
+            OR (',' || missing_field_keys || ',') LIKE '%%,address1_stateorprovince,%%'
+            OR (',' || missing_field_keys || ',') LIKE '%%,address1_country,%%'
           )
         """,
         values,
@@ -738,7 +861,7 @@ def get_accounts_data_quality_page(
                    has_missing_quality_field AS hasMissingQualityField
             FROM account_data_quality_cache
             {where_clause}
-            ORDER BY {sort_column} COLLATE NOCASE {direction}, name COLLATE NOCASE ASC
+            ORDER BY LOWER({sort_column}) {direction}, LOWER(name) ASC
             LIMIT ? OFFSET ?
             """,
             [*values, page_size, offset],
@@ -764,7 +887,7 @@ def get_accounts_data_quality_page(
 
 async def get_accounts_data_quality(limit: int | None = None):
     await refresh_accounts_data_quality_cache(limit)
-    return get_accounts_data_quality_page(page_size=min(limit or DATA_QUALITY_ACCOUNT_LIMIT, 250))["data"]
+    return get_accounts_data_quality_page(page_size=min(limit or 250, 250))["data"]
 
 
 def get_cached_accounts_data_quality():
@@ -2623,19 +2746,43 @@ async def _load_website_visit_metrics_from_dynamics(range_key: str = "since_2022
 
     timeout = httpx.Timeout(MARKETING_METRICS_REQUEST_TIMEOUT_SECONDS)
     async with httpx.AsyncClient(timeout=timeout) as client:
-        ga4_site_traffic, target_naics_codes = await asyncio.gather(
+        ga4_result, target_naics_result = await asyncio.gather(
             _fetch_ga4_total_site_traffic(window),
             _fetch_target_industry_naics_codes(client, headers),
+            return_exceptions=True,
         )
-        leadfeeder_visit_counts = await _count_website_visits(
-            client,
-            website_visits_url,
-            headers,
-            buckets,
-            window["bucket_key"],
-            window["bucket_grain"],
-            target_naics_codes,
-        )
+        warnings = []
+        if isinstance(ga4_result, Exception):
+            warnings.append(f"GA4 sessions are unavailable: {ga4_result}")
+            ga4_site_traffic = {bucket[window["bucket_key"]]: 0 for bucket in buckets}
+        else:
+            ga4_site_traffic = ga4_result
+
+        if isinstance(target_naics_result, Exception):
+            warnings.append(f"Target-industry configuration is unavailable: {target_naics_result}")
+            leadfeeder_visit_counts = {
+                "target_counts_by_bucket": {bucket[window["bucket_key"]]: 0 for bucket in buckets},
+                "target_total": 0,
+                "landing_pages": [],
+            }
+        else:
+            try:
+                leadfeeder_visit_counts = await _count_website_visits(
+                    client,
+                    website_visits_url,
+                    headers,
+                    buckets,
+                    window["bucket_key"],
+                    window["bucket_grain"],
+                    target_naics_result,
+                )
+            except Exception as exc:
+                warnings.append(f"Leadfeeder visits are unavailable: {exc}")
+                leadfeeder_visit_counts = {
+                    "target_counts_by_bucket": {bucket[window["bucket_key"]]: 0 for bucket in buckets},
+                    "target_total": 0,
+                    "landing_pages": [],
+                }
 
     visit_buckets = [
         {
@@ -2659,6 +2806,7 @@ async def _load_website_visit_metrics_from_dynamics(range_key: str = "since_2022
         "target_total_visitors": leadfeeder_visit_counts["target_total"],
         "months": visit_buckets,
         "landing_pages": leadfeeder_visit_counts["landing_pages"],
+        "warnings": warnings,
     }
     cached_data[cache_key] = result
     _MARKETING_METRICS_CACHE["data"] = cached_data
@@ -2694,6 +2842,7 @@ def _marketing_metrics_empty_payload(range_key: str) -> dict:
             for bucket in window["buckets"]
         ],
         "landing_pages": [],
+        "warnings": [],
     }
 
 
@@ -3065,14 +3214,26 @@ async def get_sales_outlook_metrics():
 
     token = await get_access_token()
     headers = _dynamics_read_headers(token)
-    url = (
-        f"{API_URL}/new_projects?"
-        "$select=new_projectid,createdon,new_contractdate,new_feeforcamoin&"
-        "$filter=createdon ge 2020-01-01T00:00:00Z or new_contractdate ge 2020-01-01T00:00:00Z&"
-        "$orderby=createdon asc"
-    )
     records = []
     async with httpx.AsyncClient(timeout=120) as client:
+        metadata_response = await client.get(
+            f"{API_URL}/EntityDefinitions(LogicalName='new_project')?$select=PrimaryNameAttribute",
+            headers=headers,
+        )
+        primary_name_field = (
+            metadata_response.json().get("PrimaryNameAttribute")
+            if metadata_response.status_code == 200
+            else None
+        )
+        select_fields = ["new_projectid", "createdon", "new_contractdate", "new_feeforcamoin"]
+        if primary_name_field:
+            select_fields.append(primary_name_field)
+        url = (
+            f"{API_URL}/new_projects?"
+            f"$select={','.join(select_fields)}&"
+            "$filter=createdon ge 2020-01-01T00:00:00Z or new_contractdate ge 2020-01-01T00:00:00Z&"
+            "$orderby=createdon asc"
+        )
         while url:
             response = await client.get(url, headers=headers)
             if response.status_code != 200:
@@ -3084,6 +3245,7 @@ async def get_sales_outlook_metrics():
     current_time = datetime.now(timezone.utc)
     annual_contracts = {str(year): 0.0 for year in range(2020, current_time.year + 1)}
     monthly_projects = {}
+    project_details = []
     cursor = datetime(2021, 1, 1, tzinfo=timezone.utc)
     current_month = datetime(current_time.year, current_time.month, 1, tzinfo=timezone.utc)
     while cursor <= current_month:
@@ -3104,6 +3266,12 @@ async def get_sales_outlook_metrics():
         created_date = str(record.get("createdon") or "")
         if len(created_date) >= 7 and created_date[:7] in monthly_projects:
             monthly_projects[created_date[:7]] += 1
+            project_details.append({
+                "project_id": record.get("new_projectid") or "",
+                "project_name": record.get(primary_name_field) if primary_name_field else "",
+                "fee_for_camoin": round(float(record.get("new_feeforcamoin") or 0), 2),
+                "created_on": created_date,
+            })
 
     result = {
         "updated_at": current_time.isoformat(),
@@ -3118,6 +3286,11 @@ async def get_sales_outlook_metrics():
             {"month_key": month_key, "projects": projects}
             for month_key, projects in monthly_projects.items()
         ],
+        "project_details": sorted(
+            project_details,
+            key=lambda project: (project["created_on"], project["project_name"] or ""),
+            reverse=True,
+        ),
     }
     _SALES_OUTLOOK_CACHE["data"] = result
     _SALES_OUTLOOK_CACHE["expires_at"] = now + MARKETING_METRICS_CACHE_TTL_SECONDS
@@ -3361,7 +3534,23 @@ def _build_pe_qualified_lead_rollups(rows: list[dict]) -> list[dict]:
     )
 
 
-async def get_pe_qualified_leads(year: int | None = None, month: int | None = None, limit: int = PE_QUALIFIED_LEAD_DEFAULT_LIMIT):
+def _build_pe_lead_yearly_rollups(rows: list[dict]) -> list[dict]:
+    counts = {}
+    for row in rows:
+        try:
+            year = datetime.fromisoformat(str(row.get("createdon") or "").replace("Z", "+00:00")).year
+        except ValueError:
+            continue
+        counts[year] = counts.get(year, 0) + 1
+    if not counts:
+        return []
+    return [
+        {"year": year, "qualified_leads": counts.get(year, 0)}
+        for year in range(min(counts), max(max(counts), datetime.now(timezone.utc).year) + 1)
+    ]
+
+
+async def get_pe_qualified_leads(year: int | None = None, month: int | None = None, limit: int = PE_QUALIFIED_LEAD_DEFAULT_LIMIT, reporting_filters=None):
     token = await get_access_token()
     if year:
         start_date, end_date = _month_date_window(year, month)
@@ -3380,16 +3569,15 @@ async def get_pe_qualified_leads(year: int | None = None, month: int | None = No
 
     async with httpx.AsyncClient(timeout=PE_CLIENT_REQUEST_TIMEOUT_SECONDS) as client:
         next_url = url
-        while next_url and len(rows) < limit:
+        while next_url:
             response = await client.get(next_url, headers=headers)
             if response.status_code != 200:
                 raise Exception(f"Dynamics GET error: {response.text}")
 
             payload = response.json()
             for record in payload.get("value", []):
-                if len(rows) >= limit:
-                    break
-
+                if reporting_filters and not matches_reporting_date(record.get("createdon"), year=year, month=month, **reporting_filters):
+                    continue
                 if not _matches_pe_qualified_status(record):
                     continue
 
@@ -3414,11 +3602,13 @@ async def get_pe_qualified_leads(year: int | None = None, month: int | None = No
             next_url = payload.get("@odata.nextLink")
 
     return {
-        "count": len(rows),
-        "data": rows,
+        "count": min(len(rows), limit),
+        "total_count": len(rows),
+        "data": rows[:limit],
         "from": start_date,
         "limit": limit,
         "rollups": _build_pe_qualified_lead_rollups(rows),
+        "yearly_rollups": _build_pe_lead_yearly_rollups(rows),
         "status": PE_QUALIFIED_LEAD_STATUS_LABEL,
         "to": end_date,
         "year": year,
@@ -4185,22 +4375,13 @@ def _normalise_enrichment_value(field_name: str, value: object) -> object | None
 
 
 async def _mark_enrichment_attempted(account_id: str, updates: dict[str, object]) -> None:
-    """Set the required attempt flag and include the optional timestamp when available."""
+    """Persist a completed attempt and its timestamp together with field updates."""
     attempt_updates = {
         **updates,
         "cr73c_enrichmentattempted": True,
         "cr73c_enrichmentlastattemptedon": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    try:
-        await update_account(account_id, attempt_updates)
-    except DynamicsApiError as exc:
-        if exc.status_code != 400:
-            raise
-        # Some Dataverse environments do not have the optional timestamp field.
-        # Retry without it so the required attempt flag is never lost for that reason.
-        logger.warning("Could not update optional enrichment timestamp for %s: %s", account_id, exc)
-        attempt_updates.pop("cr73c_enrichmentlastattemptedon")
-        await update_account(account_id, attempt_updates)
+    await update_account(account_id, attempt_updates)
 
 
 async def enrich_one_account(account_id: str) -> dict[str, object]:
@@ -4228,7 +4409,7 @@ async def enrich_one_account(account_id: str) -> dict[str, object]:
             "skipped_reason": "Enrichment has already been attempted for this account.",
         }
 
-    if not account_name:
+    if _is_blank(account_name):
         try:
             await _mark_enrichment_attempted(account_id, {})
         except Exception:
@@ -4251,10 +4432,6 @@ async def enrich_one_account(account_id: str) -> dict[str, object]:
 
     if not os.getenv("SEAMLESS_API_KEY"):
         logger.error("Seamless enrichment cannot run for account_id=%s: SEAMLESS_API_KEY is not configured", account_id)
-        try:
-            await _mark_enrichment_attempted(account_id, {})
-        except Exception:
-            logger.exception("Could not mark unconfigured enrichment attempted for account_id=%s", account_id)
         return {
             "account_id": account_id,
             "account_name": account_name,
@@ -4263,7 +4440,20 @@ async def enrich_one_account(account_id: str) -> dict[str, object]:
             "skipped_reason": "Seamless enrichment is not configured.",
         }
 
-    if not can_make_request():
+    try:
+        credit_available = can_make_request()
+    except Exception:
+        # Without a readable credit budget, do not risk exceeding the limit.
+        logger.exception("Unable to check Seamless credit usage for account_id=%s", account_id)
+        return {
+            "account_id": account_id,
+            "account_name": account_name,
+            "status": "failed",
+            "fields_updated": [],
+            "skipped_reason": "Unable to check Seamless credit usage.",
+        }
+
+    if not credit_available:
         logger.warning("Enrichment skipped for account_id=%s name=%r: weekly credit limit reached", account_id, account_name)
         return {
             "account_id": account_id,
@@ -4278,14 +4468,14 @@ async def enrich_one_account(account_id: str) -> dict[str, object]:
         try:
             seamless_data = await enrich_with_seamless(account)
         finally:
-            usage = increment_usage()
-            logger.info("Seamless credit used for account_id=%s; usage=%s/%s", account_id, usage.get("credits_used"), WEEKLY_LIMIT)
-    except Exception as exc:
+            # Recording usage is operational telemetry, not the provider outcome.
+            try:
+                usage = increment_usage()
+                logger.info("Seamless credit used for account_id=%s; usage=%s/%s", account_id, usage.get("credits_used"), WEEKLY_LIMIT)
+            except Exception:
+                logger.exception("Unable to record Seamless credit usage for account_id=%s", account_id)
+    except Exception:
         logger.exception("Seamless enrichment failed for account_id=%s name=%r", account_id, account_name)
-        try:
-            await _mark_enrichment_attempted(account_id, {})
-        except Exception:
-            logger.exception("Could not mark failed enrichment attempted for account_id=%s", account_id)
         return {
             "account_id": account_id,
             "account_name": account_name,
@@ -4330,6 +4520,16 @@ async def enrich_one_account(account_id: str) -> dict[str, object]:
 
 async def enrich_single_account_test(account_id: str):
     account = await get_account(account_id, "name,emailaddress1,telephone1")
+
+    if "name" not in matched_fields:
+        return {
+            "account_id": account_id,
+            "updated": False,
+            "skipped": True,
+            "reason": "No sufficiently similar company name found",
+            "confidence_score": confidence_score,
+            "matched_fields": matched_fields,
+        }
 
     updates = {}
 
@@ -4398,6 +4598,9 @@ async def enrich_account(account_id: str, fields_to_update: list[str] | None = N
     company_name = account.get("name")
     sector = account.get("new_sector") or ""
 
+    if not company_name or not str(company_name).strip():
+        return {"account_id": account_id, "updated": False, "skipped": True, "reason": "Account has no company name"}
+
     print(f"🔍 Enriching: {company_name}")
     print(f"🏭 Sector: {sector}")
     print("✅ Proceeding with enrichment")
@@ -4424,16 +4627,6 @@ async def enrich_account(account_id: str, fields_to_update: list[str] | None = N
 
     confidence_score = int(seamless_data.get("confidence_score", 0))
     matched_fields = seamless_data.get("matched_fields", [])
-    if confidence_score < 60 or not seamless_data.get("meets_confidence_threshold", False):
-        return {
-            "account_id": account_id,
-            "updated": False,
-            "skipped": True,
-            "reason": "Match confidence below 60%",
-            "confidence_score": confidence_score,
-            "matched_fields": matched_fields,
-        }
-
     updates = {}
 
     # WEBSITE

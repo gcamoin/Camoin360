@@ -2,10 +2,11 @@ import hmac
 import json
 import os
 from uuid import UUID
+from typing import Annotated
 
 from datetime import date
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from .auth import require_user
@@ -30,6 +31,7 @@ from ..services.dynamics import (
     create_pe_client,
     create_pe_client_user,
     refresh_accounts_data_quality_cache,
+    search_accounts_data_quality_from_dynamics,
     invalidate_account_read_caches,
     enrich_one_account,
     enrich_account,
@@ -134,7 +136,7 @@ async def fetch_accounts_data_quality(
     sort_key: str = Query(default=""),
     sort_direction: str = Query(default="asc", pattern="^(asc|desc)$"),
     refresh: bool = Query(default=False),
-    limit: int = Query(default=100000, ge=100, le=100000),
+    metadata_only: bool = Query(default=False),
     _user=Depends(require_user),
 ):
     try:
@@ -160,8 +162,12 @@ async def fetch_accounts_data_quality(
             sort_key=sort_key,
             sort_direction=sort_direction,
         )
+        if metadata_only:
+            result["data"] = []
+            result["count"] = 0
+            return result
         if result["sync"]["status"] != "syncing" and (refresh or result["sync"]["is_stale"] or result["total_count"] == 0):
-            background_tasks.add_task(refresh_accounts_data_quality_cache, limit)
+            background_tasks.add_task(refresh_accounts_data_quality_cache)
     except Exception as exc:
         if isinstance(exc, HTTPException):
             raise
@@ -171,6 +177,39 @@ async def fetch_accounts_data_quality(
         ) from exc
 
     return result
+
+
+@router.get("/accounts/data-quality/search")
+async def search_accounts_data_quality(
+    page: int = Query(default=0, ge=0),
+    page_size: int = Query(default=25, ge=1, le=250),
+    search: str = Query(default=""),
+    sector: str = Query(default="all"),
+    missing_field: str = Query(default="all"),
+    states: str = Query(default=""),
+    country: str = Query(default="all"),
+    cities: str = Query(default=""),
+    needs_attention: bool = Query(default=False),
+    column_filters: str = Query(default="{}"),
+    sort_key: str = Query(default=""),
+    sort_direction: str = Query(default="asc", pattern="^(asc|desc)$"),
+    _user=Depends(require_user),
+):
+    try:
+        parsed_filters = json.loads(column_filters or "{}")
+        if not isinstance(parsed_filters, dict):
+            raise ValueError("column_filters must be an object")
+        return await search_accounts_data_quality_from_dynamics(
+            page=page, page_size=page_size, search=search, sector=sector,
+            missing_field=missing_field, states=[value for value in states.split("|") if value],
+            country=country, cities=[value for value in cities.split("|") if value],
+            needs_attention=needs_attention, column_filters=parsed_filters,
+            sort_key=sort_key, sort_direction=sort_direction,
+        )
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Unable to search Dynamics accounts: {exc}") from exc
 
 
 async def get_duplicate_account_response(limit: int):
@@ -316,14 +355,25 @@ async def fetch_pe_qualified_leads(
     year: int | None = Query(default=None, ge=2000, le=2100),
     month: int | None = Query(default=None, ge=1, le=12),
     limit: int = Query(default=1000, ge=1, le=5000),
+    quarter: Annotated[int | None, Query(ge=1, le=4)] = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
     _user=Depends(require_user),
 ):
+    reporting_filters = {key: value for key, value in {
+        "quarter": quarter,
+        "start_date": start_date.isoformat() if start_date else None,
+        "end_date": end_date.isoformat() if end_date else None,
+    }.items() if value is not None}
+    if month and not year:
+        reporting_filters["quarter"] = quarter or (month - 1) // 3 + 1
+    kwargs = {"reporting_filters": reporting_filters} if reporting_filters else {}
     try:
-        return await get_pe_qualified_leads(year=year, month=month, limit=limit)
+        return await get_pe_qualified_leads(year=year, month=month, limit=limit, **kwargs)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Unable to load Prospect Engage qualified leads: {exc}",
+            detail=f"Unable to load ProspectEngage qualified leads: {exc}",
         ) from exc
 
 
@@ -514,10 +564,16 @@ async def fetch_accounts_missing_website():
     }
 
 
-def _require_power_automate_api_key(x_api_key: str | None = Header(default=None)) -> None:
-    """Require the shared secret only when POWER_AUTOMATE_API_KEY is configured."""
+def _require_power_automate_api_key(request: Request, x_api_key: str | None = Header(default=None)) -> None:
+    """Accept a middleware-validated user or a configured machine secret."""
+    if getattr(request.state, "authenticated_user", None) is not None:
+        return
     configured_key = os.getenv("POWER_AUTOMATE_API_KEY")
-    if configured_key and not (x_api_key and hmac.compare_digest(x_api_key, configured_key)):
+    if not (
+        configured_key
+        and x_api_key
+        and hmac.compare_digest(x_api_key.encode("utf-8"), configured_key.encode("utf-8"))
+    ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing x-api-key")
 
 

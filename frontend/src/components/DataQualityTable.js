@@ -36,12 +36,9 @@ import FieldUpdateSelector from "./FieldUpdateSelector";
 import { EmptyState, ModalTitle, subtleTableHeadCellSx } from "./UiPrimitives";
 
 const API_URL = `${API_BASE_URL}/accounts/data-quality`;
+const SEARCH_URL = `${API_URL}/search`;
 const ENRICHMENT_RUN_URL = `${API_BASE_URL}/accounts/enrichment-run`;
-const SEARCH_DEBOUNCE_MS = 200;
 const DEFAULT_ROWS_PER_PAGE = 25;
-const INITIAL_ACCOUNT_LIMIT = 100000;
-const ACCOUNT_LIMIT_STEP = 100000;
-const MAX_ACCOUNT_LIMIT = 100000;
 const ACCOUNT_LOAD_TIMEOUT_MS = 5 * 60 * 1000;
 const usStateNamesByAbbreviation = {
   AL: "Alabama",
@@ -707,9 +704,23 @@ function matchesSearch(account, query) {
   return account.searchText.includes(query);
 }
 
-function prepareAccountRows(accounts) {
-  return accounts.map((account, index) => {
-    const missingFields = getMissingQualityFields(account);
+function accountMatchesMissingField(account, missingField) {
+  if (!missingField || missingField === "all") return true;
+  if (missingField === "incomplete_location") {
+    return locationScoreFields.some((fieldKey) => isMissingValue(account[fieldKey]));
+  }
+  return isMissingValue(account[missingField]);
+}
+
+export function prepareAccountRows(accounts, selectedMissingField = "all") {
+  return accounts
+    .filter((account) => accountMatchesMissingField(account, selectedMissingField))
+    .map((account, index) => {
+    const missingFields = getMissingQualityFields(account).sort((first, second) => {
+      if (first.key === selectedMissingField) return -1;
+      if (second.key === selectedMissingField) return 1;
+      return 0;
+    });
     const missingFieldKeys = new Set(missingFields.map((field) => field.key));
     const missingFieldLabels = missingFields.map((field) => field.label);
     const missingFieldsSummary = missingFieldLabels.length ? missingFieldLabels.join(", ") : "Complete";
@@ -726,7 +737,7 @@ function prepareAccountRows(accounts) {
       searchText,
       selectionId,
     };
-  });
+    });
 }
 
 function renderCell(account, columnKey, onCompanyPreview) {
@@ -863,7 +874,7 @@ function renderCell(account, columnKey, onCompanyPreview) {
 
 export default function DataQualityTable() {
   const [accounts, setAccounts] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState("");
   const [facets, setFacets] = useState({
@@ -875,9 +886,6 @@ export default function DataQualityTable() {
     state_options: [],
   });
   const [filteredAccountCount, setFilteredAccountCount] = useState(0);
-  const [totalAccountCount, setTotalAccountCount] = useState(0);
-  const [syncStatus, setSyncStatus] = useState(null);
-  const [loadedAccountLimit, setLoadedAccountLimit] = useState(INITIAL_ACCOUNT_LIMIT);
   const [hasMoreAccounts, setHasMoreAccounts] = useState(false);
   const [selectedSector, setSelectedSector] = useState("all");
   const [selectedMissingField, setSelectedMissingField] = useState("all");
@@ -888,7 +896,7 @@ export default function DataQualityTable() {
   const [sortConfig, setSortConfig] = useState({ key: "", direction: "asc" });
   const [columnMenu, setColumnMenu] = useState({ anchorEl: null, columnKey: "" });
   const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [submittedSearch, setSubmittedSearch] = useState(null);
   const [showNeedsAttentionOnly, setShowNeedsAttentionOnly] = useState(false);
   const [selectedAccountIds, setSelectedAccountIds] = useState(() => new Set());
   const [fieldsToUpdate, setFieldsToUpdate] = useState(() => new Set());
@@ -914,7 +922,11 @@ export default function DataQualityTable() {
   );
   const cities = facets.cities;
   const filteredAccounts = accounts;
-  const missingCounts = facets.missing_counts;
+  const missingCounts = qualityFields.map((field) => ({
+    key: field.key,
+    label: field.label,
+    missing: accounts.filter((account) => account.missingFieldKeys.has(field.key)).length,
+  }));
 
   const activeFilterCount = [
     selectedSector !== "all",
@@ -958,9 +970,12 @@ export default function DataQualityTable() {
     setSelectedCities([]);
     setColumnFilters({});
     setSearchQuery("");
-    setDebouncedSearchQuery("");
     setShowNeedsAttentionOnly(false);
     setPage(0);
+    setSubmittedSearch(null);
+    setAccounts([]);
+    setFilteredAccountCount(0);
+    setHasMoreAccounts(false);
   }
 
   function updateColumnFilter(columnKey, value) {
@@ -980,14 +995,12 @@ export default function DataQualityTable() {
   function updateLocationFilter(setFilterValue) {
     return (nextValue) => {
       setFilterValue(nextValue || "all");
-      setPage(0);
     };
   }
 
   function updateMultiLocationFilter(setFilterValue) {
     return (nextValues) => {
       setFilterValue(nextValues);
-      setPage(0);
     };
   }
 
@@ -1007,6 +1020,10 @@ export default function DataQualityTable() {
 
       return { key: columnKey, direction };
     });
+    if (submittedSearch) {
+      setPage(0);
+      setSubmittedSearch({ ...submittedSearch, sort_key: columnKey, sort_direction: direction });
+    }
   }
 
   function clearSort(columnKey) {
@@ -1017,6 +1034,10 @@ export default function DataQualityTable() {
 
       return { key: "", direction: "asc" };
     });
+    if (submittedSearch) {
+      setPage(0);
+      setSubmittedSearch({ ...submittedSearch, sort_key: "", sort_direction: "asc" });
+    }
   }
 
   function toggleAccountSelection(accountId) {
@@ -1062,13 +1083,12 @@ export default function DataQualityTable() {
       cities: selectedCities.join("|"),
       column_filters: JSON.stringify(columnFilters),
       country: selectedCountry,
-      limit: loadedAccountLimit,
       missing_field: selectedMissingField,
       needs_attention: showNeedsAttentionOnly,
       page: nextPage,
       page_size: nextRowsPerPage,
       refresh,
-      search: debouncedSearchQuery,
+      search: searchQuery,
       sector: selectedSector,
       sort_direction: sortConfig.direction,
       sort_key: sortConfig.key,
@@ -1077,34 +1097,25 @@ export default function DataQualityTable() {
   }
 
   async function loadAccounts({ nextPage = page, nextRowsPerPage = rowsPerPage, refresh = false, showLoading = false } = {}) {
+    if (!submittedSearch) return;
     if (showLoading) {
       setIsLoading(true);
     }
 
     setError("");
 
-    const response = await getCached(API_URL, {
+    const response = await getCached(SEARCH_URL, {
       force: refresh,
       headers: getAuthHeaders(),
-      params: buildAccountRequestParams({ nextPage, nextRowsPerPage, refresh }),
+      params: { ...submittedSearch, page: nextPage, page_size: nextRowsPerPage },
       timeout: ACCOUNT_LOAD_TIMEOUT_MS,
       ttl: 60 * 1000,
     });
-    const preparedRows = prepareAccountRows(response.data?.data || []);
+    const preparedRows = prepareAccountRows(response.data?.data || [], submittedSearch.missing_field);
 
     dataQualityCache = null;
     setAccounts(preparedRows);
-    setFacets(response.data?.facets || {
-          cities: [],
-          countries: [],
-          missing_counts: [],
-          sectors: [],
-          states: [],
-          state_options: [],
-        });
-    setFilteredAccountCount(response.data?.filtered_count || 0);
-    setTotalAccountCount(response.data?.total_count || 0);
-    setSyncStatus(response.data?.sync || null);
+    setFilteredAccountCount(preparedRows.length);
     setHasMoreAccounts(Boolean(response.data?.has_more));
 
     if (showLoading) {
@@ -1113,7 +1124,7 @@ export default function DataQualityTable() {
   }
 
   async function refreshAccounts() {
-    invalidateApiCache(API_URL);
+    invalidateApiCache(SEARCH_URL);
 
     try {
       await loadAccounts({ refresh: true, showLoading: false });
@@ -1162,63 +1173,25 @@ export default function DataQualityTable() {
     setPage(0);
   }
 
-  useEffect(() => {
-    const debounceTimer = window.setTimeout(() => {
-      setDebouncedSearchQuery(searchQuery);
-      setPage(0);
-    }, SEARCH_DEBOUNCE_MS);
-
-    return () => {
-      window.clearTimeout(debounceTimer);
-    };
-  }, [searchQuery]);
-
-  useEffect(() => {
+  function submitSearch() {
     setPage(0);
-  }, [columnFilters, debouncedSearchQuery, selectedCities, selectedCountry, selectedMissingField, selectedSector, selectedStates, showNeedsAttentionOnly, sortConfig]);
+    setAccounts([]);
+    setFilteredAccountCount(0);
+    setHasMoreAccounts(false);
+    setSubmittedSearch(buildAccountRequestParams({ nextPage: 0 }));
+  }
 
   useEffect(() => {
-    const validSelectedStates = selectedStates.filter((selectedState) => stateOptions.includes(selectedState));
-
-    if (validSelectedStates.length !== selectedStates.length) {
-      setSelectedStates(validSelectedStates);
-    }
-  }, [selectedStates, stateOptions]);
-
-  useEffect(() => {
-    const validSelectedCities = selectedCities.filter((selectedCity) => cities.includes(selectedCity));
-
-    if (validSelectedCities.length !== selectedCities.length) {
-      setSelectedCities(validSelectedCities);
-    }
-  }, [cities, selectedCities]);
-
-  useEffect(() => {
-    if (syncStatus?.status !== "syncing") {
-      return undefined;
-    }
-
-    const pollTimer = window.setTimeout(() => {
-      invalidateApiCache(API_URL);
-      loadAccounts().catch((fetchError) => {
-        if (!handleUnauthorized(fetchError)) {
-          setError(getApiErrorMessage(fetchError, "Unable to refresh synced account data."));
-        }
-      });
-    }, 5000);
-
-    return () => {
-      window.clearTimeout(pollTimer);
-    };
-  }, [syncStatus]);
-
-  useEffect(() => {
-    const lastPage = Math.max(0, Math.ceil(filteredAccountCount / rowsPerPage) - 1);
-
-    if (page > lastPage) {
-      setPage(lastPage);
-    }
-  }, [filteredAccountCount, page, rowsPerPage]);
+    let active = true;
+    getCached(API_URL, {
+      headers: getAuthHeaders(),
+      params: { metadata_only: true },
+      ttl: 60 * 1000,
+    }).then((response) => {
+      if (active) setFacets(response.data?.facets || { cities: [], countries: [], missing_counts: [], sectors: [], states: [], state_options: [] });
+    }).catch((fetchError) => { if (active) handleUnauthorized(fetchError); });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     setSelectedAccountIds((currentSelection) => {
@@ -1232,6 +1205,7 @@ export default function DataQualityTable() {
   }, [accounts]);
 
   useEffect(() => {
+    if (!submittedSearch) return undefined;
     let isMounted = true;
 
     async function fetchAccounts() {
@@ -1239,26 +1213,16 @@ export default function DataQualityTable() {
       setError("");
 
       try {
-        const response = await getCached(API_URL, {
+        const response = await getCached(SEARCH_URL, {
           headers: getAuthHeaders(),
-          params: buildAccountRequestParams(),
+          params: { ...submittedSearch, page, page_size: rowsPerPage },
           timeout: ACCOUNT_LOAD_TIMEOUT_MS,
           ttl: 60 * 1000,
         });
         if (isMounted) {
-          const preparedRows = prepareAccountRows(response.data?.data || []);
+          const preparedRows = prepareAccountRows(response.data?.data || [], submittedSearch.missing_field);
           setAccounts(preparedRows);
-          setFacets(response.data?.facets || {
-            cities: [],
-            countries: [],
-            missing_counts: [],
-            sectors: [],
-                states: [],
-                state_options: [],
-              });
-          setFilteredAccountCount(response.data?.filtered_count || 0);
-          setTotalAccountCount(response.data?.total_count || 0);
-          setSyncStatus(response.data?.sync || null);
+          setFilteredAccountCount(preparedRows.length);
           setHasMoreAccounts(Boolean(response.data?.has_more));
         }
       } catch (fetchError) {
@@ -1281,7 +1245,7 @@ export default function DataQualityTable() {
     return () => {
       isMounted = false;
     };
-  }, [page, rowsPerPage, columnFilters, debouncedSearchQuery, selectedCities, selectedCountry, selectedMissingField, selectedSector, selectedStates, showNeedsAttentionOnly, sortConfig]);
+  }, [page, rowsPerPage, submittedSearch]);
 
   if (isLoading) {
     return (
@@ -1291,16 +1255,16 @@ export default function DataQualityTable() {
     );
   }
 
-  if (error) {
-    return <Alert severity="error">{error}</Alert>;
-  }
-
   return (
     <Stack spacing={3}>
-      <DataQualitySummary
-        filteredAccountCount={filteredAccountCount}
-        missingCounts={missingCounts}
-      />
+      {error ? <Alert severity="error">{error}</Alert> : null}
+      {submittedSearch ? (
+        <DataQualitySummary
+          filteredAccountCount={filteredAccountCount}
+          missingCounts={missingCounts}
+          scopeLabel="accounts on this page"
+        />
+      ) : null}
 
       <Paper
         elevation={0}
@@ -1381,6 +1345,7 @@ export default function DataQualityTable() {
           onNeedsAttentionChange={setShowNeedsAttentionOnly}
           onResetFilters={resetFilters}
           onSearchChange={setSearchQuery}
+          onSubmitSearch={submitSearch}
           onSectorChange={setSelectedSector}
           onStateChange={updateMultiLocationFilter(setSelectedStates)}
           searchQuery={searchQuery}
@@ -1410,22 +1375,10 @@ export default function DataQualityTable() {
         >
           <Stack alignItems={{ xs: "flex-start", sm: "center" }} direction={{ xs: "column", sm: "row" }} spacing={1.5}>
             <Typography color="text.secondary" variant="body2">
-              Showing {paginatedAccounts.length} of {filteredAccountCount.toLocaleString()} filtered accounts
-              {totalAccountCount ? ` from ${totalAccountCount.toLocaleString()} cached accounts` : ""}
+              {submittedSearch
+                ? `Showing ${paginatedAccounts.length} Dynamics accounts on this page${hasMoreAccounts ? "; more results available" : ""}`
+                : "Choose filters, then search Dynamics accounts"}
             </Typography>
-            {syncStatus?.status === "syncing" ? (
-              <Typography color="text.secondary" variant="body2">
-                Syncing Dynamics data...
-              </Typography>
-            ) : null}
-            {syncStatus?.last_completed_at ? (
-              <Typography color="text.secondary" variant="body2">
-                Synced {new Intl.DateTimeFormat(undefined, {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                }).format(new Date(syncStatus.last_completed_at))}
-              </Typography>
-            ) : null}
           </Stack>
           <Stack direction="row" spacing={2}>
             <Typography color="text.secondary" variant="body2">
@@ -1493,7 +1446,7 @@ export default function DataQualityTable() {
                       >
                         {column.label}
                       </Typography>
-                      <Button
+                      {!["missing_fields_summary", "data_quality_score", "new_employees"].includes(column.key) ? <Button
                         aria-label={`${column.label} filter and sort options`}
                         onClick={(event) => openColumnMenu(event, column.key)}
                         size="small"
@@ -1532,7 +1485,7 @@ export default function DataQualityTable() {
                             },
                           }}
                         />
-                      </Button>
+                      </Button> : null}
                     </Box>
                   </TableCell>
                 ))}
@@ -1590,9 +1543,9 @@ export default function DataQualityTable() {
                   <TableCell colSpan={columns.length + 1} sx={{ p: 0 }}>
                     <EmptyState
                       compact
-                      description="Try adjusting your filters, or refresh after Dynamics data becomes available."
+                      description={submittedSearch ? "Try adjusting your filters and search again." : "Choose filters and click Search Dynamics to find accounts."}
                       icon="search"
-                      title="No account records found"
+                      title={submittedSearch ? "No account records found" : "Ready to search"}
                     />
                   </TableCell>
                 </TableRow>
@@ -1656,7 +1609,8 @@ export default function DataQualityTable() {
         </Menu>
         <TablePagination
           component="div"
-          count={filteredAccountCount}
+          count={submittedSearch ? page * rowsPerPage + accounts.length + (hasMoreAccounts ? 1 : 0) : 0}
+          labelDisplayedRows={({ from, to, count }) => `${from}–${to} of ${hasMoreAccounts ? "more results" : count}`}
           onPageChange={handleChangePage}
           onRowsPerPageChange={handleChangeRowsPerPage}
           page={page}
@@ -1698,13 +1652,13 @@ export default function DataQualityTable() {
               </Box>
             </Box>
             <Alert severity="info">
-              Updates require at least 3 of 5 matches: website, phone, country, state, and account name. Matches below 60% are skipped.
+              A company name is required. Seamless must return a sufficiently similar company name before blank fields are updated. Existing account fields are preserved.
             </Alert>
             {enrichmentError ? <Alert severity="error">{enrichmentError}</Alert> : null}
             {enrichmentResult ? (
               <Alert severity="success">
                 Seamless enrichment complete: {enrichmentResult.updated} of {enrichmentResult.processed} account
-                {enrichmentResult.processed === 1 ? "" : "s"} updated. {enrichmentResult.skipped || 0} skipped below 60% confidence.
+                {enrichmentResult.processed === 1 ? "" : "s"} updated. {enrichmentResult.skipped || 0} skipped.
               </Alert>
             ) : null}
           </Box>

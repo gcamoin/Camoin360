@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 WEEKLY_LIMIT = 2000
 
@@ -45,9 +45,13 @@ def load_usage():
             return data
 
     if data.get("week_start") != current_week:
+        total_credits_remaining = data.get("total_credits_remaining")
+        total_credits_updated_at = data.get("total_credits_updated_at")
         data = {
             "week_start": current_week,
             "credits_used": 0,
+            "total_credits_remaining": total_credits_remaining,
+            "total_credits_updated_at": total_credits_updated_at,
         }
         save_usage(data)
 
@@ -62,5 +66,19 @@ def can_make_request():
 def increment_usage():
     data = load_usage()
     data["credits_used"] = data.get("credits_used", 0) + 1
+    save_usage(data)
+    return data
+
+
+def update_total_credits_remaining(value):
+    """Store the account-wide balance reported by Seamless response headers."""
+    try:
+        remaining = int(str(value).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return load_usage()
+
+    data = load_usage()
+    data["total_credits_remaining"] = max(remaining, 0)
+    data["total_credits_updated_at"] = datetime.now(timezone.utc).isoformat()
     save_usage(data)
     return data

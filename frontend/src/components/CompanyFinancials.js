@@ -1,3 +1,4 @@
+import { filterReportingRows } from "../reportingPeriod";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import {
@@ -32,7 +33,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
+import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, getCurrentUser, handleUnauthorized } from "../auth";
+import { getQuickBooksConnectUrl } from "../quickbooksApi";
 
 const API_URL = `${API_BASE_URL}/company-financials`;
 const REQUEST_TIMEOUT_MS = 60 * 1000;
@@ -167,7 +169,7 @@ function InsightCard({ label, value }) {
   );
 }
 
-export default function CompanyFinancials() {
+export default function CompanyFinancials({ filters } = {}) {
   const isMountedRef = useRef(true);
   const theme = useTheme();
   const brandBlue = theme.palette.primary.main;
@@ -184,7 +186,23 @@ export default function CompanyFinancials() {
   const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
   const [isAnalysisGenerated, setIsAnalysisGenerated] = useState(false);
   const [analysisTab, setAnalysisTab] = useState("analysis");
-  const displayRows = monthlyFinancials;
+  const [isConnectingQuickBooks, setIsConnectingQuickBooks] = useState(false);
+  const canManageQuickBooks = useMemo(() => {
+    const currentUser = getCurrentUser();
+    return currentUser?.role === "admin" || currentUser?.modules?.includes("admin");
+  }, []);
+
+  async function connectQuickBooks() {
+    setIsConnectingQuickBooks(true);
+    try {
+      window.location.assign(await getQuickBooksConnectUrl());
+    } catch (connectError) {
+      if (!isMountedRef.current) return;
+      setIsConnectingQuickBooks(false);
+      setError(connectError.userMessage || getApiErrorMessage(connectError, "Unable to start QuickBooks authorization."));
+    }
+  }
+  const displayRows = useMemo(() => filterReportingRows(monthlyFinancials, filters), [monthlyFinancials, filters]);
   const yearOptions = useMemo(
     () => [
       { label: "All Years", value: ALL_VALUE },
@@ -219,14 +237,20 @@ export default function CompanyFinancials() {
     } catch (requestError) {
       if (!isMountedRef.current || handleUnauthorized(requestError)) return;
 
-      setError(getApiErrorMessage(requestError, "Unable to load QuickBooks company financials."));
+      if (requestError.response?.status === 409) {
+        setError(canManageQuickBooks
+          ? "Connect QuickBooks to load company financials. After authorizing with Intuit, you’ll return to Camoin 360."
+          : "A Camoin 360 administrator needs to connect QuickBooks to load company financials.");
+      } else {
+        setError(getApiErrorMessage(requestError, "Unable to load QuickBooks company financials."));
+      }
     } finally {
       if (isMountedRef.current) {
         setIsLoading(false);
         setIsRefreshing(false);
       }
     }
-  }, []);
+  }, [canManageQuickBooks]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -247,7 +271,7 @@ export default function CompanyFinancials() {
       ),
     [displayRows, selectedMonth, selectedQuarter, selectedYear]
   );
-  const chartRows = filteredRows.length ? filteredRows : displayRows;
+  const chartRows = filteredRows;
   const salesYearTicks = useMemo(
     () =>
       Array.from(
@@ -279,9 +303,23 @@ export default function CompanyFinancials() {
     <Stack spacing={2.5}>
       {error ? (
         <Alert severity="error" sx={{ borderRadius: 2 }}>
-          {error}
+          <Stack alignItems={{ xs: "flex-start", sm: "center" }} direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={1.5}>
+            <span>{error}</span>
+            {canManageQuickBooks ? (
+              <Button
+                color="inherit"
+                disabled={isConnectingQuickBooks}
+                onClick={connectQuickBooks}
+                size="small"
+                variant="outlined"
+              >
+                {isConnectingQuickBooks ? "Opening QuickBooks…" : "Connect QuickBooks"}
+              </Button>
+            ) : null}
+          </Stack>
         </Alert>
       ) : null}
+      {!error ? (
       <Paper
         elevation={0}
         sx={{
@@ -342,6 +380,7 @@ export default function CompanyFinancials() {
           </Stack>
         </Stack>
       </Paper>
+      ) : null}
 
       {isLoading ? (
         <Paper elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 4 }}>
@@ -358,6 +397,7 @@ export default function CompanyFinancials() {
         </Alert>
       ) : null}
 
+      {!isLoading && error ? null : (
       <ChartPanel
         subtitle={`Monthly sales from ${source} (${displayRows.length.toLocaleString()} values).`}
         title="Monthly Sales"
@@ -377,7 +417,9 @@ export default function CompanyFinancials() {
           </LineChart>
         </ResponsiveContainer>
       </ChartPanel>
+      )}
 
+      {!isLoading && error ? null : (
       <Box sx={{ display: "grid", gap: 2.5, gridTemplateColumns: { xs: "1fr", xl: "1fr 1fr" } }}>
         <ChartPanel subtitle="Grouped bar chart showing QuickBooks liquidity measures." title="Cash on Hand & Current Ratio">
           <ResponsiveContainer width="100%" height="100%">
@@ -441,6 +483,7 @@ export default function CompanyFinancials() {
           </ResponsiveContainer>
         </ChartPanel>
       </Box>
+      )}
 
       <Dialog
         fullWidth

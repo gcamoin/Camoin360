@@ -1,4 +1,5 @@
 import unittest
+from urllib.parse import unquote
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,6 +18,7 @@ from .dynamics import (
     get_project_creation_metrics,
     get_sales_outlook_rfp_metrics,
     _build_pe_qualified_lead_rollups,
+    _build_pe_lead_yearly_rollups,
     _canonical_pe_client_name,
     _marketing_window,
     normalize_marketing_list_record,
@@ -31,6 +33,147 @@ class FakeDynamicsResponse:
 
     def json(self):
         return self._payload
+
+
+class DataQualityAccountFetchTest(unittest.IsolatedAsyncioTestCase):
+    async def test_fetches_every_dynamics_page_without_top_limit(self):
+        requested_urls = []
+
+        class Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def get(self, url, headers):
+                requested_urls.append(url)
+                if len(requested_urls) == 1:
+                    return FakeDynamicsResponse({"value": [{"accountid": "first"}], "@odata.nextLink": "https://crm.example/next"})
+                return FakeDynamicsResponse({"value": [{"accountid": "second"}]})
+
+        with (
+            patch.object(dynamics, "API_URL", "https://crm.example"),
+            patch.object(dynamics, "get_access_token", new=AsyncMock(return_value="token")),
+            patch.object(dynamics.httpx, "AsyncClient", Client),
+            patch.dict(dynamics._DATA_QUALITY_CACHE, {"expires_at": 0, "data": None, "limit": 0}),
+        ):
+            accounts = await dynamics._fetch_accounts_data_quality_from_dynamics()
+
+        self.assertEqual([account["accountid"] for account in accounts], ["first", "second"])
+        self.assertNotIn("$top=", requested_urls[0])
+        self.assertEqual(requested_urls[1], "https://crm.example/next")
+
+
+class SparseAccountEnrichmentTest(unittest.IsolatedAsyncioTestCase):
+    async def test_name_only_match_can_update_empty_field(self):
+        with (
+            patch.object(dynamics, "get_account", new=AsyncMock(return_value={"name": "Acme"})),
+            patch.object(dynamics, "increment_processed"),
+            patch.object(dynamics, "load_usage", return_value={"credits_used": 0}),
+            patch.object(dynamics, "can_make_request", return_value=True),
+            patch.object(dynamics, "enrich_with_seamless", new=AsyncMock(return_value={
+                "websiteurl": "https://acme.example", "confidence_score": 20, "matched_fields": ["name"],
+            })),
+            patch.object(dynamics, "update_account", new=AsyncMock()) as update,
+            patch.object(dynamics, "increment_usage", return_value={"credits_used": 1}),
+            patch.object(dynamics, "log_update"),
+        ):
+            result = await dynamics.enrich_account("account-1", ["websiteurl"])
+
+        self.assertTrue(result["updated"])
+        update.assert_awaited_once_with("account-1", {"websiteurl": "https://acme.example"})
+
+
+class DataQualityLiveSearchTest(unittest.IsolatedAsyncioTestCase):
+    async def test_missing_website_search_excludes_populated_websites(self):
+        class Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def get(self, url, headers):
+                return FakeDynamicsResponse({"value": [
+                    {"accountid": "populated", "name": "Has Website", "websiteurl": "https://example.com", "address1_country": "USA"},
+                    {"accountid": "missing", "name": "Missing Website", "websiteurl": None, "address1_country": "USA"},
+                ]})
+
+        with (
+            patch.object(dynamics, "API_URL", "https://crm.example"),
+            patch.object(dynamics, "get_access_token", new=AsyncMock(return_value="token")),
+            patch.object(dynamics.httpx, "AsyncClient", Client),
+        ):
+            result = await dynamics.search_accounts_data_quality_from_dynamics(
+                country="United States", missing_field="websiteurl", page_size=25
+            )
+
+        self.assertEqual([account["accountid"] for account in result["data"]], ["missing"])
+
+    async def test_filters_dynamics_before_reading_results(self):
+        requested_urls = []
+
+        class Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def get(self, url, headers):
+                requested_urls.append(unquote(url))
+                return FakeDynamicsResponse({"value": [{"accountid": "1", "name": "O'Brien Company"}]})
+
+        with (
+            patch.object(dynamics, "API_URL", "https://crm.example"),
+            patch.object(dynamics, "get_access_token", new=AsyncMock(return_value="token")),
+            patch.object(dynamics.httpx, "AsyncClient", Client),
+        ):
+            result = await dynamics.search_accounts_data_quality_from_dynamics(search="O'Brien", page_size=25)
+
+        self.assertEqual(result["count"], 1)
+        self.assertFalse(result["has_more"])
+        self.assertIn("contains(name,'O''Brien')", requested_urls[0])
+        self.assertNotIn("$top=100000", requested_urls[0])
+
+    async def test_reads_next_link_for_later_page(self):
+        urls = []
+
+        class Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def get(self, url, headers):
+                urls.append(url)
+                if len(urls) == 1:
+                    return FakeDynamicsResponse({"value": [{"accountid": "1", "name": "A"}], "@odata.nextLink": "https://crm.example/next"})
+                return FakeDynamicsResponse({"value": [{"accountid": "2", "name": "B"}]})
+
+        with (
+            patch.object(dynamics, "API_URL", "https://crm.example"),
+            patch.object(dynamics, "get_access_token", new=AsyncMock(return_value="token")),
+            patch.object(dynamics.httpx, "AsyncClient", Client),
+        ):
+            result = await dynamics.search_accounts_data_quality_from_dynamics(page=1, page_size=1)
+
+        self.assertEqual(result["data"][0]["accountid"], "2")
+        self.assertEqual(urls[1], "https://crm.example/next")
 
 
 class FakeAsyncClient:
@@ -382,6 +525,45 @@ class ProjectCreationMetricsTest(unittest.IsolatedAsyncioTestCase):
         requested_urls = "\n".join(call.args[0] for call in client.get.await_args_list)
         self.assertIn("$select=new_projectid,new_feeforcamoin,new_contractdate", requested_urls)
         self.assertIn("$select=opportunityid,name,new_feeforcamoin,cr73c_dateproposed", requested_urls)
+
+
+class SalesOutlookMetricsTest(unittest.IsolatedAsyncioTestCase):
+    async def test_returns_project_names_and_fee_for_camoin(self):
+        async def get_response(url, headers):
+            response = MagicMock(status_code=200)
+            if "EntityDefinitions" in url:
+                response.json.return_value = {"PrimaryNameAttribute": "new_name"}
+            else:
+                response.json.return_value = {"value": [{
+                    "new_projectid": "project-1",
+                    "new_name": "Downtown Market Study",
+                    "createdon": "2025-03-10T00:00:00Z",
+                    "new_contractdate": "2025-03-15T00:00:00Z",
+                    "new_feeforcamoin": 42500,
+                }]}
+            return response
+
+        client = AsyncMock()
+        client.get.side_effect = get_response
+        client.__aenter__.return_value = client
+        client.__aexit__.return_value = False
+        dynamics._SALES_OUTLOOK_CACHE.update({"data": None, "expires_at": 0})
+
+        with (
+            patch("backend.app.services.dynamics.get_access_token", AsyncMock(return_value="token")),
+            patch("backend.app.services.dynamics.httpx.AsyncClient", return_value=client),
+            patch("backend.app.services.dynamics.API_URL", "https://example.crm/api/data/v9.2"),
+        ):
+            result = await dynamics.get_sales_outlook_metrics()
+
+        self.assertEqual(result["project_details"], [{
+            "project_id": "project-1",
+            "project_name": "Downtown Market Study",
+            "fee_for_camoin": 42500.0,
+            "created_on": "2025-03-10T00:00:00Z",
+        }])
+        project_url = client.get.await_args_list[1].args[0]
+        self.assertIn("new_name", project_url)
 
 
 class SalesOutlookRfpMetricsTest(unittest.IsolatedAsyncioTestCase):
@@ -1370,6 +1552,22 @@ class LeadfeederVisitQueryTest(unittest.IsolatedAsyncioTestCase):
 
 
 class PEQualifiedLeadMetricsTest(unittest.TestCase):
+    def test_yearly_totals_fill_gaps_and_ignore_missing_dates(self):
+        year = datetime.now(timezone.utc).year
+        rows = [
+            {"createdon": f"{year - 2}-01-01T00:00:00Z"},
+            {"createdon": f"{year}-01-01T00:00:00Z"},
+            {"createdon": f"{year}-02-01T00:00:00Z"},
+            {"createdon": None},
+            {"createdon": "invalid"},
+        ]
+        self.assertEqual(_build_pe_lead_yearly_rollups(rows), [
+            {"year": year - 2, "qualified_leads": 1},
+            {"year": year - 1, "qualified_leads": 0},
+            {"year": year, "qualified_leads": 2},
+        ])
+        self.assertEqual(_build_pe_lead_yearly_rollups([]), [])
+
     def test_canonicalizes_pe_client_name_variants(self):
         self.assertEqual(_canonical_pe_client_name("Upstate SC Alliance"), "Upstate South Carolina Alliance")
         self.assertEqual(_canonical_pe_client_name("Upstate South Carolina Alliance"), "Upstate South Carolina Alliance")
@@ -1394,6 +1592,26 @@ class PEQualifiedLeadMetricsTest(unittest.TestCase):
 
 
 class PEQualifiedLeadQueryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_chart_totals_include_pages_beyond_display_limit(self):
+        record = {
+            "new_client": "Example Client",
+            "cr73c_leadstatus@OData.Community.Display.V1.FormattedValue": "Qualified",
+            "createdon": "2026-01-01T00:00:00Z",
+        }
+        client = AsyncMock()
+        client.get.side_effect = [
+            FakeDynamicsResponse({"value": [record], "@odata.nextLink": "https://example.crm/page2"}),
+            FakeDynamicsResponse({"value": [record]}),
+        ]
+        with patch.object(dynamics, "get_access_token", new=AsyncMock(return_value="token")), patch.object(dynamics.httpx, "AsyncClient") as factory:
+            factory.return_value.__aenter__.return_value = client
+            result = await get_pe_qualified_leads(limit=1)
+        self.assertEqual(len(result["data"]), 1)
+        self.assertEqual(result["total_count"], 2)
+        self.assertEqual(result["rollups"][0]["qualified_leads"], 2)
+        self.assertEqual(result["yearly_rollups"][0], {"year": 2026, "qualified_leads": 2})
+        self.assertEqual(client.get.call_count, 2)
+
     async def test_missing_year_queries_all_time(self):
         FakeAsyncClient.requested_urls = []
         FakeAsyncClient.prospect_payload = {
@@ -1448,3 +1666,26 @@ class PEQualifiedLeadQueryTest(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PEReportingPeriodTest(unittest.IsolatedAsyncioTestCase):
+    async def test_period_filters_apply_before_totals_and_display_limit(self):
+        def record(day):
+            return {
+                "new_client": "Example Client",
+                "cr73c_leadstatus@OData.Community.Display.V1.FormattedValue": "Qualified",
+                "createdon": day,
+            }
+        client = AsyncMock()
+        client.get.side_effect = [
+            FakeDynamicsResponse({"value": [record("2024-01-15"), record("2024-04-15")], "@odata.nextLink": "https://example.crm/page2"}),
+            FakeDynamicsResponse({"value": [record("2024-04-16"), record("2024-05-20")]}),
+        ]
+        with patch.object(dynamics, "get_access_token", new=AsyncMock(return_value="token")), patch.object(dynamics.httpx, "AsyncClient") as factory:
+            factory.return_value.__aenter__.return_value = client
+            result = await get_pe_qualified_leads(limit=1, reporting_filters={"quarter": 2, "end_date": "2024-04-30"})
+        self.assertEqual(result["total_count"], 2)
+        self.assertEqual(len(result["data"]), 1)
+        self.assertEqual(result["rollups"][0]["qualified_leads"], 2)
+        self.assertEqual(result["yearly_rollups"][0], {"year": 2024, "qualified_leads": 2})
+        self.assertEqual(sum(row["qualified_leads"] for row in result["yearly_rollups"]), 2)

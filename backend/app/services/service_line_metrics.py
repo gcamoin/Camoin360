@@ -21,6 +21,8 @@ SERVICE_LINE_METRICS_SYNC_STALE_SECONDS = int(
 )
 SERVICE_LINE_METRICS_REQUEST_TIMEOUT_SECONDS = 120
 CACHE_KEY = "default"
+PAYLOAD_VERSION = 3
+MARKETING_SOURCE_START_YEAR = 2024
 
 SERVICE_LINE_DEFINITIONS = [
     {"key": "prospect_engage", "label": "ProspectEngage", "pattern": re.compile(r"prospect-?engage", re.IGNORECASE)},
@@ -75,7 +77,11 @@ def _run_ga4_report():
     client = BetaAnalyticsDataClient()
     request = RunReportRequest(
         property=f"properties/{GA4_PROPERTY_ID}",
-        dimensions=[Dimension(name="yearMonth"), Dimension(name="landingPage")],
+        dimensions=[
+            Dimension(name="yearMonth"),
+            Dimension(name="landingPage"),
+            Dimension(name="sessionSource"),
+        ],
         metrics=[Metric(name="sessions")],
         date_ranges=[DateRange(start_date=SERVICE_LINE_METRICS_START_DATE, end_date="today")],
         limit=100000,
@@ -83,17 +89,29 @@ def _run_ga4_report():
     return client.run_report(request)
 
 
-async def _fetch_ga4_monthly_sessions() -> dict:
+def _normalize_traffic_source(source: str) -> str:
+    normalized = (source or "").strip()
+    if normalized.lower() == "(direct)":
+        return "Direct"
+    if normalized.lower() in {"", "(not set)"}:
+        return "Unknown"
+    return normalized
+
+
+async def _fetch_ga4_monthly_sessions() -> tuple[dict, dict]:
     response = await asyncio.to_thread(_run_ga4_report)
     aggregated: dict = defaultdict(int)
+    source_aggregated: dict = defaultdict(int)
     for row in response.rows:
         year_month = row.dimension_values[0].value
         path = row.dimension_values[1].value
+        source = _normalize_traffic_source(row.dimension_values[2].value)
         sessions = int(row.metric_values[0].value)
         label = _match_service_line(path)
         if label:
             aggregated[(label, year_month)] += sessions
-    return aggregated
+            source_aggregated[(label, year_month, source)] += sessions
+    return aggregated, source_aggregated
 
 
 async def _fetch_leadfeeder_monthly_visits() -> dict:
@@ -143,9 +161,10 @@ def _month_period_label(year_month: str) -> str:
 
 
 async def _load_service_line_marketing_metrics() -> dict:
-    ga_visits, leadfeeder_visits = await asyncio.gather(
+    ga_result, leadfeeder_visits = await asyncio.gather(
         _fetch_ga4_monthly_sessions(), _fetch_leadfeeder_monthly_visits()
     )
+    ga_visits, ga_source_visits = ga_result
 
     all_months = sorted({year_month for (_, year_month) in ga_visits} | {year_month for (_, year_month) in leadfeeder_visits})
 
@@ -176,18 +195,48 @@ async def _load_service_line_marketing_metrics() -> dict:
 
         service_lines.append({"key": definition["key"], "label": label, "months": months})
 
+    source_months = []
+    source_totals: dict[str, int] = defaultdict(int)
+    definitions_by_label = {definition["label"]: definition for definition in SERVICE_LINE_DEFINITIONS}
+    for (label, year_month, source), visits in sorted(ga_source_visits.items()):
+        if int(year_month[:4]) < MARKETING_SOURCE_START_YEAR:
+            continue
+        definition = definitions_by_label[label]
+        source_months.append(
+            {
+                "service_line_key": definition["key"],
+                "service_line": label,
+                "year": int(year_month[:4]),
+                "month": int(year_month[4:6]),
+                "month_key": f"{year_month[:4]}-{year_month[4:6]}",
+                "period": _month_period_label(year_month),
+                "source": source,
+                "visits": visits,
+            }
+        )
+        source_totals[source] += visits
+
     return {
+        "payload_version": PAYLOAD_VERSION,
         "service_lines": service_lines,
+        "source_months": source_months,
+        "traffic_by_source": [
+            {"source": source, "visits": visits}
+            for source, visits in sorted(source_totals.items(), key=lambda item: (-item[1], item[0].lower()))
+        ],
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
 def _empty_service_line_marketing_payload() -> dict:
     return {
+        "payload_version": PAYLOAD_VERSION,
         "service_lines": [
             {"key": definition["key"], "label": definition["label"], "months": []}
             for definition in SERVICE_LINE_DEFINITIONS
         ],
+        "source_months": [],
+        "traffic_by_source": [],
         "updated_at": "",
     }
 
@@ -195,7 +244,7 @@ def _empty_service_line_marketing_payload() -> dict:
 def _service_line_keys_are_current(payload: dict) -> bool:
     payload_keys = {line.get("key") for line in payload.get("service_lines", [])}
     configured_keys = {definition["key"] for definition in SERVICE_LINE_DEFINITIONS}
-    return payload_keys == configured_keys
+    return payload.get("payload_version") == PAYLOAD_VERSION and payload_keys == configured_keys
 
 
 def _ensure_current_service_lines(payload: dict) -> dict:
@@ -218,7 +267,10 @@ def _ensure_current_service_lines(payload: dict) -> dict:
 
     return {
         **payload,
+        "payload_version": PAYLOAD_VERSION,
         "service_lines": service_lines,
+        "source_months": payload.get("source_months", []),
+        "traffic_by_source": payload.get("traffic_by_source", []),
     }
 
 

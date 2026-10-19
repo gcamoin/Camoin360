@@ -1,3 +1,4 @@
+import { filterReportingRows } from "../reportingPeriod";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import {
@@ -169,7 +170,7 @@ function FinancialFeeChart({ barColor, data, dateDescription, title }) {
   );
 }
 
-export default function ProductivityProjects() {
+export default function ProductivityProjects({ filters } = {}) {
   const isMountedRef = useRef(true);
   const [metrics, setMetrics] = useState({
     contracted_projects: [],
@@ -257,8 +258,8 @@ export default function ProductivityProjects() {
     [metrics.months]
   );
   const filteredMonths = useMemo(
-    () => filterMonths(metrics.months, timeFilters),
-    [metrics.months, timeFilters]
+    () => filterReportingRows(filterMonths(metrics.months, timeFilters), filters),
+    [metrics.months, timeFilters, filters]
   );
   const filteredTotalProjects = useMemo(
     () => filteredMonths.reduce((sum, month) => sum + month.projects, 0),
@@ -272,12 +273,15 @@ export default function ProductivityProjects() {
       ),
     [filteredMonths]
   );
-  const topServiceLine = metrics.service_lines[0] || { service_line: "None", projects: 0 };
-  const lowestServiceLine = metrics.service_lines[metrics.service_lines.length - 1] || {
-    service_line: "None",
-    projects: 0,
-  };
-  const maxServiceLineProjects = Math.max(...metrics.service_lines.map((serviceLine) => serviceLine.projects), 1);
+  const visibleServiceLines = useMemo(() => {
+    const totals = new Map();
+    filteredMonths.forEach((month) => (month.service_lines || []).forEach((line) => {
+      totals.set(line.service_line, (totals.get(line.service_line) || 0) + line.projects);
+    }));
+    return Array.from(totals, ([service_line, projects]) => ({ service_line, projects }))
+      .sort((a, b) => b.projects - a.projects);
+  }, [filteredMonths]);
+  const maxServiceLineProjects = Math.max(...visibleServiceLines.map((serviceLine) => serviceLine.projects), 1);
   const contractedProjectFeeData = useMemo(
     () => buildMonthlyFeeData(filteredMonths, metrics.contracted_projects),
     [filteredMonths, metrics.contracted_projects]
@@ -449,60 +453,12 @@ export default function ProductivityProjects() {
             Service Line Popularity
           </Typography>
           <Typography color="text.secondary" variant="body2">
-            Ranked by projects created over the last 12 months.
+            Ranked by projects created in the selected period.
           </Typography>
         </Stack>
 
-        <Box
-          sx={{
-            display: "grid",
-            gap: 2,
-            gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
-            mb: 2.5,
-          }}
-        >
-          <Box
-            sx={{
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: 2,
-              p: 2,
-              backgroundColor: "#f0fdfa",
-            }}
-          >
-            <Typography color="text.secondary" variant="overline">
-              Most Popular
-            </Typography>
-            <Typography color="text.primary" sx={{ fontSize: "1.2rem", fontWeight: 800, mt: 0.5 }}>
-              {topServiceLine.service_line}
-            </Typography>
-            <Typography color="text.secondary" variant="body2">
-              {topServiceLine.projects.toLocaleString()} project mentions
-            </Typography>
-          </Box>
-          <Box
-            sx={{
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: 2,
-              p: 2,
-              backgroundColor: "#f8fafc",
-            }}
-          >
-            <Typography color="text.secondary" variant="overline">
-              Least Popular
-            </Typography>
-            <Typography color="text.primary" sx={{ fontSize: "1.2rem", fontWeight: 800, mt: 0.5 }}>
-              {lowestServiceLine.service_line}
-            </Typography>
-            <Typography color="text.secondary" variant="body2">
-              {lowestServiceLine.projects.toLocaleString()} project mentions
-            </Typography>
-          </Box>
-        </Box>
-
         <Stack spacing={1.25}>
-          {metrics.service_lines.map((serviceLine, index) => {
+          {visibleServiceLines.map((serviceLine, index) => {
             const width = `${Math.max((serviceLine.projects / maxServiceLineProjects) * 100, 4)}%`;
             return (
               <Box key={serviceLine.service_line}>

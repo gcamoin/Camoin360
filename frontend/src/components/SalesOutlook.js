@@ -1,6 +1,7 @@
+import { filterReportingRows } from "../reportingPeriod";
 import { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
-import { Alert, Box, CircularProgress, Paper, Stack, Typography } from "@mui/material";
+import { Alert, Box, CircularProgress, Paper, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from "@mui/material";
 import {
   Bar,
   BarChart,
@@ -65,9 +66,10 @@ function ChartCard({ children, description, title }) {
   );
 }
 
-export default function SalesOutlook() {
+export default function SalesOutlook({ filters } = {}) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
+  const [projectSearch, setProjectSearch] = useState("");
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -83,20 +85,28 @@ export default function SalesOutlook() {
     return () => { active = false; };
   }, []);
 
-  const monthlyData = useMemo(() => data?.monthly_projects || [], [data]);
+  const monthlyData = useMemo(() => filterReportingRows(data?.monthly_projects, filters), [data, filters]);
+  const filteredProjectDetails = useMemo(() => {
+    const query = projectSearch.trim().toLocaleLowerCase();
+    const projects = filterReportingRows(data?.project_details, filters);
+    if (!query) return projects;
+    return projects.filter((project) =>
+      String(project.project_name || "").toLocaleLowerCase().includes(query)
+    );
+  }, [data, projectSearch, filters]);
 
   if (error) return <Alert severity="error">{error}</Alert>;
   if (!data) return <Box sx={{ display: "grid", minHeight: 320, placeItems: "center" }}><CircularProgress /></Box>;
 
   return (
-    <Stack spacing={3}>
+    <Box sx={{ display: "grid", gap: 3, gridTemplateColumns: { xs: "minmax(0, 1fr)", lg: "repeat(2, minmax(0, 1fr))" } }}>
       <ChartCard
         title="$ of all contracts signed"
         description="Annual Fee for Camoin totals by contract date, starting in 2020."
       >
         <Box sx={{ height: 340, minWidth: 0 }}>
           <ResponsiveContainer height="100%" width="100%">
-            <LineChart data={data.annual_contracts} margin={{ top: 12, right: 24, bottom: 8, left: 14 }}>
+            <LineChart data={filterReportingRows(data.annual_contracts, filters)} margin={{ top: 12, right: 24, bottom: 8, left: 14 }}>
               <CartesianGrid stroke="#eef2f7" strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="year" tick={{ fontSize: 12 }} />
               <YAxis tick={{ fontSize: 11 }} tickFormatter={formatCurrency} width={78} />
@@ -134,6 +144,56 @@ export default function SalesOutlook() {
           </Box>
         </Box>
       </ChartCard>
-    </Stack>
+
+      <Paper
+        elevation={0}
+        sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, gridColumn: "1 / -1", minWidth: 0, p: { xs: 2, md: 2.5 } }}
+      >
+        <TableContainer sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1.5, maxHeight: 360 }}>
+          <Table size="small" stickyHeader sx={{ minWidth: 760 }}>
+            <TableHead>
+              <TableRow>
+                <TableCell colSpan={2} sx={{ fontWeight: 800 }}>
+                  <Box
+                    sx={{
+                      alignItems: "center",
+                      display: "grid",
+                      gap: 2,
+                      gridTemplateColumns: "minmax(150px, 1fr) minmax(360px, 2fr) minmax(150px, 1fr)",
+                    }}
+                  >
+                    <Typography component="span" fontWeight={800}>Project Name</Typography>
+                    <TextField
+                      aria-label="Search projects"
+                      onChange={(event) => setProjectSearch(event.target.value)}
+                      placeholder="Search projects"
+                      size="small"
+                      sx={{ width: "100%" }}
+                      value={projectSearch}
+                    />
+                    <Typography component="span" fontWeight={800} textAlign="right">Fee for Camoin</Typography>
+                  </Box>
+                </TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {filteredProjectDetails.map((project) => (
+                <TableRow hover key={project.project_id}>
+                  <TableCell>{project.project_name || "Unnamed project"}</TableCell>
+                  <TableCell align="right">{formatCurrency(project.fee_for_camoin)}</TableCell>
+                </TableRow>
+              ))}
+              {!filteredProjectDetails.length ? (
+                <TableRow>
+                  <TableCell align="center" colSpan={2} sx={{ color: "text.secondary", py: 4 }}>
+                    {projectSearch.trim() ? "No projects match your search." : "No project details are available."}
+                  </TableCell>
+                </TableRow>
+              ) : null}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
+    </Box>
   );
 }

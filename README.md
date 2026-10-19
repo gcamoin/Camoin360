@@ -319,8 +319,52 @@ returns JSON containing `status`, `fields_updated`, and `skipped_reason`.
 
 Set these backend environment variables: `TENANT_ID`, `CLIENT_ID`, `CLIENT_SECRET`,
 `DYNAMICS_SCOPE`, `DYNAMICS_API_URL`, and `SEAMLESS_API_KEY`. Set
-`POWER_AUTOMATE_API_KEY` to require the `x-api-key` header (strongly recommended for
-any deployed endpoint); if it is unset, the header is optional for local development.
+`POWER_AUTOMATE_API_KEY` for machine access using the `x-api-key` header. Machine
+access is rejected when this variable is unset or empty. This authentication applies
+only to `POST /accounts/enrich-one/{accountid}`; other Account endpoints still require
+user authentication. Authenticated users with Sophie Maintenance access can also
+call this endpoint with their normal Bearer token. If an Authorization header is
+supplied, it must pass the normal user-token and module checks.
+
+The backend endpoint is prepared for a future flow; no automatic Account
+enrichment flow is included in this repository. `enrich_one_account()` treats the
+attempt flag as a completed provider attempt, with missing company name as an
+explicit non-retryable exception. Infrastructure failures remain eligible for
+resubmission:
+
+| Outcome | Sets `cr73c_enrichmentattempted` to true? |
+| --- | --- |
+| Account retrieval fails | No |
+| Already attempted | No new write; existing flag remains true |
+| Account has no name | Yes, if the metadata PATCH succeeds |
+| `SEAMLESS_API_KEY` missing | No; returns failed |
+| Weekly credit limit reached | No |
+| Credit-budget check raises | No; returns failed without calling Seamless |
+| Seamless lookup raises | No; returns failed |
+| Post-lookup usage or response-balance recording raises | Logged; provider outcome continues unchanged |
+| No matching company | Yes, if the metadata PATCH succeeds |
+| Matching company, no blank fields to fill | Yes, if the metadata PATCH succeeds |
+| Matching company, blank fields updated | Yes, in the same PATCH as field updates |
+| Final Dynamics PATCH fails | No confirmed write; a transport failure may have an uncertain outcome |
+
+Completed attempts require a confirmed Dynamics PATCH including both
+`cr73c_enrichmentattempted` and `cr73c_enrichmentlastattemptedon` in UTC, alongside
+any field updates. Both fields exist in the deployed Account table. A Dynamics
+400 is no longer retried without the timestamp; any write failure returns failed.
+
+Local usage and credit-balance JSON writes are best-effort operational telemetry;
+failure after a provider response does not invalidate enrichment. A failed
+preflight credit-budget check stops enrichment conservatively, because the
+backend cannot establish whether another request is within the limit. The
+automatic path does not write the separate `metrics_tracker.json` update history.
+
+The future flow must inspect the returned `status`: enrichment failures currently
+return HTTP 200 with `status: failed`. No retry scheduling or queue is provided.
+If Dynamics commits a PATCH but its response is lost, the backend returns failed
+because completion was not confirmed. A later request rereads the Account and
+skips it if the attempt flag is already true. Concurrent requests can still both
+pass the initial flag check, and read-then-write updates can race with human edits.
+Use a small, sequential controlled test before broader automation.
 
 For a local call:
 
@@ -329,3 +373,50 @@ curl -X POST "http://localhost:8000/accounts/enrich-one/<accountid>" \
   -H "x-api-key: $POWER_AUTOMATE_API_KEY" \
   -H "Content-Type: application/json"
 ```
+
+## Newsletter subscriber snapshots
+
+The Marketing overview includes **Newsletter Subscribers**, sourced from the
+Economic Navigator Newsletter (Real Time) Dynamics segment definition
+`32d99679-2af5-ef11-be20-7c1e520d6c2f`. The initial observation is **4,293**,
+verified against Dynamics on September 23, 2026. It is stored in
+`backend/app/data/newsletter_initial_snapshot.json` and inserted into PostgreSQL
+idempotently during database initialization. Earlier history is not reconstructed.
+
+The chart shows **one point per month**, using the latest subscriber count
+observed in that Eastern calendar month. Each weekly update replaces the current
+month's displayed count; counts are never added together. Earlier months retain
+their last recorded count. Weekly observations are retained internally so the
+schedule remains idempotent and existing history is preserved.
+
+The backend starts a scheduler with the application. It captures one snapshot per
+week on Monday at 9 a.m. in `America/New_York`, using the existing
+Dynamics credentials. It retries failures hourly and checks for a missing current
+week after Monday at 9 a.m. on startup and when the chart is loaded. The actual capture timestamp is
+saved; downtime does not create backdated observations for missed weeks.
+Snapshots are immutable, and a database primary key prevents duplicate weeks
+across workers/restarts. Reading/reloading the chart never overwrites a snapshot.
+
+Deploy both backend and frontend to enable this feature. No new environment
+variables are required for an always-running backend. The scheduler runs only
+while the backend process is running.
+
+For a Render service that sleeps, create an independent **Cron Job** from this
+repository with root directory `backend`, build command
+`pip install -r requirements.txt`, and command:
+
+```sh
+python -m app.services.newsletter
+```
+
+Use schedule `0 13,14 * * 1` (Mondays at 13:00 and 14:00 UTC). Render uses UTC;
+these two checks cover 9 a.m. Eastern during both daylight and standard time.
+The code skips the early check in winter and skips the second check in summer
+once that week's snapshot exists. The running backend retries failed captures
+hourly; a cron-only deployment can retry manually after a failure. Give it the backend's `DATABASE_URL`, `TENANT_ID`,
+`CLIENT_ID`, `CLIENT_SECRET`, `DYNAMICS_SCOPE`, and `DYNAMICS_API_URL` (or share its
+environment group). Choose the same Render region so its internal database URL
+is reachable. It is safe to run alongside the in-process scheduler.
+
+References: [Dynamics segment Web API](https://learn.microsoft.com/en-us/dynamics365/customer-insights/journeys/real-time-marketing-api-segment)
+and [Render cron jobs](https://render.com/docs/cronjobs).

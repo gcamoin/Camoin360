@@ -250,6 +250,8 @@ export default function MetricsDashboard() {
     credits_used: 0,
     weekly_limit: 2000,
     remaining_credits: 2000,
+    total_credits_remaining: null,
+    total_credits_updated_at: null,
     usage_percent: 0,
     accounts_processed: 0,
     accounts_updated: 0,
@@ -530,7 +532,7 @@ export default function MetricsDashboard() {
           gridTemplateColumns: {
             xs: "1fr",
             sm: "repeat(2, minmax(0, 1fr))",
-            lg: "repeat(5, minmax(0, 1fr))",
+            lg: "repeat(6, minmax(0, 1fr))",
           },
           alignItems: "stretch",
         }}
@@ -547,6 +549,13 @@ export default function MetricsDashboard() {
             title="Remaining Credits"
             value={metrics.remaining_credits}
             subtitle="Available before weekly reset"
+          />
+        </Box>
+        <Box sx={{ display: "flex" }}>
+          <MetricCard
+            title="Total Seamless Credits"
+            value={metrics.total_credits_remaining == null ? "—" : Number(metrics.total_credits_remaining).toLocaleString()}
+            subtitle={metrics.total_credits_updated_at ? "Latest balance reported by Seamless" : "Runs populate this from the Seamless API"}
           />
         </Box>
         <Box sx={{ display: "flex" }}>

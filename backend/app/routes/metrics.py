@@ -463,6 +463,8 @@ async def get_metrics(_user=Depends(require_user)):
         "credits_used": credits_used,
         "weekly_limit": WEEKLY_LIMIT,
         "remaining_credits": remaining_credits,
+        "total_credits_remaining": usage.get("total_credits_remaining"),
+        "total_credits_updated_at": usage.get("total_credits_updated_at"),
         "usage_percent": round(usage_percent, 2),
         "accounts_processed": metrics.get("accounts_processed", 0),
         "accounts_updated": metrics.get("accounts_updated", 0),

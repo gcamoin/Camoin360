@@ -17,6 +17,7 @@ import { EmptyState } from "./components/UiPrimitives";
 import CompanyFinancials from "./components/CompanyFinancials";
 import EmployeeProductivity from "./components/EmployeeProductivity";
 import MarketingMetrics, { MarketingOverview } from "./components/MarketingMetrics";
+import MarketingSource from "./components/MarketingSource";
 import PEQualifiedLeads from "./components/PEQualifiedLeads";
 import ProductivityProjects from "./components/ProductivityProjects";
 import ServiceLineFinancials from "./components/ServiceLineFinancials";
@@ -109,6 +110,12 @@ const views = {
     title: "Marketing Metrics",
     description: "Marketing performance and campaign metrics across accounts.",
   },
+  marketingSource: {
+    label: "Marketing Source",
+    icon: "campaign",
+    title: "Marketing Source",
+    description: "Website traffic sources by service line and month from Google Analytics.",
+  },
   productivityProjects: {
     label: "Service Lines & Projects",
     icon: "projects",
@@ -140,7 +147,7 @@ const views = {
     label: "PE",
     icon: "clients",
     title: "PE",
-    description: "Prospect Engage qualified leads sent to clients.",
+    description: "ProspectEngage qualified leads sent to clients.",
     parent: "employeeProductivity",
   },
 };
@@ -421,6 +428,12 @@ export default function ManagementDashboard({ onLogout }) {
                 </Typography>
               </Box>
 
+              <AiChatBox
+                context={analystContext}
+                placeholder={`Ask the AI Analyst about ${currentView.title.toLowerCase()}...`}
+                section={currentView.title}
+              />
+
               {graphViews.has(activeView) ? (
                 <DashboardDateFilters
                   onChange={(nextFilters) =>
@@ -433,31 +446,26 @@ export default function ManagementDashboard({ onLogout }) {
                 />
               ) : null}
 
-              {activeView !== "surveys" && <AiChatBox
-                context={analystContext}
-                placeholder={`Ask the AI Analyst about ${currentView.title.toLowerCase()}...`}
-                section={currentView.title}
-              />}
-
-              {activeView === "economicIndicators" && <EconomicIndicators />}
-              {activeView === "companyFinancials" && <CompanyFinancials />}
-              {activeView === "salesOutlook" && <SalesOutlook />}
-              {activeView === "salesOutlookRfp" && <SalesOutlookRfp />}
-              {activeView === "contractBacklogSelected" && <ContractBacklogSelected />}
-              {activeView === "serviceLineFinancials" && <ServiceLineFinancials />}
+              {activeView === "economicIndicators" && <EconomicIndicators filters={activeDateFilters} />}
+              {activeView === "companyFinancials" && <CompanyFinancials filters={activeDateFilters} />}
+              {activeView === "salesOutlook" && <SalesOutlook filters={activeDateFilters} />}
+              {activeView === "salesOutlookRfp" && <SalesOutlookRfp filters={activeDateFilters} />}
+              {activeView === "contractBacklogSelected" && <ContractBacklogSelected filters={activeDateFilters} />}
+              {activeView === "serviceLineFinancials" && <ServiceLineFinancials filters={activeDateFilters} />}
               {activeView === "rfpOverallSuccessRate" && (
                 <RfpOverallSuccessRate filters={activeDateFilters} />
               )}
-              {activeView === "marketing" && <MarketingOverview />}
-              {activeView === "marketingMetrics" && <MarketingMetrics />}
-              {activeView === "pe" && <PEQualifiedLeads />}
+              {activeView === "marketing" && <MarketingOverview filters={activeDateFilters} />}
+              {activeView === "marketingMetrics" && <MarketingMetrics filters={activeDateFilters} />}
+              {activeView === "marketingSource" && <MarketingSource />}
+              {activeView === "pe" && <PEQualifiedLeads filters={activeDateFilters} />}
               {activeView === "productivityProjects" && (
-                <ProductivityProjects />
+                <ProductivityProjects filters={activeDateFilters} />
               )}
               {activeView === "softwareInventory" && <SoftwareInventory />}
               {activeView === "surveys" && <SurveyComponent />}
               {activeView === "employeeProductivity" && (
-                <EmployeeProductivity />
+                <EmployeeProductivity filters={activeDateFilters} />
               )}
               {activeView === "overview" && (
                 <Paper
