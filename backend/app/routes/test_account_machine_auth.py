@@ -140,6 +140,15 @@ class AccountMachineAuthenticationTest(unittest.TestCase):
         })
         self.assert_rejected(response, expected_status=403)
 
+    def test_wrong_module_response_has_cors_headers(self):
+        response = self.client.get("/accounts/missing-data", headers={
+            "Authorization": "Bearer prospecting-user",
+            "Origin": "http://localhost:3000",
+        })
+        self.assert_rejected(response, expected_status=403)
+        self.assertEqual(response.json()["detail"], "Module access required")
+        self.assertEqual(response.headers.get("access-control-allow-origin"), "http://localhost:3000")
+
     def test_malformed_authorization_is_rejected(self):
         response = self.client.post("/accounts/enrich-one/account-1", headers={
             "Authorization": "Basic malformed", "x-api-key": self.machine_key,

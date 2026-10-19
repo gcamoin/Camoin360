@@ -43,6 +43,21 @@ class AuthRoutesTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.email, "garrett@camoinassociates.com")
 
+    async def test_user_without_modules_cannot_log_in(self):
+        self.users_file.write_text(json.dumps({
+            "jane@example.com": {
+                "name": "Jane User",
+                "email": "jane@example.com",
+                "password": auth._hash_password("secure-password"),
+            }
+        }), encoding="utf-8")
+
+        with self.assertRaises(HTTPException) as error:
+            await auth.login(auth.LoginRequest(email="jane@example.com", password="secure-password"))
+
+        self.assertEqual(error.exception.status_code, 403)
+        self.assertEqual(error.exception.detail, "No modules assigned. Contact an administrator.")
+
     async def test_admin_can_create_account(self):
         response = await auth.create_user(
             auth.SignupRequest(

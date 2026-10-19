@@ -333,4 +333,7 @@ async def login(request: LoginRequest):
     if user is None or not _verify_password(request.password, user["password"]):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
+    if user.get("role") != "admin" and not _normalize_modules(user.get("modules", [])):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No modules assigned. Contact an administrator.")
+
     return _create_auth_response(user)
