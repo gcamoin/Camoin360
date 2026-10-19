@@ -20,9 +20,48 @@ const columns = [
   { key: "primary_contact", label: "Camoin Primary Contact" },
   { key: "subscribed_since", label: "Subscribed Since" },
 ];
-const displayValue = (row, key) => key === "subscribed_since" && /^\d{4}-\d{2}-\d{2}/.test(row[key])
-  ? new Date(`${row[key].slice(0, 10)}T00:00:00`).toLocaleDateString()
-  : String(row[key] || "");
+
+const statusColors = {
+  success: { dot: "#278052", text: "#175b3c", background: "#edf7f1", border: "#c5e4d1" },
+  warning: { dot: "#bb7419", text: "#80500f", background: "#fff6e8", border: "#f1dcba" },
+  danger: { dot: "#bd4b4b", text: "#903636", background: "#fdf0f0", border: "#edcccc" },
+  neutral: { dot: "#718096", text: "#455468", background: "#f4f6f8", border: "#dce2e8" },
+};
+const statusMarkers = [
+  ["🟩", "success"], ["🟢", "success"], ["✅", "success"],
+  ["🟧", "warning"], ["🟨", "warning"], ["🟠", "warning"], ["🟡", "warning"],
+  ["🟥", "danger"], ["🔴", "danger"], ["❌", "danger"],
+];
+
+export function getInventoryStatusAppearance(value) {
+  const raw = String(value ?? "").trim();
+  const marker = statusMarkers.find(([symbol]) => raw.startsWith(symbol));
+  const label = (marker ? raw.slice(marker[0].length) : raw).trim() || "Not set";
+  const normalized = label.toLocaleLowerCase();
+  const tone = marker?.[1]
+    || (/expired|inactive|cancelled|canceled|discontinued|terminated|critical/.test(normalized) ? "danger" : null)
+    || (/expiring|pending|at risk|renewal due|review|on hold|warning/.test(normalized) ? "warning" : null)
+    || (/current|active|renewed|approved|good/.test(normalized) ? "success" : "neutral");
+  return { label, ...statusColors[tone] };
+}
+
+const displayValue = (row, key) => key === "status"
+  ? getInventoryStatusAppearance(row[key]).label
+  : key === "subscribed_since" && /^\d{4}-\d{2}-\d{2}/.test(row[key])
+    ? new Date(`${row[key].slice(0, 10)}T00:00:00`).toLocaleDateString()
+    : String(row[key] || "");
+
+function InventoryStatus({ value }) {
+  const status = getInventoryStatusAppearance(value);
+  return <Box component="span" sx={{
+    alignItems: "center", backgroundColor: status.background, border: "1px solid", borderColor: status.border,
+    borderRadius: "999px", color: status.text, display: "inline-flex", fontSize: "0.78rem", fontWeight: 700,
+    gap: 0.9, lineHeight: 1.35, maxWidth: "100%", px: 1.25, py: 0.7,
+  }}>
+    <Box aria-hidden="true" component="span" sx={{ backgroundColor: status.dot, borderRadius: "50%", flexShrink: 0, height: 8, width: 8 }} />
+    <Box component="span" sx={{ overflowWrap: "anywhere" }}>{status.label}</Box>
+  </Box>;
+}
 
 const INVENTORY_URL = `${API_BASE_URL}/software-subscriptions/inventory`;
 
@@ -161,12 +200,13 @@ export default function SoftwareInventory() {
     } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
-  const statuses = useMemo(() => [...new Set(rows.map(row => row.status).filter(Boolean))].sort(), [rows]);
+  const statuses = useMemo(() => [...new Set(rows.map(row => row.status).filter(Boolean))]
+    .sort((first, second) => getInventoryStatusAppearance(first).label.localeCompare(getInventoryStatusAppearance(second).label)), [rows]);
   const filtered = useMemo(() => rows.filter(row =>
     (!status || row.status === status) && columns.some(column =>
       displayValue(row, column.key).toLowerCase().includes(query.toLowerCase())
     )
-  ).sort((a, b) => String(a[sort.key] || "").localeCompare(String(b[sort.key] || ""), undefined, { numeric: true }) * (sort.direction === "asc" ? 1 : -1)), [rows, status, query, sort]);
+  ).sort((a, b) => displayValue(a, sort.key).localeCompare(displayValue(b, sort.key), undefined, { numeric: true }) * (sort.direction === "asc" ? 1 : -1)), [rows, status, query, sort]);
   function exportCsv() {
     const escape = value => `"${String(value).replace(/"/g, '""')}"`;
     const csv = [columns.map(column => column.label), ...filtered.map(row => columns.map(column => displayValue(row, column.key)))]
@@ -205,7 +245,7 @@ export default function SoftwareInventory() {
           <TextField fullWidth size="small" label="Search inventory" value={query} onChange={event => { setQuery(event.target.value); setPage(0); }} />
           <TextField fullWidth select size="small" label="Service Status" value={status} onChange={event => { setStatus(event.target.value); setPage(0); }}>
             <MenuItem value="">All statuses</MenuItem>
-            {statuses.map(value => <MenuItem key={value} value={value}>{value}</MenuItem>)}
+            {statuses.map(value => <MenuItem key={value} value={value}>{getInventoryStatusAppearance(value).label}</MenuItem>)}
           </TextField>
         </Box>
       </Stack>
@@ -224,7 +264,7 @@ export default function SoftwareInventory() {
             <TableSortLabel active={sort.key === column.key} direction={sort.key === column.key ? sort.direction : "asc"} onClick={() => setSort({ key: column.key, direction: sort.key === column.key && sort.direction === "asc" ? "desc" : "asc" })}>{column.label}</TableSortLabel>
           </TableCell>)}<TableCell sx={subtleTableHeadCellSx}>Actions</TableCell></TableRow></TableHead>
           <TableBody>
-            {filtered.slice(page * pageSize, (page + 1) * pageSize).map(row => <TableRow key={row.id} hover>{columns.map(column => <TableCell key={column.key} sx={{ verticalAlign: "top", whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxWidth: 340 }}>{displayValue(row, column.key) || "—"}</TableCell>)}<TableCell sx={{ whiteSpace: "nowrap" }}>
+            {filtered.slice(page * pageSize, (page + 1) * pageSize).map(row => <TableRow key={row.id} hover>{columns.map(column => <TableCell key={column.key} sx={{ verticalAlign: "top", whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxWidth: 340 }}>{column.key === "status" ? <InventoryStatus value={row.status} /> : displayValue(row, column.key) || "—"}</TableCell>)}<TableCell sx={{ whiteSpace: "nowrap" }}>
               <Button disabled={saving} onClick={() => openEditor(row)}>Edit</Button>
               <Button color="error" disabled={saving} onClick={() => { setFormError(""); setDeleteTarget(row); }}>Delete</Button>
             </TableCell></TableRow>)}
@@ -264,7 +304,7 @@ export default function SoftwareInventory() {
               value={date ? String(value).slice(0, 10) : value}
               onChange={event => change(choice ? (event.target.value === "" ? null : Number(event.target.value)) : event.target.value)}>
               {choice && <MenuItem value="">None</MenuItem>}
-              {choice && field.options.map(option => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
+              {choice && field.options.map(option => <MenuItem key={option.value} value={option.value}>{column.key === "status" ? getInventoryStatusAppearance(option.label).label : option.label}</MenuItem>)}
             </TextField>;
           })}
         </Stack>
