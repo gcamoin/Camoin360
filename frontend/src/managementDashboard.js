@@ -394,9 +394,9 @@ export default function ManagementDashboard({ onLogout }) {
           </Stack>
         </Box>
 
-        <Box component="main" sx={{ py: { xs: 3, md: 6 } }}>
-          <Container maxWidth="xl">
-            <Stack spacing={3}>
+        <Box component="main" sx={{ minWidth: 0, py: { xs: 3, md: 6 } }}>
+          <Container maxWidth={false} sx={{ minWidth: 0, width: "100%" }}>
+            <Stack spacing={3} sx={{ minWidth: 0, width: "100%" }}>
               <Box>
                 <Typography
                   component="h2"

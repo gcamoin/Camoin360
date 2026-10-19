@@ -25,6 +25,7 @@ import {
 } from "recharts";
 
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
+import { FullWidthFilterRow } from "./UiPrimitives";
 
 const API_URL = `${API_BASE_URL}/marketing/website-visits`;
 const SERVICE_LINE_API_URL = `${API_BASE_URL}/marketing/service-line-metrics`;
@@ -327,12 +328,10 @@ export default function MarketingMetrics({ showOverview = false, showServiceLine
           {error ? <Alert severity="error">{error}</Alert> : null}
 
           <Stack
-            direction={{ xs: "column", sm: "row" }}
-            justifyContent="space-between"
-            alignItems={{ xs: "stretch", sm: "center" }}
+            alignItems="stretch"
             spacing={1.5}
           >
-            <Stack direction="row" flexWrap="wrap" gap={0.75}>
+            <FullWidthFilterRow minItemWidth={140}>
               {RANGE_OPTIONS.map((option) => {
                 const isActive = range === option.value;
                 return (
@@ -354,8 +353,8 @@ export default function MarketingMetrics({ showOverview = false, showServiceLine
                   </Button>
                 );
               })}
-            </Stack>
-            <Stack alignItems={{ xs: "flex-start", sm: "flex-end" }} spacing={0.75}>
+            </FullWidthFilterRow>
+            <Stack alignItems="flex-end" spacing={0.75}>
               <Typography color="text.secondary" fontSize="0.75rem">
                 {statusLabel}
               </Typography>

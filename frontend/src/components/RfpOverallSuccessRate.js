@@ -12,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
+import { FullWidthFilterRow } from "./UiPrimitives";
 
 const percent = (value) => `${Number(value).toFixed(0)}%`;
 const ALL_SERVICE_LINES = "all";
@@ -101,25 +102,27 @@ export default function RfpOverallSuccessRate({ filters }) {
       </Box>
 
       <Paper elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: { xs: 2, md: 2.5 } }}>
-        <Stack alignItems={{ xs: "stretch", sm: "flex-start" }} direction={{ xs: "column", sm: "row" }} justifyContent="space-between" spacing={2} sx={{ mb: 2 }}>
+        <Stack spacing={2} sx={{ mb: 2 }}>
           <Box>
             <Typography color="text.primary" fontWeight={800}>$$$ Success Rate</Typography>
             <Typography color="text.secondary" variant="body2">
               Quarterly dollar and RFP-count win rates from live Dynamics opportunities. Open opportunities are excluded from success-rate denominators.
             </Typography>
           </Box>
-          <FormControl size="small" sx={{ flexShrink: 0, minWidth: 230 }}>
-            <InputLabel id="rfp-service-line-filter-label">Service line</InputLabel>
-            <Select
-              label="Service line"
-              labelId="rfp-service-line-filter-label"
-              onChange={(event) => setServiceLine(event.target.value)}
-              value={serviceLine}
-            >
-              <MenuItem value={ALL_SERVICE_LINES}>All service lines</MenuItem>
-              {(metrics.service_lines || []).map((line) => <MenuItem key={line} value={line}>{line}</MenuItem>)}
-            </Select>
-          </FormControl>
+          <FullWidthFilterRow>
+            <FormControl size="small">
+              <InputLabel id="rfp-service-line-filter-label">Service line</InputLabel>
+              <Select
+                label="Service line"
+                labelId="rfp-service-line-filter-label"
+                onChange={(event) => setServiceLine(event.target.value)}
+                value={serviceLine}
+              >
+                <MenuItem value={ALL_SERVICE_LINES}>All service lines</MenuItem>
+                {(metrics.service_lines || []).map((line) => <MenuItem key={line} value={line}>{line}</MenuItem>)}
+              </Select>
+            </FormControl>
+          </FullWidthFilterRow>
         </Stack>
         {data.length ? (
           <Box sx={{ height: 360, minWidth: 0 }}>

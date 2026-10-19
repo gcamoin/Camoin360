@@ -8,9 +8,11 @@ import {
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
 import { getCached } from "../apiClient";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { FullWidthFilterRow } from "./UiPrimitives";
 
 const API_URL = `${API_BASE_URL}/surveys/completed`;
 const ALL = "all";
+const UNKNOWN_MANAGER = "unknown_project_manager";
 const START_YEAR = 2019;
 const END_YEAR = 2026;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -46,10 +48,18 @@ function optionsFor(rows, key) {
     .sort((a, b) => String(a).localeCompare(String(b)));
 }
 
+function managerName(row) {
+  return row.project_manager && row.project_manager !== row.project_manager_id
+    ? row.project_manager
+    : "";
+}
+
 export default function SurveyComponent() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [manager, setManager] = useState(ALL);
   const [principal, setPrincipal] = useState(ALL);
   const [serviceLine, setServiceLine] = useState(ALL);
   const [year, setYear] = useState(ALL);
@@ -71,15 +81,42 @@ export default function SurveyComponent() {
     return () => { active = false; };
   }, []);
 
+  const managers = useMemo(() => {
+    const byId = new Map();
+    let hasUnnamedManager = false;
+    rows.forEach((row) => {
+      const id = String(row.project_manager_id || "").trim();
+      const name = managerName(row);
+      if (id && name && !byId.has(id)) {
+        byId.set(id, name);
+      } else if (id && !name) {
+        hasUnnamedManager = true;
+      }
+    });
+    const namedManagers = [...byId.entries()]
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    return hasUnnamedManager
+      ? [...namedManagers, { id: UNKNOWN_MANAGER, label: "Name unavailable" }]
+      : namedManagers;
+  }, [rows]);
   const principals = useMemo(() => optionsFor(rows, "principal"), [rows]);
   const serviceLines = useMemo(() => optionsFor(rows, "service_line"), [rows]);
   const years = useMemo(() => optionsFor(rows, "survey_year").reverse(), [rows]);
-  const filteredRows = useMemo(() => rows.filter((row) => (
-    (principal === ALL || row.principal === principal) &&
-    (serviceLine === ALL || row.service_line === serviceLine) &&
-    (year === ALL || row.survey_year === Number(year)) &&
-    (!surveyDate || row.survey_date?.slice(0, 10) === surveyDate)
-  )), [rows, principal, serviceLine, year, surveyDate]);
+  const filteredRows = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    return rows.filter((row) => (
+      (!query || [row.project, row.client, row.comments, managerName(row), row.principal, row.service_line]
+        .some((value) => String(value || "").toLocaleLowerCase().includes(query))) &&
+      (manager === ALL || (manager === UNKNOWN_MANAGER
+        ? Boolean(row.project_manager_id) && !managerName(row)
+        : String(row.project_manager_id || "") === manager)) &&
+      (principal === ALL || row.principal === principal) &&
+      (serviceLine === ALL || row.service_line === serviceLine) &&
+      (year === ALL || row.survey_year === Number(year)) &&
+      (!surveyDate || row.survey_date?.slice(0, 10) === surveyDate)
+    ));
+  }, [rows, search, manager, principal, serviceLine, year, surveyDate]);
   const chartData = useMemo(() => monthlyCounts(filteredRows), [filteredRows]);
 
   function updateFilter(setter) {
@@ -100,27 +137,41 @@ export default function SurveyComponent() {
       </Paper>
 
       <Paper elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: { xs: 2, md: 3 } }}>
+        <TextField
+          fullWidth
+          label="Search surveys"
+          onChange={updateFilter(setSearch)}
+          placeholder="Search projects, clients, comments, or managers"
+          size="small"
+          value={search}
+        />
+      </Paper>
+
+      <Paper elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: { xs: 2, md: 3 } }}>
         <Typography fontWeight={800} sx={{ mb: 2 }}>Filters</Typography>
-        <Stack direction={{ xs: "column", sm: "row" }} flexWrap="wrap" gap={2}>
-          <FormControl disabled sx={{ minWidth: 180 }} size="small">
-            <InputLabel>Project Manager</InputLabel>
-            <Select label="Project Manager" value="unknown"><MenuItem value="unknown">Unknown</MenuItem></Select>
+        <FullWidthFilterRow>
+          <FormControl size="small">
+            <InputLabel id="survey-manager-filter-label">Project Manager</InputLabel>
+            <Select label="Project Manager" labelId="survey-manager-filter-label" onChange={updateFilter(setManager)} value={manager}>
+              <MenuItem value={ALL}>All project managers</MenuItem>
+              {managers.map((option) => <MenuItem key={option.id} value={option.id}>{option.label}</MenuItem>)}
+            </Select>
           </FormControl>
-          <FormControl sx={{ minWidth: 180 }} size="small">
+          <FormControl size="small">
             <InputLabel>Principal</InputLabel>
             <Select label="Principal" onChange={updateFilter(setPrincipal)} value={principal}>
               <MenuItem value={ALL}>All principals</MenuItem>
               {principals.map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}
             </Select>
           </FormControl>
-          <FormControl sx={{ minWidth: 210 }} size="small">
+          <FormControl size="small">
             <InputLabel>Primary Service Line</InputLabel>
             <Select label="Primary Service Line" onChange={updateFilter(setServiceLine)} value={serviceLine}>
               <MenuItem value={ALL}>All service lines</MenuItem>
               {serviceLines.map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}
             </Select>
           </FormControl>
-          <FormControl sx={{ minWidth: 150 }} size="small">
+          <FormControl size="small">
             <InputLabel>Survey Year</InputLabel>
             <Select label="Survey Year" onChange={updateFilter(setYear)} value={year}>
               <MenuItem value={ALL}>All years</MenuItem>
@@ -128,7 +179,7 @@ export default function SurveyComponent() {
             </Select>
           </FormControl>
           <TextField label="Client Survey Date" onChange={updateFilter(setSurveyDate)} size="small" slotProps={{ inputLabel: { shrink: true } }} type="date" value={surveyDate} />
-        </Stack>
+        </FullWidthFilterRow>
       </Paper>
 
       <Paper elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, overflow: "hidden" }}>
@@ -138,10 +189,11 @@ export default function SurveyComponent() {
         {loading ? <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}><CircularProgress /></Box> : (
           <>
             <TableContainer sx={{ maxHeight: 620 }}>
-              <Table stickyHeader size="small" sx={{ minWidth: 700 }}>
+              <Table stickyHeader size="small" sx={{ minWidth: 900 }}>
                 <TableHead><TableRow>
                   <TableCell sx={{ fontWeight: 800 }}>Project</TableCell>
                   <TableCell sx={{ fontWeight: 800 }}>Client</TableCell>
+                  <TableCell sx={{ fontWeight: 800 }}>Project Manager</TableCell>
                   <TableCell sx={{ fontWeight: 800 }}>Client Survey Comments</TableCell>
                 </TableRow></TableHead>
                 <TableBody>
@@ -149,10 +201,13 @@ export default function SurveyComponent() {
                     <TableRow key={row.id || `${row.project}-${index}`} hover>
                       <TableCell>{row.project || "—"}</TableCell>
                       <TableCell>{row.client || "—"}</TableCell>
+                      <TableCell>
+                        <Typography variant="body2">{managerName(row) || "—"}</Typography>
+                      </TableCell>
                       <TableCell sx={{ whiteSpace: "pre-wrap", minWidth: 280 }}>{row.comments || "—"}</TableCell>
                     </TableRow>
                   ))}
-                  {!filteredRows.length && <TableRow><TableCell align="center" colSpan={3}>No completed surveys match these filters.</TableCell></TableRow>}
+                  {!filteredRows.length && <TableRow><TableCell align="center" colSpan={4}>No completed surveys match this search and filters.</TableCell></TableRow>}
                 </TableBody>
               </Table>
             </TableContainer>

@@ -32,7 +32,7 @@ import {
 } from "@mui/material";
 
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
-import { AppIcon, EmptyState, subtleTableHeadCellSx } from "./UiPrimitives";
+import { AppIcon, EmptyState, FullWidthFilterRow, subtleTableHeadCellSx } from "./UiPrimitives";
 
 const API_URL = `${API_BASE_URL}/software-subscriptions`;
 const ALL_FILTER_VALUE = "all";
@@ -1300,9 +1300,6 @@ export default function SoftwareInventory() {
         }}
       >
         <Stack
-          alignItems={{ xs: "stretch", lg: "center" }}
-          direction={{ xs: "column", lg: "row" }}
-          justifyContent="space-between"
           spacing={2}
           sx={{ borderBottom: "1px solid", borderColor: "divider", p: 2 }}
         >
@@ -1319,20 +1316,14 @@ export default function SoftwareInventory() {
                 : "Track ownership, access, cost history, renewals, vendor contacts, and notes."}
             </Typography>
           </Box>
-          <Stack
-            alignItems={{ xs: "stretch", md: "center" }}
-            direction={{ xs: "column", md: "row" }}
-            flexWrap="wrap"
-            gap={1.25}
-          >
+          <FullWidthFilterRow>
             <TextField
               label="Search"
               onChange={(event) => setQuery(event.target.value)}
               size="small"
-              sx={{ minWidth: { xs: "100%", md: 240 } }}
               value={query}
             />
-            <FormControl size="small" sx={{ minWidth: { xs: "100%", md: 160 } }}>
+            <FormControl size="small">
               <InputLabel id="software-status-filter-label">Status</InputLabel>
               <Select
                 label="Status"
@@ -1348,7 +1339,7 @@ export default function SoftwareInventory() {
                 ))}
               </Select>
             </FormControl>
-            <FormControl size="small" sx={{ minWidth: { xs: "100%", md: 170 } }}>
+            <FormControl size="small">
               <InputLabel id="software-category-filter-label">Category</InputLabel>
               <Select
                 label="Category"
@@ -1364,7 +1355,7 @@ export default function SoftwareInventory() {
                 ))}
               </Select>
             </FormControl>
-            <FormControl size="small" sx={{ minWidth: { xs: "100%", md: 170 } }}>
+            <FormControl size="small">
               <InputLabel id="software-department-filter-label">Department</InputLabel>
               <Select
                 label="Department"
@@ -1380,7 +1371,7 @@ export default function SoftwareInventory() {
                 ))}
               </Select>
             </FormControl>
-            <FormControl size="small" sx={{ minWidth: { xs: "100%", md: 170 } }}>
+            <FormControl size="small">
               <InputLabel id="software-billing-filter-label">Billing</InputLabel>
               <Select
                 label="Billing"
@@ -1396,7 +1387,7 @@ export default function SoftwareInventory() {
                 ))}
               </Select>
             </FormControl>
-            <FormControl size="small" sx={{ minWidth: { xs: "100%", md: 190 } }}>
+            <FormControl size="small">
               <InputLabel id="software-renewal-filter-label">Renewal Time Frame</InputLabel>
               <Select
                 label="Renewal Time Frame"
@@ -1412,7 +1403,7 @@ export default function SoftwareInventory() {
                 ))}
               </Select>
             </FormControl>
-            <FormControl size="small" sx={{ minWidth: { xs: "100%", md: 190 } }}>
+            <FormControl size="small">
               <InputLabel id="software-quick-filter-label">Missing Info</InputLabel>
               <Select
                 label="Missing Info"
@@ -1428,6 +1419,8 @@ export default function SoftwareInventory() {
                 ))}
               </Select>
             </FormControl>
+          </FullWidthFilterRow>
+          <Stack alignItems="center" direction="row" flexWrap="wrap" gap={1.25}>
             <Button disabled={isRefreshing} onClick={() => fetchSubscriptions({ silent: true })} variant="outlined">
               {isRefreshing ? "Refreshing" : "Refresh"}
             </Button>

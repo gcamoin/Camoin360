@@ -25,6 +25,7 @@ import {
 } from "recharts";
 
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
+import { FullWidthFilterRow } from "./UiPrimitives";
 
 const API_URL = `${API_BASE_URL}/productivity/employee-hours`;
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
@@ -329,8 +330,8 @@ export default function EmployeeProductivity() {
           backgroundColor: "common.white",
         }}
       >
-        <Stack direction={{ xs: "column", md: "row" }} spacing={1.25} flexWrap="wrap" useFlexGap>
-          <FormControl size="small" sx={{ minWidth: 196 }}>
+        <FullWidthFilterRow>
+          <FormControl size="small">
             <InputLabel id="weekly-hours-employee-label">Employee</InputLabel>
             <Select
               label="Employee"
@@ -346,7 +347,7 @@ export default function EmployeeProductivity() {
               ))}
             </Select>
           </FormControl>
-          <FormControl size="small" sx={{ minWidth: 148 }}>
+          <FormControl size="small">
             <InputLabel id="weekly-hours-billing-label">Billed</InputLabel>
             <Select
               label="Billed"
@@ -361,7 +362,7 @@ export default function EmployeeProductivity() {
               ))}
             </Select>
           </FormControl>
-        </Stack>
+        </FullWidthFilterRow>
       </Paper>
 
       <Paper

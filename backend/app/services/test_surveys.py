@@ -55,7 +55,28 @@ class CompletedSurveysTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["total"], 2)
         self.assertEqual([row["id"] for row in result["rows"]], ["3", "1"])
         self.assertEqual(result["rows"][1]["survey_year"], 2020)
+        self.assertIn("_ownerid_value", client.urls[0])
         self.assertEqual(client.urls[1], "https://example.test/new_projects")
+
+    def test_preserves_owner_name_and_raw_id_for_manager_filter(self):
+        row = surveys._survey_row({
+            "new_projectid": "project-1",
+            "_ownerid_value": "12345678-1234-1234-1234-123456789abc",
+            "_ownerid_value@OData.Community.Display.V1.FormattedValue": "Alex Morgan",
+            "_ownerid_value@Microsoft.Dynamics.CRM.lookuplogicalname": "systemuser",
+            "cr73c_clientsurveydate": "2026-10-15T00:00:00Z",
+        })
+        self.assertEqual(row["project_manager"], "Alex Morgan")
+        self.assertEqual(row["project_manager_id"], "12345678-1234-1234-1234-123456789abc")
+        self.assertEqual(row["project_manager_source"], "ownerid")
+        self.assertEqual(row["project_manager_owner_type"], "systemuser")
+
+        raw_row = surveys._survey_row({
+            "ownerid": "12345",
+            "cr73c_clientsurveydate": "2026-10-15T00:00:00Z",
+        })
+        self.assertEqual(raw_row["project_manager"], "")
+        self.assertEqual(raw_row["project_manager_id"], "12345")
 
     async def test_includes_dynamics_error_detail_after_retry(self):
         client = FakeClient([

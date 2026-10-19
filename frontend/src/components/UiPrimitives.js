@@ -16,6 +16,26 @@ const iconPaths = {
   inbox: "M4 4h16l2 9v7H2v-7l2-9Zm1.6 2-1.3 6H8l1 2h6l1-2h3.7l-1.3-6H5.6Z",
 };
 
+export function FullWidthFilterRow({ children, minItemWidth = 170 }) {
+  return (
+    <Box
+      sx={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 1.5,
+        minWidth: 0,
+        width: "100%",
+        "& > *": {
+          flex: `1 1 ${minItemWidth}px`,
+          minWidth: `min(100%, ${minItemWidth}px)`,
+        },
+      }}
+    >
+      {children}
+    </Box>
+  );
+}
+
 export function AppIcon({ name = "inbox", ...props }) {
   return (
     <SvgIcon viewBox="0 0 24 24" {...props}>

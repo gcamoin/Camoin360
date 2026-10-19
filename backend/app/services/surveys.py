@@ -15,6 +15,17 @@ def _dynamics_error(response):
 
 def _survey_row(record):
     survey_date = record.get("cr73c_clientsurveydate")
+    owner = record.get("ownerid")
+    owner_id = record.get("_ownerid_value") or (
+        owner.get("systemuserid") or owner.get("teamid") or owner.get("ownerid")
+        if isinstance(owner, dict)
+        else owner
+    )
+    owner_name = record.get("_ownerid_value@OData.Community.Display.V1.FormattedValue") or (
+        owner.get("fullname") or owner.get("name")
+        if isinstance(owner, dict)
+        else ""
+    )
     principal = (
         get_lookup_display_value(record, "_new_principalid_value")
         or get_lookup_display_value(record, "new_principalid")
@@ -28,6 +39,10 @@ def _survey_row(record):
             or ""
         ),
         "comments": record.get("cr73c_clientsurveycomments") or "",
+        "project_manager": str(owner_name or ""),
+        "project_manager_id": str(owner_id or ""),
+        "project_manager_source": "ownerid" if owner_id or owner_name else "",
+        "project_manager_owner_type": record.get("_ownerid_value@Microsoft.Dynamics.CRM.lookuplogicalname") or "",
         "principal": principal or "",
         "service_line": get_formatted_value(record, "cr73c_servicelineprimary") or "",
         "survey_date": survey_date,
@@ -44,12 +59,12 @@ async def get_completed_surveys():
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
         "OData-Version": "4.0",
-        "Prefer": 'odata.include-annotations="OData.Community.Display.V1.FormattedValue"',
+        "Prefer": 'odata.include-annotations="OData.Community.Display.V1.FormattedValue,Microsoft.Dynamics.CRM.lookuplogicalname"',
     }
     selected_url = (
         f"{API_URL}/new_projects?"
         "$select=new_projectid,new_project,new_client,cr73c_clientsurveycomments,"
-        "cr73c_clientsurveydate,_new_principalid_value,cr73c_servicelineprimary&"
+        "cr73c_clientsurveydate,_ownerid_value,_new_principalid_value,cr73c_servicelineprimary&"
         "$filter=cr73c_clientsurveydate ne null&"
         "$orderby=cr73c_clientsurveydate desc"
     )
