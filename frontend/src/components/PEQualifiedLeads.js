@@ -39,30 +39,6 @@ import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } 
 import { subtleTableHeadCellSx } from "./UiPrimitives";
 
 const API_URL = `${API_BASE_URL}/pe-qualified-leads`;
-const CURRENT_YEAR = new Date().getFullYear();
-const ALL_TIME_YEAR_VALUE = "all_time";
-const YEAR_OPTIONS = [
-  { label: "All Time", value: ALL_TIME_YEAR_VALUE },
-  ...Array.from({ length: 6 }, (_, index) => {
-    const year = CURRENT_YEAR - index;
-    return { label: String(year), value: year };
-  }),
-];
-const MONTH_OPTIONS = [
-  { label: "All Months", value: "" },
-  { label: "January", value: 1 },
-  { label: "February", value: 2 },
-  { label: "March", value: 3 },
-  { label: "April", value: 4 },
-  { label: "May", value: 5 },
-  { label: "June", value: 6 },
-  { label: "July", value: 7 },
-  { label: "August", value: 8 },
-  { label: "September", value: 9 },
-  { label: "October", value: 10 },
-  { label: "November", value: 11 },
-  { label: "December", value: 12 },
-];
 
 const tooltipStyle = {
   contentStyle: {
@@ -116,8 +92,6 @@ function escapeCsvValue(value) {
 export default function PEQualifiedLeads({ filters } = {}) {
   const isMountedRef = useRef(true);
   const latestRequestIdRef = useRef(0);
-  const [selectedYear, setSelectedYear] = useState(ALL_TIME_YEAR_VALUE);
-  const [selectedMonth, setSelectedMonth] = useState("");
   const [leads, setLeads] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [leadSearch, setLeadSearch] = useState("");
@@ -141,12 +115,6 @@ export default function PEQualifiedLeads({ filters } = {}) {
     try {
       const params = reportingParams(filters);
       params.limit = 5000;
-      if (selectedYear !== ALL_TIME_YEAR_VALUE) {
-        params.year = selectedYear;
-      }
-      if (selectedYear !== ALL_TIME_YEAR_VALUE && selectedMonth) {
-        params.month = selectedMonth;
-      }
 
       const response = await axios.get(API_URL, {
         headers: getAuthHeaders(),
@@ -177,7 +145,7 @@ export default function PEQualifiedLeads({ filters } = {}) {
 
       setIsLoading(false);
     }
-  }, [selectedMonth, selectedYear, filters]);
+  }, [filters]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -188,21 +156,7 @@ export default function PEQualifiedLeads({ filters } = {}) {
     };
   }, [fetchLeads]);
 
-  useEffect(() => {
-    if (selectedYear === ALL_TIME_YEAR_VALUE && selectedMonth) {
-      setSelectedMonth("");
-    }
-  }, [selectedMonth, selectedYear, filters]);
-
-  const periodLabel = useMemo(() => {
-    if (filters && Object.keys(reportingParams(filters)).length) return "the selected reporting period";
-    if (selectedYear === ALL_TIME_YEAR_VALUE) {
-      return "all time";
-    }
-
-    const month = MONTH_OPTIONS.find((option) => option.value === selectedMonth);
-    return selectedMonth ? `${month?.label || ""} ${selectedYear}` : selectedYear;
-  }, [selectedMonth, selectedYear, filters]);
+  const periodLabel = Object.keys(reportingParams(filters)).length ? "the selected reporting period" : "all time";
   const leadsByClient = useMemo(() => {
     if (rollups.length) {
       return rollups;
@@ -437,10 +391,24 @@ export default function PEQualifiedLeads({ filters } = {}) {
             Showing the first {leads.length.toLocaleString()} of {totalCount.toLocaleString()} leads. Search and sort apply to the loaded records.
           </Alert>
         ) : null}
-        <Typography color="text.secondary" sx={{ display: { xs: "block", lg: "none" }, px: 2, pt: 1.5 }} variant="caption">
+        <Typography color="text.secondary" sx={{ display: { xs: "none", md: "block", lg: "none" }, px: 2, pt: 1.5 }} variant="caption">
           Scroll horizontally to see all lead details.
         </Typography>
-        <TableContainer sx={{ overflowX: "auto" }}>
+        <Stack spacing={1.5} sx={{ display: { xs: "flex", md: "none" }, px: 2, py: 2 }}>
+          {isLoading && <Box sx={{ display: "flex", justifyContent: "center", py: 3 }}><CircularProgress size={28} /></Box>}
+          {paginatedLeads.map((lead) => (
+            <Paper elevation={0} key={lead.id || `${lead.prospect_name}-${lead.createdon}`} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2 }}>
+              <Stack spacing={0.75}>
+                <Typography fontWeight={800} sx={{ overflowWrap: "anywhere" }}>{lead.prospect_name || "Missing prospect"}</Typography>
+                <Typography variant="body2"><strong>Client:</strong> {lead.client_name || "Missing"}</Typography>
+                <Typography variant="body2"><strong>Status:</strong> {lead.status || statusLabel}</Typography>
+                <Typography variant="body2"><strong>Created:</strong> {formatLeadDate(lead.createdon)}</Typography>
+              </Stack>
+            </Paper>
+          ))}
+          {!isLoading && !paginatedLeads.length && <Typography color="text.secondary">{leads.length ? "No leads match these filters." : "No qualified leads match this period."}</Typography>}
+        </Stack>
+        <TableContainer sx={{ display: { xs: "none", md: "block" }, overflowX: "auto" }}>
           <Table size="small" sx={{ minWidth: leadTableMinWidth, tableLayout: "fixed" }}>
             <TableHead>
               <TableRow>

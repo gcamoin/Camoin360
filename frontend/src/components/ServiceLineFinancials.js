@@ -9,11 +9,7 @@ import {
   Dialog,
   DialogContent,
   DialogTitle,
-  FormControl,
-  InputLabel,
-  MenuItem,
   Paper,
-  Select,
   Stack,
   Tab,
   Tabs,
@@ -30,31 +26,6 @@ import {
   YAxis,
 } from "recharts";
 import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } from "../auth";
-import { FullWidthFilterRow } from "./UiPrimitives";
-
-const ALL_VALUE = "all";
-const quarterOptions = [
-  { label: "All Quarters", value: ALL_VALUE },
-  { label: "Q1", value: "Q1" },
-  { label: "Q2", value: "Q2" },
-  { label: "Q3", value: "Q3" },
-  { label: "Q4", value: "Q4" },
-];
-const monthOptions = [
-  { label: "All Months", value: ALL_VALUE },
-  { label: "January", value: "1" },
-  { label: "February", value: "2" },
-  { label: "March", value: "3" },
-  { label: "April", value: "4" },
-  { label: "May", value: "5" },
-  { label: "June", value: "6" },
-  { label: "July", value: "7" },
-  { label: "August", value: "8" },
-  { label: "September", value: "9" },
-  { label: "October", value: "10" },
-  { label: "November", value: "11" },
-  { label: "December", value: "12" },
-];
 const API_URL = `${API_BASE_URL}/management/service-line-financials`;
 const MONTH_PIXEL_WIDTH = 46;
 
@@ -199,9 +170,6 @@ export default function ServiceLineFinancials({ filters } = {}) {
   const [financials, setFinancials] = useState({ months: [], service_lines: [], record_counts: {} });
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
-  const [year, setYear] = useState(ALL_VALUE);
-  const [quarter, setQuarter] = useState(ALL_VALUE);
-  const [month, setMonth] = useState(ALL_VALUE);
   const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
   const [isAnalysisGenerated, setIsAnalysisGenerated] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -209,12 +177,6 @@ export default function ServiceLineFinancials({ filters } = {}) {
   const [analysisTab, setAnalysisTab] = useState("analysis");
   const monthlyRows = useMemo(() => filterReportingRows(financials.months, filters), [financials.months, filters]);
   const serviceLines = financials.service_lines;
-  const yearOptions = useMemo(() => [
-    { label: "All Years", value: ALL_VALUE },
-    ...Array.from(new Set(monthlyRows.map((row) => row.year)))
-      .sort((a, b) => Number(b) - Number(a))
-      .map((optionYear) => ({ label: optionYear, value: optionYear })),
-  ], [monthlyRows]);
 
   const fetchFinancials = useCallback(async ({ refresh = false } = {}) => {
     if (refresh) setIsRefreshing(true); else setIsLoading(true);
@@ -234,17 +196,7 @@ export default function ServiceLineFinancials({ filters } = {}) {
   }, []);
 
   useEffect(() => { fetchFinancials(); }, [fetchFinancials]);
-  const visibleMonthlyRows = useMemo(
-    () =>
-      monthlyRows.filter(
-        (row) =>
-          (year === ALL_VALUE || row.year === year) &&
-          (month !== ALL_VALUE || quarter === ALL_VALUE || row.quarter === quarter) &&
-          (month === ALL_VALUE || row.monthNumber === month)
-      ),
-    [month, monthlyRows, quarter, year]
-  );
-  const chartMonthlyRows = visibleMonthlyRows;
+  const chartMonthlyRows = monthlyRows;
   const colors = [
     theme.palette.primary.main,
     theme.palette.secondary.main,
@@ -339,28 +291,6 @@ export default function ServiceLineFinancials({ filters } = {}) {
       </Paper>
 
       <Paper elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2 }}>
-        {!filters && (
-        <FullWidthFilterRow>
-          <FormControl size="small">
-            <InputLabel id="service-line-year-label">Year</InputLabel>
-            <Select label="Year" labelId="service-line-year-label" onChange={(event) => setYear(event.target.value)} value={year}>
-              {yearOptions.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
-            </Select>
-          </FormControl>
-          <FormControl size="small">
-            <InputLabel id="service-line-quarter-label">Quarter</InputLabel>
-            <Select label="Quarter" labelId="service-line-quarter-label" onChange={(event) => setQuarter(event.target.value)} value={quarter}>
-              {quarterOptions.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
-            </Select>
-          </FormControl>
-          <FormControl size="small">
-            <InputLabel id="service-line-month-label">Month</InputLabel>
-            <Select label="Month" labelId="service-line-month-label" onChange={(event) => setMonth(event.target.value)} value={month}>
-              {monthOptions.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
-            </Select>
-          </FormControl>
-        </FullWidthFilterRow>
-        )}
         <Typography color="text.secondary" sx={{ mt: 1.25 }} variant="caption">
           {financials.record_counts?.included?.toLocaleString() || 0} mapped contracted projects included. Values use Fee for Camoin and Contract Date from Dynamics; subcontractor fees are excluded.
         </Typography>

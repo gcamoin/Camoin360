@@ -188,7 +188,20 @@ export default function SurveyComponent() {
         </Box>
         {loading ? <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}><CircularProgress /></Box> : (
           <>
-            <TableContainer sx={{ maxHeight: 620 }}>
+            <Stack spacing={1.5} sx={{ display: { xs: "flex", md: "none" }, px: 2, pb: 2 }}>
+              {filteredRows.slice(page * rowsPerPage, (page + 1) * rowsPerPage).map((row, index) => (
+                <Paper elevation={0} key={row.id || `${row.project}-${index}`} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2 }}>
+                  <Stack spacing={1}>
+                    <Typography fontWeight={800} sx={{ overflowWrap: "anywhere" }}>{row.project || "Unnamed project"}</Typography>
+                    <Typography variant="body2"><strong>Client:</strong> {row.client || "—"}</Typography>
+                    <Typography variant="body2"><strong>Project Manager:</strong> {managerName(row) || "—"}</Typography>
+                    <Typography sx={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }} variant="body2">{row.comments || "No comments"}</Typography>
+                  </Stack>
+                </Paper>
+              ))}
+              {!filteredRows.length && <Typography color="text.secondary">No completed surveys match this search and filters.</Typography>}
+            </Stack>
+            <TableContainer sx={{ display: { xs: "none", md: "block" }, maxHeight: 620 }}>
               <Table stickyHeader size="small" sx={{ minWidth: 900 }}>
                 <TableHead><TableRow>
                   <TableCell sx={{ fontWeight: 800 }}>Project</TableCell>
@@ -213,7 +226,8 @@ export default function SurveyComponent() {
             </TableContainer>
             <TablePagination component="div" count={filteredRows.length} onPageChange={(_event, value) => setPage(value)}
               onRowsPerPageChange={(event) => { setRowsPerPage(Number(event.target.value)); setPage(0); }}
-              page={page} rowsPerPage={rowsPerPage} rowsPerPageOptions={[10, 25, 50, 100]} />
+              page={page} rowsPerPage={rowsPerPage} rowsPerPageOptions={[10, 25, 50, 100]}
+              sx={{ "& .MuiTablePagination-toolbar": { flexWrap: "wrap", justifyContent: "flex-end", rowGap: 1 } }} />
           </>
         )}
       </Paper>

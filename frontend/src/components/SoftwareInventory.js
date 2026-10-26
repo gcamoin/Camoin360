@@ -254,11 +254,52 @@ export default function SoftwareInventory() {
     <Paper elevation={0} sx={{ ...managementCardSx, overflow: "hidden" }}>
       <Box sx={{ borderBottom: "1px solid", borderColor: "divider", p: { xs: 2.5, md: 3 } }}>
         <ManagementSectionHeading
-          description="Scroll horizontally to inspect all service details. Select a column heading to sort."
+          description="Review services, sort the list, and open a record for details."
           title="Services"
         />
       </Box>
-      <TableContainer sx={{ maxWidth: "100%" }}>
+      <Stack direction="row" spacing={1} sx={{ display: { xs: "flex", md: "none" }, p: 2 }}>
+        <TextField
+          fullWidth
+          label="Sort by"
+          onChange={event => setSort(current => ({ ...current, key: event.target.value }))}
+          select
+          size="small"
+          value={sort.key}
+        >
+          {columns.map(column => <MenuItem key={column.key} value={column.key}>{column.label}</MenuItem>)}
+        </TextField>
+        <Button aria-label={sort.direction === "asc" ? "Sort descending" : "Sort ascending"} onClick={() => setSort(current => ({ ...current, direction: current.direction === "asc" ? "desc" : "asc" }))} variant="outlined">
+          {sort.direction === "asc" ? "Asc" : "Desc"}
+        </Button>
+      </Stack>
+      <Stack spacing={1.5} sx={{ display: { xs: "flex", md: "none" }, px: 2, pb: 2 }}>
+        {filtered.slice(page * pageSize, (page + 1) * pageSize).map(row => (
+          <Paper elevation={0} key={row.id} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, minWidth: 0, p: 2 }}>
+            <Stack spacing={1.5}>
+              <Typography fontWeight={800} sx={{ overflowWrap: "anywhere" }}>{row.name || "Unnamed service"}</Typography>
+              <InventoryStatus value={row.status} />
+              <Box component="details">
+                <Box component="summary" sx={{ color: "primary.main", cursor: "pointer", fontWeight: 700 }}>View service details</Box>
+                <Stack spacing={1.25} sx={{ mt: 1.5 }}>
+                  {columns.filter(column => column.key !== "name" && column.key !== "status").map(column => (
+                    <Box key={column.key}>
+                      <Typography color="text.secondary" variant="caption">{column.label}</Typography>
+                      <Typography sx={{ overflowWrap: "anywhere", whiteSpace: "pre-wrap" }} variant="body2">{displayValue(row, column.key) || "—"}</Typography>
+                    </Box>
+                  ))}
+                </Stack>
+              </Box>
+              <Stack direction="row" spacing={1}>
+                <Button disabled={saving} onClick={() => openEditor(row)} variant="outlined">Edit</Button>
+                <Button color="error" disabled={saving} onClick={() => { setFormError(""); setDeleteTarget(row); }}>Delete</Button>
+              </Stack>
+            </Stack>
+          </Paper>
+        ))}
+        {!loading && !filtered.length && <Typography color="text.secondary" sx={{ py: 2 }}>{error ? "Inventory unavailable. Use Refresh to retry." : "No services found."}</Typography>}
+      </Stack>
+      <TableContainer sx={{ display: { xs: "none", md: "block" }, maxWidth: "100%" }}>
         <Table size="small" sx={{ minWidth: 1800, "& tbody tr:nth-of-type(even)": { backgroundColor: "#f8fafb" } }}>
           <TableHead><TableRow>{columns.map(column => <TableCell key={column.key} sx={{ ...subtleTableHeadCellSx, minWidth: column.key === "description" ? 260 : 160 }}>
             <TableSortLabel active={sort.key === column.key} direction={sort.key === column.key ? sort.direction : "asc"} onClick={() => setSort({ key: column.key, direction: sort.key === column.key && sort.direction === "asc" ? "desc" : "asc" })}>{column.label}</TableSortLabel>
@@ -272,7 +313,7 @@ export default function SoftwareInventory() {
           </TableBody>
         </Table>
       </TableContainer>
-      <TablePagination component="div" count={filtered.length} page={page} rowsPerPage={pageSize} rowsPerPageOptions={[10, 25, 50, 100]} onPageChange={(_, value) => setPage(value)} onRowsPerPageChange={event => { setPageSize(Number(event.target.value)); setPage(0); }} sx={{ borderTop: "1px solid", borderColor: "divider" }} />
+      <TablePagination component="div" count={filtered.length} page={page} rowsPerPage={pageSize} rowsPerPageOptions={[10, 25, 50, 100]} onPageChange={(_, value) => setPage(value)} onRowsPerPageChange={event => { setPageSize(Number(event.target.value)); setPage(0); }} sx={{ borderTop: "1px solid", borderColor: "divider", "& .MuiTablePagination-toolbar": { flexWrap: "wrap", justifyContent: "flex-end", rowGap: 1 } }} />
     </Paper>
     <Dialog open={Boolean(editor)} onClose={() => { if (!saving) setEditor(null); }} fullWidth maxWidth="md">
       <DialogTitle>{editor?.row ? "Edit Service" : "Add Service"}</DialogTitle>

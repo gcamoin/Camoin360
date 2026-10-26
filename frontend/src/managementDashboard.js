@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Box,
   Button,
@@ -51,121 +51,143 @@ const visualRefreshViews = new Set(["overview", "marketing", "softwareInventory"
 const views = {
   overview: {
     label: "Overview",
-    icon: "overview",
     title: "Overview",
     description:
       "High-level summary of enrichment operations and team activity.",
   },
   economicIndicators: {
     label: "Economic Indicators",
-    icon: "trending",
     title: "Economic Indicators",
     description: "Key economic metrics and indicators across tracked accounts.",
   },
   companyFinancials: {
     label: "Company Financials",
-    icon: "finance",
     title: "Company Financials",
     description:
       "Financial performance data and trends across portfolio companies.",
   },
   serviceLineFinancials: {
     label: "Service Line Financials",
-    icon: "finance",
     title: "Service Line Financials",
     description:
       "Dummy monthly and quarterly financial trends by consulting service line.",
   },
   salesOutlook: {
     label: "Sales Outlook",
-    icon: "trending",
     title: "Sales Outlook",
     description: "Long-term contract value and monthly project trends from Dynamics.",
   },
   salesOutlookRfp: {
     label: "Sales Outlook - RFP",
-    icon: "trending",
     title: "Sales Outlook - RFP",
     description: "Proposal and won-contract trends from live Dynamics opportunities.",
   },
   contractBacklogSelected: {
-    label: "Sales Outlook - Contract Backlog Selected",
-    icon: "trending",
+    label: "Contract Backlog",
     title: "Sales Outlook - Contract Backlog Selected",
     description: "Annual total contract backlog and total monthly revenue from Dynamics.",
   },
   rfpOverallSuccessRate: {
     label: "RFP Overall Success Rate",
-    icon: "trending",
     title: "RFP Overall Success Rate",
     description: "Quarterly success rates based on the value and number of RFPs won.",
   },
   marketing: {
-    label: "Marketing",
-    icon: "campaign",
+    label: "Marketing Overview",
     title: "Marketing",
     description: "Website visitor trends and target industry engagement.",
   },
   marketingMetrics: {
-    label: "Marketing - Service Lines",
-    icon: "campaign",
+    label: "Service Line Marketing",
     title: "Marketing Metrics",
     description: "Marketing performance and campaign metrics across accounts.",
   },
   marketingSource: {
     label: "Marketing Source",
-    icon: "campaign",
     title: "Marketing Source",
     description: "Website traffic sources by service line and month from Google Analytics.",
   },
   productivityProjects: {
     label: "Service Lines & Projects",
-    icon: "projects",
     title: "Productivity & Projects",
     description:
       "Project status, team productivity, and operational throughput.",
   },
   softwareInventory: {
     label: "Software Inventory",
-    icon: "inventory",
     title: "Software Inventory",
     description:
       "Current software and data subscriptions, ownership, access, renewal timing, vendor contacts, and cost history.",
   },
   surveys: {
-    label: "Survey Component",
-    icon: "projects",
+    label: "Client Surveys",
     title: "Survey Component",
     description: "Completed client surveys from Dynamics projects.",
   },
   employeeProductivity: {
     label: "Employee Productivity",
-    icon: "projects",
     title: "Employee Productivity",
     description: "Employee-level productivity metrics and workload trends.",
-    parent: "productivityProjects",
   },
   pe: {
-    label: "PE",
-    icon: "clients",
+    label: "ProspectEngage Leads",
     title: "PE",
     description: "ProspectEngage qualified leads sent to clients.",
-    parent: "employeeProductivity",
   },
 };
+
+const navGroups = [
+  {
+    key: "financials",
+    label: "Financials & Economy",
+    icon: "finance",
+    views: ["economicIndicators", "companyFinancials", "serviceLineFinancials"],
+  },
+  {
+    key: "sales",
+    label: "Sales & Prospects",
+    icon: "trending",
+    views: ["salesOutlook", "salesOutlookRfp", "contractBacklogSelected", "rfpOverallSuccessRate", "pe"],
+  },
+  {
+    key: "marketing",
+    label: "Marketing",
+    icon: "campaign",
+    views: ["marketing", "marketingMetrics", "marketingSource"],
+  },
+  {
+    key: "operations",
+    label: "Operations",
+    icon: "projects",
+    views: ["productivityProjects", "employeeProductivity", "surveys", "softwareInventory"],
+  },
+];
+
+const viewPaths = Object.fromEntries(
+  Object.keys(views).map((key) => [key, `/management/${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`])
+);
+
+function viewFromPath(pathname) {
+  return Object.keys(viewPaths).find((key) => viewPaths[key] === pathname.replace(/\/$/, "")) || "overview";
+}
+
+function groupForView(viewKey) {
+  return navGroups.find((group) => group.views.includes(viewKey))?.key || null;
+}
 
 const iconPaths = {
   campaign:
     "M4 10v4h3l5 4V6l-5 4H4Zm10.5 4.8 1.4 1.4A6 6 0 0 0 18 12a6 6 0 0 0-2.1-4.2l-1.4 1.4A4 4 0 0 1 16 12a4 4 0 0 1-1.5 2.8Z",
-  clients: "M7 11a4 4 0 1 1 8 0 4 4 0 0 1-8 0Zm-4 9c.7-3.1 3.9-5 8-5s7.3 1.9 8 5H3Zm14.5-7a3 3 0 1 0 0-6 4.8 4.8 0 0 1 0 6Zm.6 2.1c1.7.6 2.9 1.8 3.4 3.9h-3.2a7 7 0 0 0-1.9-3.5c.6-.2 1.1-.3 1.7-.4Z",
   collapse:
     "M15.5 5 8.5 12l7 7-1.4 1.4L5.7 12l8.4-8.4L15.5 5Zm4 0-7 7 7 7-1.4 1.4L9.7 12l8.4-8.4L19.5 5Z",
   expand:
     "m8.5 5 7 7-7 7 1.4 1.4 8.4-8.4-8.4-8.4L8.5 5Zm-4 0 7 7-7 7 1.4 1.4 8.4-8.4-8.4-8.4L4.5 5Z",
   finance: "M5 19V9h3v10H5Zm5 0V5h3v14h-3Zm5 0v-7h3v7h-3Z",
-  inventory:
-    "M5 4h14v16H5V4Zm2 2v12h10V6H7Zm2 2h6v2H9V8Zm0 4h6v2H9v-2Zm0 4h4v1H9v-1Z",
+  chevronDown: "m7 10 5 5 5-5-1.4-1.4L12 12.2 8.4 8.6 7 10Z",
+  chevronRight: "m10 7 5 5-5 5-1.4-1.4 3.6-3.6-3.6-3.6L10 7Z",
   overview: "M4 4h7v7H4V4Zm9 0h7v7h-7V4ZM4 13h7v7H4v-7Zm9 0h7v7h-7v-7Z",
+  menu: "M3 6h18v2H3V6Zm0 5h18v2H3v-2Zm0 5h18v2H3v-2Z",
+  close: "M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12 19 17.6 17.6 19 12 13.4 6.4 19 5 17.6 10.6 12 5 6.4 6.4 5Z",
   projects: "M5 5h14v4H5V5Zm0 6h9v4H5v-4Zm0 6h14v2H5v-2Zm11-6h3v4h-3v-4Z",
   signout: "M10 17v-2h4V9h-4V7h6v10h-6Zm-1-1-5-4 5-4v3h6v2H9v3Z",
   trending:
@@ -181,8 +203,10 @@ function NavIcon({ name }) {
 }
 
 export default function ManagementDashboard({ onLogout }) {
-  const [activeView, setActiveView] = useState("overview");
+  const [activeView, setActiveView] = useState(() => viewFromPath(window.location.pathname));
+  const [openGroup, setOpenGroup] = useState(() => groupForView(viewFromPath(window.location.pathname)));
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const sidebarResize = useResizableSidebar("management");
   const [dateFiltersByView, setDateFiltersByView] = useState({});
   const theme = useTheme();
@@ -198,6 +222,36 @@ export default function ManagementDashboard({ onLogout }) {
     }),
     [activeDateFilters, activeView, currentView]
   );
+
+  useEffect(() => {
+    const canonicalPath = viewPaths[viewFromPath(window.location.pathname)];
+    if (window.location.pathname !== canonicalPath) {
+      window.history.replaceState({}, "", canonicalPath);
+    }
+    function handlePopState() {
+      const nextView = viewFromPath(window.location.pathname);
+      setActiveView(nextView);
+      setOpenGroup(groupForView(nextView));
+      setMobileNavOpen(false);
+    }
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  function navigateToView(viewKey) {
+    setActiveView(viewKey);
+    setOpenGroup(groupForView(viewKey));
+    setMobileNavOpen(false);
+    if (window.location.pathname !== viewPaths[viewKey]) {
+      window.history.pushState({}, "", viewPaths[viewKey]);
+    }
+  }
+
+  function handleViewLink(event, viewKey) {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    navigateToView(viewKey);
+  }
 
   return (
     <Box
@@ -225,7 +279,7 @@ export default function ManagementDashboard({ onLogout }) {
             color: "common.white",
             height: { md: "100vh" },
             overflow: { md: "hidden" },
-            p: { xs: 2, md: 3 },
+            p: { xs: 1.5, md: 3 },
             position: { xs: "relative", md: "sticky" },
             top: { md: 0 },
             transition: "padding 180ms ease",
@@ -269,7 +323,8 @@ export default function ManagementDashboard({ onLogout }) {
                     sx={{ color: "rgba(255,255,255,0.72)", mt: 0.75 }}
                     variant="body2"
                   >
-                    Management
+                    <Box component="span" sx={{ display: { xs: "none", md: "inline" } }}>Management</Box>
+                    <Box component="span" sx={{ display: { xs: "inline", md: "none" } }}>{currentView.label}</Box>
                   </Typography>
                 </Box>
               )}
@@ -297,75 +352,126 @@ export default function ManagementDashboard({ onLogout }) {
               >
                 <NavIcon name={sidebarCollapsed ? "expand" : "collapse"} />
               </IconButton>
+              <IconButton
+                aria-controls="management-navigation"
+                aria-expanded={mobileNavOpen}
+                aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"}
+                onClick={() => setMobileNavOpen((open) => !open)}
+                sx={{ color: "common.white", display: { xs: "inline-flex", md: "none" }, height: 44, width: 44 }}
+              >
+                <NavIcon name={mobileNavOpen ? "close" : "menu"} />
+              </IconButton>
             </Box>
 
             <Divider sx={{ borderColor: "rgba(255,255,255,0.18)" }} />
 
             <Stack
               component="nav"
-              direction={{ xs: "row", md: "column" }}
+              id="management-navigation"
+              aria-label="Management navigation"
               spacing={1}
               sx={{
+                display: { xs: mobileNavOpen ? "flex" : "none", md: "flex" },
                 flex: { md: 1 },
                 minHeight: 0,
-                overflowX: { xs: "auto", md: "visible" },
-                overflowY: { md: "auto" },
+                overflowX: "hidden",
+                overflowY: "auto",
+                maxHeight: { xs: "min(60vh, 440px)", md: "none" },
                 pb: { xs: 0.5, md: 0 },
               }}
             >
-              {Object.entries(views).map(([viewKey, view]) => {
-                const isActive = activeView === viewKey;
-                const isChild = Boolean(view.parent);
-
+              <Tooltip arrow disableHoverListener={!sidebarCollapsed} placement="right" title="Overview">
+                <Button
+                  component="a"
+                  fullWidth
+                  aria-current={activeView === "overview" ? "page" : undefined}
+                  href={viewPaths.overview}
+                  onClick={(event) => handleViewLink(event, "overview")}
+                  startIcon={<NavIcon name="overview" />}
+                  sx={{
+                    justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                    borderRadius: 1,
+                    color: activeView === "overview" ? "primary.main" : "common.white",
+                    backgroundColor: activeView === "overview" ? "common.white" : "transparent",
+                    fontWeight: 800,
+                    minWidth: 0,
+                    px: sidebarCollapsed ? 1 : 2,
+                    "& .MuiButton-startIcon": { m: sidebarCollapsed ? 0 : undefined },
+                    "&:hover": { backgroundColor: activeView === "overview" ? "common.white" : "rgba(255,255,255,0.12)" },
+                  }}
+                >
+                  {!sidebarCollapsed && "Overview"}
+                </Button>
+              </Tooltip>
+              {navGroups.map((group) => {
+                const isOpen = openGroup === group.key;
+                const hasActiveView = group.views.includes(activeView);
                 return (
-                  <Tooltip
-                    arrow
-                    disableHoverListener={!sidebarCollapsed}
-                    key={viewKey}
-                    placement="right"
-                    title={view.label}
-                  >
-                    <Button
-                      fullWidth
-                      onClick={() => setActiveView(viewKey)}
-                      startIcon={<NavIcon name={view.icon} />}
-                      sx={{
-                        justifyContent: sidebarCollapsed
-                          ? "center"
-                          : "flex-start",
-                        borderRadius: 1,
-                        color: isActive ? "primary.main" : "common.white",
-                        backgroundColor: isActive
-                          ? "common.white"
-                          : "transparent",
-                        fontWeight: 800,
-                        fontSize: !sidebarCollapsed && isChild ? "0.8rem" : "0.875rem",
-                        lineHeight: 1.15,
-                        minWidth: 0,
-                        px: sidebarCollapsed ? 1 : isChild ? 2.25 : 2,
-                        py: 1.25,
-                        textAlign: "left",
-                        whiteSpace: sidebarCollapsed ? "nowrap" : "normal",
-                        ml: { xs: 0, md: !sidebarCollapsed && isChild ? 2 : 0 },
-                        width:
-                          !sidebarCollapsed && isChild
-                            ? { xs: "auto", md: "calc(100% - 16px)" }
-                            : { xs: "auto", md: "100%" },
-                        "& .MuiButton-startIcon": {
-                          m: sidebarCollapsed ? 0 : undefined,
-                          flexShrink: 0,
-                        },
-                        "&:hover": {
-                          backgroundColor: isActive
-                            ? "common.white"
-                            : "rgba(255,255,255,0.12)",
-                        },
-                      }}
-                      title={view.label}
-                    >
-                      {!sidebarCollapsed && view.label}
-                    </Button>
-                  </Tooltip>
+                  <Box key={group.key}>
+                    <Tooltip arrow disableHoverListener={!sidebarCollapsed} placement="right" title={group.label}>
+                      <Button
+                        fullWidth
+                        aria-controls={isOpen && !sidebarCollapsed ? `management-nav-${group.key}` : undefined}
+                        aria-expanded={isOpen && !sidebarCollapsed}
+                        onClick={() => {
+                          if (sidebarCollapsed) setSidebarCollapsed(false);
+                          setOpenGroup(isOpen && !sidebarCollapsed ? null : group.key);
+                        }}
+                        startIcon={<NavIcon name={group.icon} />}
+                        endIcon={!sidebarCollapsed && <NavIcon name={isOpen ? "chevronDown" : "chevronRight"} />}
+                        sx={{
+                          justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                          borderRadius: 1,
+                          color: "common.white",
+                          backgroundColor: hasActiveView ? "rgba(255,255,255,0.16)" : "transparent",
+                          fontWeight: 800,
+                          minWidth: 0,
+                          px: sidebarCollapsed ? 1 : 2,
+                          textAlign: "left",
+                          "& .MuiButton-startIcon": { m: sidebarCollapsed ? 0 : undefined, flexShrink: 0 },
+                          "& .MuiButton-endIcon": { ml: "auto" },
+                          "&:hover": { backgroundColor: "rgba(255,255,255,0.22)" },
+                        }}
+                      >
+                        {!sidebarCollapsed && group.label}
+                      </Button>
+                    </Tooltip>
+                    {isOpen && !sidebarCollapsed && (
+                      <Stack id={`management-nav-${group.key}`} spacing={0.25} sx={{ borderLeft: "1px solid rgba(255,255,255,0.3)", ml: 3, mt: 0.5, pl: 1 }}>
+                        {group.views.map((viewKey) => {
+                          const view = views[viewKey];
+                          const isActive = activeView === viewKey;
+                          return (
+                            <Button
+                              component="a"
+                              key={viewKey}
+                              fullWidth
+                              aria-current={isActive ? "page" : undefined}
+                              href={viewPaths[viewKey]}
+                              onClick={(event) => handleViewLink(event, viewKey)}
+                              sx={{
+                                justifyContent: "flex-start",
+                                borderRadius: 1,
+                                color: isActive ? "primary.main" : "common.white",
+                                backgroundColor: isActive ? "common.white" : "transparent",
+                                fontSize: "0.8rem",
+                                fontWeight: isActive ? 800 : 600,
+                                lineHeight: 1.2,
+                                minWidth: 0,
+                                px: 1.5,
+                                py: 1,
+                                textAlign: "left",
+                                whiteSpace: "normal",
+                                "&:hover": { backgroundColor: isActive ? "common.white" : "rgba(255,255,255,0.12)" },
+                              }}
+                            >
+                              {view.label}
+                            </Button>
+                          );
+                        })}
+                      </Stack>
+                    )}
+                  </Box>
                 );
               })}
             </Stack>
@@ -384,10 +490,9 @@ export default function ManagementDashboard({ onLogout }) {
                 px: sidebarCollapsed ? 1 : 2,
                 alignSelf: { xs: "flex-start", md: "stretch" },
                 fontSize: { xs: 0, md: "0.875rem" },
-                position: { xs: "absolute", md: "static" },
-                right: { xs: 16, md: "auto" },
-                top: { xs: 16, md: "auto" },
-                width: { xs: 40, md: "100%" },
+                position: { xs: "static", md: "static" },
+                width: { xs: mobileNavOpen ? "100%" : 44, md: "100%" },
+                display: { xs: mobileNavOpen ? "inline-flex" : "none", md: "inline-flex" },
                 "& .MuiButton-startIcon": {
                   m: { xs: 0, md: sidebarCollapsed ? 0 : undefined },
                 },
@@ -404,8 +509,8 @@ export default function ManagementDashboard({ onLogout }) {
           </Stack>
         </Box>
 
-        <Box component="main" sx={{ minWidth: 0, py: { xs: 3, md: 5 } }}>
-          <Container maxWidth={false} sx={{ maxWidth: 1600, minWidth: 0, width: "100%" }}>
+        <Box component="main" sx={{ minWidth: 0, py: { xs: 2, md: 5 } }}>
+          <Container maxWidth={false} sx={{ maxWidth: 1600, minWidth: 0, px: { xs: 2, sm: 3 }, width: "100%" }}>
             <Stack spacing={3} sx={{ minWidth: 0, width: "100%" }}>
               <Box
                 sx={isVisualRefreshView ? {
@@ -501,7 +606,7 @@ export default function ManagementDashboard({ onLogout }) {
                             {item.label}
                           </Typography>
                           <Typography color="text.secondary" variant="body2">{item.detail}</Typography>
-                          <Button onClick={() => setActiveView(item.view)} sx={managementButtonSx} variant="outlined">
+                          <Button onClick={() => navigateToView(item.view)} sx={managementButtonSx} variant="outlined">
                             Open {item.label}
                           </Button>
                         </Stack>

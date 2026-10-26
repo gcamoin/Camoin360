@@ -184,28 +184,28 @@ export default function MarketingSource() {
 
       <Paper elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, p: 2 }}>
         <Stack direction={{ xs: "column", lg: "row" }} spacing={1.5} alignItems={{ lg: "center" }}>
-          <FormControl size="small" sx={{ flex: 1, minWidth: 180 }}>
+          <FormControl size="small" sx={{ flex: 1, minWidth: { xs: 0, lg: 180 } }}>
             <InputLabel>Service Line</InputLabel>
             <Select label="Service Line" value={serviceLine} onChange={(event) => setServiceLine(event.target.value)}>
               <MenuItem value="all">All service lines</MenuItem>
               {serviceLines.map(([key, label]) => <MenuItem key={key} value={key}>{label}</MenuItem>)}
             </Select>
           </FormControl>
-          <FormControl size="small" sx={{ flex: 1, minWidth: 180 }}>
+          <FormControl size="small" sx={{ flex: 1, minWidth: { xs: 0, lg: 180 } }}>
             <InputLabel>Source</InputLabel>
             <Select label="Source" value={source} onChange={(event) => setSource(event.target.value)}>
               <MenuItem value="all">All sources</MenuItem>
               {sources.map((name) => <MenuItem key={name} value={name}>{name}</MenuItem>)}
             </Select>
           </FormControl>
-          <FormControl size="small" sx={{ flex: 1, minWidth: 180 }}>
+          <FormControl size="small" sx={{ flex: 1, minWidth: { xs: 0, lg: 180 } }}>
             <InputLabel>Month</InputLabel>
             <Select label="Month" value={month} onChange={(event) => setMonth(event.target.value)}>
               <MenuItem value="all">All months</MenuItem>
               {MONTHS.map((name, index) => <MenuItem key={name} value={index + 1}>{name}</MenuItem>)}
             </Select>
           </FormControl>
-          <Stack alignItems={{ xs: "flex-start", lg: "flex-end" }} sx={{ minWidth: 190 }}>
+          <Stack alignItems={{ xs: "flex-start", lg: "flex-end" }} sx={{ minWidth: { xs: 0, lg: 190 } }}>
             <Typography color="text.secondary" fontSize="0.75rem">
               {sync?.status === "syncing" ? "Syncing GA4 source data..." : updatedLabel}
             </Typography>
@@ -270,7 +270,7 @@ export default function MarketingSource() {
           <Typography fontWeight={800}>Traffic by Source</Typography>
           <Typography color="text.secondary" variant="body2" sx={{ mb: 2 }}>GA4 sessions for the selected service lines and months.</Typography>
           <Box sx={{ maxHeight: 300, overflowY: "auto" }}>
-            <Box sx={{ height: Math.max(300, charts.trafficBySource.length * 30), minWidth: 280 }}>
+            <Box sx={{ height: Math.max(300, charts.trafficBySource.length * 30), minWidth: 0 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={charts.trafficBySource} layout="vertical" margin={{ top: 4, right: 20, bottom: 20, left: 18 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />

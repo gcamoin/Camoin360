@@ -9,11 +9,7 @@ import {
   Dialog,
   DialogContent,
   DialogTitle,
-  FormControl,
-  InputLabel,
-  MenuItem,
   Paper,
-  Select,
   Stack,
   Table,
   TableBody,
@@ -37,13 +33,6 @@ import { API_BASE_URL, getApiErrorMessage, getAuthHeaders, handleUnauthorized } 
 
 const API_URL = `${API_BASE_URL}/productivity/projects`;
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
-const ALL_FILTER_VALUE = "all";
-const QUARTER_OPTIONS = [
-  { label: "Q1", value: "1" },
-  { label: "Q2", value: "2" },
-  { label: "Q3", value: "3" },
-  { label: "Q4", value: "4" },
-];
 
 const tooltipStyle = {
   contentStyle: {
@@ -106,27 +95,6 @@ function buildMonthlyFeeData(months, rows) {
   return Object.values(rowsByMonth);
 }
 
-function getMonthParts(monthKey) {
-  const [year, month] = String(monthKey || "").split("-");
-  const monthNumber = Number(month);
-  return {
-    month: String(monthNumber),
-    quarter: String(Math.ceil(monthNumber / 3)),
-    year,
-  };
-}
-
-function filterMonths(months, filters) {
-  return months.filter((month) => {
-    const parts = getMonthParts(month.month_key);
-    return (
-      (filters.year === ALL_FILTER_VALUE || parts.year === filters.year) &&
-      (filters.quarter === ALL_FILTER_VALUE || parts.quarter === filters.quarter) &&
-      (filters.month === ALL_FILTER_VALUE || parts.month === filters.month)
-    );
-  });
-}
-
 function FinancialFeeChart({ barColor, data, dateDescription, title }) {
   const totalFee = data.reduce((sum, row) => sum + row.fee, 0);
   const totalRecords = data.reduce((sum, row) => sum + row.records, 0);
@@ -185,11 +153,6 @@ export default function ProductivityProjects({ filters } = {}) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [selectedMonth, setSelectedMonth] = useState(null);
-  const [timeFilters, setTimeFilters] = useState({
-    month: ALL_FILTER_VALUE,
-    quarter: ALL_FILTER_VALUE,
-    year: ALL_FILTER_VALUE,
-  });
 
   const fetchMetrics = useCallback(async ({ silent = false } = {}) => {
     if (!isMountedRef.current) return;
@@ -245,21 +208,9 @@ export default function ProductivityProjects({ filters } = {}) {
     };
   }, [fetchMetrics]);
 
-  const yearOptions = useMemo(
-    () => Array.from(new Set(metrics.months.map((month) => getMonthParts(month.month_key).year))).filter(Boolean),
-    [metrics.months]
-  );
-  const monthOptions = useMemo(
-    () =>
-      metrics.months.map((month) => ({
-        label: month.month,
-        value: getMonthParts(month.month_key).month,
-      })),
-    [metrics.months]
-  );
   const filteredMonths = useMemo(
-    () => filterReportingRows(filterMonths(metrics.months, timeFilters), filters),
-    [metrics.months, timeFilters, filters]
+    () => filterReportingRows(metrics.months, filters),
+    [metrics.months, filters]
   );
   const filteredTotalProjects = useMemo(
     () => filteredMonths.reduce((sum, month) => sum + month.projects, 0),
@@ -290,13 +241,6 @@ export default function ProductivityProjects({ filters } = {}) {
     () => buildMonthlyFeeData(filteredMonths, metrics.proposed_opportunities),
     [filteredMonths, metrics.proposed_opportunities]
   );
-  function updateTimeFilter(key, value) {
-    setTimeFilters((currentFilters) => ({
-      ...currentFilters,
-      [key]: value,
-    }));
-  }
-
   const updatedLabel = metrics.updated_at
     ? `Updated ${new Intl.DateTimeFormat(undefined, {
         dateStyle: "medium",

@@ -34,9 +34,13 @@ export default function App() {
   async function handleLogin(credentials, nextDashboardView) {
     const user = await loginUser(credentials);
     const allowedDashboardViews = getAllowedDashboardViews(user);
-    const resolvedDashboardView = allowedDashboardViews.some((option) => option.value === nextDashboardView)
-      ? nextDashboardView
-      : getDefaultDashboardView(user);
+    const requestedManagementView = /^\/management(?:\/|$)/.test(window.location.pathname) &&
+      allowedDashboardViews.some((option) => option.value === "management");
+    const resolvedDashboardView = requestedManagementView
+      ? "management"
+      : allowedDashboardViews.some((option) => option.value === nextDashboardView)
+        ? nextDashboardView
+        : getDefaultDashboardView(user);
 
     savePreferredDashboardView(resolvedDashboardView);
     setCurrentUser(user);
@@ -64,7 +68,11 @@ export default function App() {
     }
 
     const allowedDashboardViews = getAllowedDashboardViews(currentUser);
-    const resolvedDashboardView = allowedDashboardViews.some((option) => option.value === dashboardView)
+    const requestedManagementView = /^\/management(?:\/|$)/.test(window.location.pathname) &&
+      allowedDashboardViews.some((option) => option.value === "management");
+    const resolvedDashboardView = requestedManagementView
+      ? "management"
+      : allowedDashboardViews.some((option) => option.value === dashboardView)
       ? dashboardView
       : getDefaultDashboardView(currentUser);
 

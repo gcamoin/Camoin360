@@ -9,11 +9,7 @@ import {
   Dialog,
   DialogContent,
   DialogTitle,
-  FormControl,
-  InputLabel,
-  MenuItem,
   Paper,
-  Select,
   Stack,
   Tab,
   Tabs,
@@ -38,30 +34,6 @@ import { getQuickBooksConnectUrl } from "../quickbooksApi";
 
 const API_URL = `${API_BASE_URL}/company-financials`;
 const REQUEST_TIMEOUT_MS = 60 * 1000;
-
-const ALL_VALUE = "all";
-const QUARTER_OPTIONS = [
-  { label: "All Quarters", value: ALL_VALUE },
-  { label: "Q1", value: "1" },
-  { label: "Q2", value: "2" },
-  { label: "Q3", value: "3" },
-  { label: "Q4", value: "4" },
-];
-const MONTH_OPTIONS = [
-  { label: "All Months", value: ALL_VALUE },
-  { label: "January", value: "1" },
-  { label: "February", value: "2" },
-  { label: "March", value: "3" },
-  { label: "April", value: "4" },
-  { label: "May", value: "5" },
-  { label: "June", value: "6" },
-  { label: "July", value: "7" },
-  { label: "August", value: "8" },
-  { label: "September", value: "9" },
-  { label: "October", value: "10" },
-  { label: "November", value: "11" },
-  { label: "December", value: "12" },
-];
 
 const tooltipStyle = {
   contentStyle: {
@@ -180,9 +152,6 @@ export default function CompanyFinancials({ filters } = {}) {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState("");
-  const [selectedYear, setSelectedYear] = useState(ALL_VALUE);
-  const [selectedQuarter, setSelectedQuarter] = useState(ALL_VALUE);
-  const [selectedMonth, setSelectedMonth] = useState(ALL_VALUE);
   const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
   const [isAnalysisGenerated, setIsAnalysisGenerated] = useState(false);
   const [analysisTab, setAnalysisTab] = useState("analysis");
@@ -203,15 +172,6 @@ export default function CompanyFinancials({ filters } = {}) {
     }
   }
   const displayRows = useMemo(() => filterReportingRows(monthlyFinancials, filters), [monthlyFinancials, filters]);
-  const yearOptions = useMemo(
-    () => [
-      { label: "All Years", value: ALL_VALUE },
-      ...Array.from(new Set(displayRows.map((row) => row.year)))
-        .sort((a, b) => Number(b) - Number(a))
-        .map((year) => ({ label: year, value: year })),
-    ],
-    [displayRows]
-  );
   const fetchFinancials = useCallback(async ({ refresh = false, silent = false } = {}) => {
     if (!isMountedRef.current) return;
 
@@ -261,17 +221,7 @@ export default function CompanyFinancials({ filters } = {}) {
     };
   }, [fetchFinancials]);
 
-  const filteredRows = useMemo(
-    () =>
-      displayRows.filter(
-        (row) =>
-          (selectedYear === ALL_VALUE || row.year === selectedYear) &&
-          (selectedMonth !== ALL_VALUE || selectedQuarter === ALL_VALUE || row.quarter === selectedQuarter) &&
-          (selectedMonth === ALL_VALUE || row.monthNumber === selectedMonth)
-      ),
-    [displayRows, selectedMonth, selectedQuarter, selectedYear]
-  );
-  const chartRows = filteredRows;
+  const chartRows = displayRows;
   const salesYearTicks = useMemo(
     () =>
       Array.from(

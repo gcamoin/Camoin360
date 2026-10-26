@@ -31,19 +31,6 @@ const EMPTY_SERIES = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const RANGES = [
-  { label: "1Y", years: 1 },
-  { label: "3Y", years: 3 },
-  { label: "5Y", years: 5 },
-  { label: "All Years", years: null },
-];
-
-function filterByRange(data, years) {
-  if (!years) return data;
-  const cutoff = new Date().getFullYear() - years;
-  return data.filter((d) => d.year >= cutoff);
-}
-
 const tooltipStyle = {
   contentStyle: {
     borderRadius: 8,
@@ -188,7 +175,6 @@ function InflationTable({ rows }) {
 
 export default function EconomicIndicators({ filters } = {}) {
   const isMountedRef = useRef(true);
-  const [range, setRange] = useState("All Years");
   const [series, setSeries] = useState(EMPTY_SERIES);
   const [cpiTable, setCpiTable] = useState([]);
   const [sources, setSources] = useState({});
@@ -196,7 +182,6 @@ export default function EconomicIndicators({ filters } = {}) {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState("");
-  const years = RANGES.find((r) => r.label === range)?.years ?? null;
 
   const fetchIndicators = useCallback(async ({ refresh = false, silent = false } = {}) => {
     if (!isMountedRef.current) return;
@@ -254,10 +239,10 @@ export default function EconomicIndicators({ filters } = {}) {
     };
   }, [fetchIndicators]);
 
-  const sentiment = useMemo(() => filterReportingRows(filterByRange(series.sentiment, years), filters), [series.sentiment, years, filters]);
-  const gdp = useMemo(() => filterReportingRows(filterByRange(series.gdp, years), filters), [series.gdp, years, filters]);
-  const treasury = useMemo(() => filterReportingRows(filterByRange(series.treasury, years), filters), [series.treasury, years, filters]);
-  const housing = useMemo(() => filterReportingRows(filterByRange(series.housing, years), filters), [series.housing, years, filters]);
+  const sentiment = useMemo(() => filterReportingRows(series.sentiment, filters), [series.sentiment, filters]);
+  const gdp = useMemo(() => filterReportingRows(series.gdp, filters), [series.gdp, filters]);
+  const treasury = useMemo(() => filterReportingRows(series.treasury, filters), [series.treasury, filters]);
+  const housing = useMemo(() => filterReportingRows(series.housing, filters), [series.housing, filters]);
   const xInterval = (len) => Math.max(0, Math.floor(len / 6) - 1);
   const updatedLabel = updatedAt
     ? `Updated ${new Intl.DateTimeFormat(undefined, {
