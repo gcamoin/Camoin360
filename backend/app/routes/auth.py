@@ -227,7 +227,7 @@ def user_has_module(user, module):
 
 
 def require_admin_user(user=Depends(require_user)):
-    if user.get("email", "").lower() != ADMIN_EMAIL:
+    if user.get("role") != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
     return user
@@ -289,7 +289,7 @@ async def update_user(email: str, request: UpdateUserRequest, _admin=Depends(req
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    if normalized_email == ADMIN_EMAIL:
+    if user.get("role") == "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="The admin account cannot be edited")
 
     if request.name is not None:
@@ -315,11 +315,11 @@ async def delete_user(email: str, _admin=Depends(require_admin_user)):
     users = _load_users()
     normalized_email = email.strip().lower()
 
-    if normalized_email == ADMIN_EMAIL:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="The admin account cannot be deleted")
-
     if normalized_email not in users:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if users[normalized_email].get("role") == "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="The admin account cannot be deleted")
 
     del users[normalized_email]
     _save_users(users)

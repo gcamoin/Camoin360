@@ -139,6 +139,33 @@ class AuthRoutesTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(error.exception.status_code, 403)
         self.assertEqual(error.exception.detail, "Admin access required")
 
+    def test_other_admin_role_can_manage_users(self):
+        user = {"email": "jacob@example.com", "role": "admin", "modules": ["admin"]}
+        self.assertIs(auth.require_admin_user(user), user)
+
+    async def test_other_admin_role_is_protected_from_edit_and_delete(self):
+        self.users_file.write_text(json.dumps({
+            "jacob@example.com": {
+                "name": "Jacob",
+                "email": "jacob@example.com",
+                "password": auth._hash_password("secure-password"),
+                "role": "admin",
+                "modules": auth.ADMIN_MODULES,
+            }
+        }), encoding="utf-8")
+
+        with self.assertRaises(HTTPException) as edit_error:
+            await auth.update_user(
+                "jacob@example.com",
+                auth.UpdateUserRequest(name="Changed"),
+                _admin={"email": auth.ADMIN_EMAIL, "role": "admin"},
+            )
+        self.assertEqual(edit_error.exception.status_code, 403)
+
+        with self.assertRaises(HTTPException) as delete_error:
+            await auth.delete_user("jacob@example.com", _admin={"email": auth.ADMIN_EMAIL, "role": "admin"})
+        self.assertEqual(delete_error.exception.status_code, 403)
+
 
 if __name__ == "__main__":
     unittest.main()

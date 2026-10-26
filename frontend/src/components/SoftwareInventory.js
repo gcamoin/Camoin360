@@ -51,6 +51,20 @@ const displayValue = (row, key) => key === "status"
     ? new Date(`${row[key].slice(0, 10)}T00:00:00`).toLocaleDateString()
     : String(row[key] || "");
 
+export function filterAndSortInventory(rows, status, query, sort) {
+  const search = query.toLowerCase();
+  const matching = rows.filter(row =>
+    (!status || row.status === status) && (!search || columns.some(column =>
+      displayValue(row, column.key).toLowerCase().includes(search)
+    ))
+  );
+  const direction = sort.direction === "asc" ? 1 : -1;
+  return matching
+    .map(row => ({ row, sortValue: displayValue(row, sort.key) }))
+    .sort((a, b) => a.sortValue.localeCompare(b.sortValue, undefined, { numeric: true }) * direction)
+    .map(({ row }) => row);
+}
+
 function InventoryStatus({ value }) {
   const status = getInventoryStatusAppearance(value);
   return <Box component="span" sx={{
@@ -202,11 +216,7 @@ export default function SoftwareInventory() {
   useEffect(() => { load(); }, [load]);
   const statuses = useMemo(() => [...new Set(rows.map(row => row.status).filter(Boolean))]
     .sort((first, second) => getInventoryStatusAppearance(first).label.localeCompare(getInventoryStatusAppearance(second).label)), [rows]);
-  const filtered = useMemo(() => rows.filter(row =>
-    (!status || row.status === status) && columns.some(column =>
-      displayValue(row, column.key).toLowerCase().includes(query.toLowerCase())
-    )
-  ).sort((a, b) => displayValue(a, sort.key).localeCompare(displayValue(b, sort.key), undefined, { numeric: true }) * (sort.direction === "asc" ? 1 : -1)), [rows, status, query, sort]);
+  const filtered = useMemo(() => filterAndSortInventory(rows, status, query, sort), [rows, status, query, sort]);
   function exportCsv() {
     const escape = value => `"${String(value).replace(/"/g, '""')}"`;
     const csv = [columns.map(column => column.label), ...filtered.map(row => columns.map(column => displayValue(row, column.key)))]
