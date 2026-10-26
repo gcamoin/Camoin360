@@ -156,6 +156,7 @@ export default function PEClients() {
   const [users, setUsers] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isUsersLoading, setIsUsersLoading] = useState(true);
+  const [hasLoadedUsers, setHasLoadedUsers] = useState(false);
   const [error, setError] = useState("");
   const [usersError, setUsersError] = useState("");
   const [clientSearch, setClientSearch] = useState("");
@@ -219,16 +220,18 @@ export default function PEClients() {
     }
   }
 
-  async function loadUsers() {
+  async function loadUsers({ force = false } = {}) {
     setIsUsersLoading(true);
     setUsersError("");
 
     try {
-      const response = await axios.get(USER_API_URL, {
+      const response = await getCached(USER_API_URL, {
+        force,
         headers: getAuthHeaders(),
         timeout: 60000,
       });
       setUsers(response.data?.data || []);
+      setHasLoadedUsers(true);
     } catch (fetchError) {
       if (!handleUnauthorized(fetchError)) {
         setUsersError(getApiErrorMessage(fetchError, "Unable to load users."));
@@ -240,8 +243,13 @@ export default function PEClients() {
 
   useEffect(() => {
     loadClients();
-    loadUsers();
   }, []);
+
+  useEffect(() => {
+    if (selectedOrganizationId && !hasLoadedUsers) {
+      loadUsers();
+    }
+  }, [selectedOrganizationId, hasLoadedUsers]);
 
   useEffect(() => {
     const lastPage = Math.max(0, Math.ceil(visibleClients.length / rowsPerPage) - 1);
@@ -448,6 +456,7 @@ export default function PEClients() {
       const updatedClient = response.data;
 
       invalidateApiCache(API_URL);
+      invalidateApiCache(USER_API_URL);
       setClients((currentClients) =>
         currentClients
           .map((client) => (client.id === updatedClient.id ? updatedClient : client))
@@ -491,6 +500,7 @@ export default function PEClients() {
       });
 
       invalidateApiCache(API_URL);
+      invalidateApiCache(USER_API_URL);
       setClients((currentClients) => currentClients.filter((client) => client.id !== clientToDelete.id));
       setUsers((currentUsers) => currentUsers.filter((user) => user.organization_id !== clientToDelete.id));
       if (String(selectedOrganizationId) === String(clientToDelete.id)) {
@@ -545,6 +555,7 @@ export default function PEClients() {
       );
       const createdUser = response.data;
       invalidateApiCache(API_URL);
+      invalidateApiCache(USER_API_URL);
       setUsers((currentUsers) =>
         [...currentUsers, createdUser].sort((firstUser, secondUser) =>
           firstUser.name.localeCompare(secondUser.name)
@@ -592,6 +603,9 @@ export default function PEClients() {
       );
       const updatedUser = response.data;
 
+      invalidateApiCache(API_URL);
+      invalidateApiCache(USER_API_URL);
+
       setUsers((currentUsers) => currentUsers.map((user) => (user.id === updatedUser.id ? updatedUser : user)));
 
       if (previousUser && String(previousUser.organization_id) !== String(updatedUser.organization_id)) {
@@ -637,6 +651,8 @@ export default function PEClients() {
       );
       const updatedUser = response.data;
 
+      invalidateApiCache(USER_API_URL);
+
       setUsers((currentUsers) => currentUsers.map((user) => (user.id === updatedUser.id ? updatedUser : user)));
       setIsResetPasswordDialogOpen(false);
     } catch (saveError) {
@@ -663,6 +679,9 @@ export default function PEClients() {
         headers: getAuthHeaders(),
         timeout: 60000,
       });
+
+      invalidateApiCache(API_URL);
+      invalidateApiCache(USER_API_URL);
 
       setUsers((currentUsers) => currentUsers.filter((user) => user.id !== userToDelete.id));
       setClients((currentClients) =>
@@ -883,6 +902,9 @@ export default function PEClients() {
               <Button disabled={!clients.length || isSaving} onClick={openUserDialog} variant="contained">
                 Create User
               </Button>
+              <Button disabled={isUsersLoading || isSaving} onClick={() => loadUsers({ force: true })} variant="outlined">
+                Refresh users
+              </Button>
             </Stack>
           </Stack>
         </Box>
@@ -986,7 +1008,7 @@ export default function PEClients() {
         <SummaryMetricCard
           description="Portal users linked to client organizations"
           label="Total Users"
-          value={users.length}
+          value={clients.reduce((total, client) => total + Number(client.user_count || 0), 0)}
         />
       </Box>
 
@@ -1022,6 +1044,9 @@ export default function PEClients() {
             <Chip label={`${clients.length} total`} sx={{ fontWeight: 800 }} />
             <Button disabled={!clients.length} onClick={exportClients} variant="outlined">
               Export all CSV
+            </Button>
+            <Button disabled={isLoading} onClick={() => loadClients({ force: true })} variant="outlined">
+              Refresh organizations
             </Button>
             <Button onClick={openAddDialog} variant="contained">
               Add Organization

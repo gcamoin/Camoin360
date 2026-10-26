@@ -1,11 +1,9 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import axios from "axios";
 import { getCached } from "../apiClient";
 import PEClients from "./PEClients";
 import { filterAndSortClients } from "./PEClients";
 
-jest.mock("axios");
 jest.mock("../apiClient", () => ({ getCached: jest.fn(), invalidateApiCache: jest.fn() }));
 jest.mock("../auth", () => ({
   API_BASE_URL: "http://localhost:8000",
@@ -38,19 +36,28 @@ test("sorts by user count or earliest contract, putting unset contracts last", (
 });
 
 test("opens a client through its explicit View action", async () => {
-  getCached.mockResolvedValue({ data: { data: [{ ...clients[0], id: 1 }] } });
-  axios.get.mockResolvedValue({ data: { data: [] } });
+  getCached.mockImplementation((url) => Promise.resolve({ data: { data: url.endsWith("/users") ? [] : [{ ...clients[0], id: 1 }] } }));
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
 
   try {
     await act(async () => root.render(<PEClients />));
+    expect(getCached).toHaveBeenCalledTimes(1);
+    expect(getCached).toHaveBeenCalledWith("http://localhost:8000/organizations", expect.any(Object));
     const viewButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "View");
     expect(viewButton).toBeTruthy();
     await act(async () => viewButton.click());
+    expect(getCached).toHaveBeenCalledTimes(2);
+    expect(getCached).toHaveBeenCalledWith("http://localhost:8000/users", expect.any(Object));
     expect(container.textContent).toContain("Back to Organizations");
     expect(container.textContent).toContain("Zeta Systems");
+    await act(async () => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Back to Organizations").click());
+    await act(async () => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "View").click());
+    expect(getCached).toHaveBeenCalledTimes(2);
+    await act(async () => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Refresh users").click());
+    expect(getCached).toHaveBeenCalledWith("http://localhost:8000/users", expect.objectContaining({ force: true }));
+    expect(getCached).toHaveBeenCalledTimes(3);
   } finally {
     await act(async () => root.unmount());
     container.remove();

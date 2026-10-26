@@ -1,6 +1,7 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import axios from "axios";
+import { clearApiCache } from "../apiClient";
 import PEQualifiedLeads, { filterAndSortQualifiedLeads } from "./PEQualifiedLeads";
 
 jest.mock("axios");
@@ -17,6 +18,11 @@ jest.mock("recharts", () => ({
 }));
 
 window.IS_REACT_ACT_ENVIRONMENT = true;
+
+beforeEach(() => {
+  clearApiCache();
+  axios.get.mockReset();
+});
 
 const leads = [
   { id: "1", prospect_name: "Zeta Manufacturing", client_name: "Client B", status: "Qualified", createdon: "2026-02-01T10:00:00Z" },
@@ -47,6 +53,36 @@ test("shows lead rows and makes the API record limit clear", async () => {
     expect(container.querySelectorAll("tbody tr")).toHaveLength(3);
     expect(axios.get).toHaveBeenCalledWith("http://localhost:8000/pe-qualified-leads", expect.objectContaining({
       params: expect.objectContaining({ limit: 5000 }),
+    }));
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+  }
+});
+
+test("revisiting leads uses cached data and Refresh leads requests fresh data", async () => {
+  axios.get.mockResolvedValue({ data: {
+    data: leads, total_count: 3, rollups: [], yearly_rollups: [], status: "Qualified",
+  } });
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  let root = createRoot(container);
+
+  try {
+    await act(async () => root.render(<PEQualifiedLeads />));
+    expect(axios.get).toHaveBeenCalledTimes(1);
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await act(async () => root.render(<PEQualifiedLeads />));
+    expect(axios.get).toHaveBeenCalledTimes(1);
+
+    const refresh = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Refresh leads");
+    await act(async () => refresh.click());
+    expect(axios.get).toHaveBeenCalledTimes(2);
+    await act(async () => root.render(<PEQualifiedLeads filters={{ year: "2026" }} />));
+    expect(axios.get).toHaveBeenCalledTimes(3);
+    expect(axios.get).toHaveBeenLastCalledWith("http://localhost:8000/pe-qualified-leads", expect.objectContaining({
+      params: expect.objectContaining({ year: "2026", limit: 5000 }),
     }));
   } finally {
     await act(async () => root.unmount());

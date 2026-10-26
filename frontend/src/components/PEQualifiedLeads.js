@@ -1,6 +1,6 @@
 import { filterReportingRows, reportingParams } from "../reportingPeriod";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import axios from "axios";
+import { getCached } from "../apiClient";
 import {
   Alert,
   Box,
@@ -92,6 +92,7 @@ function escapeCsvValue(value) {
 export default function PEQualifiedLeads({ filters } = {}) {
   const isMountedRef = useRef(true);
   const latestRequestIdRef = useRef(0);
+  const forceNextRequestRef = useRef(false);
   const [leads, setLeads] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [leadSearch, setLeadSearch] = useState("");
@@ -104,6 +105,7 @@ export default function PEQualifiedLeads({ filters } = {}) {
   const [statusLabel, setStatusLabel] = useState("Qualified");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const fetchLeads = useCallback(async () => {
     if (!isMountedRef.current) return;
@@ -116,9 +118,13 @@ export default function PEQualifiedLeads({ filters } = {}) {
       const params = reportingParams(filters);
       params.limit = 5000;
 
-      const response = await axios.get(API_URL, {
+      const force = forceNextRequestRef.current;
+      forceNextRequestRef.current = false;
+      const response = await getCached(API_URL, {
+        force,
         headers: getAuthHeaders(),
         params,
+        timeout: 60000,
       });
 
       if (!isMountedRef.current || requestId !== latestRequestIdRef.current) return;
@@ -145,7 +151,7 @@ export default function PEQualifiedLeads({ filters } = {}) {
 
       setIsLoading(false);
     }
-  }, [filters]);
+  }, [filters, refreshKey]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -336,11 +342,17 @@ export default function PEQualifiedLeads({ filters } = {}) {
           </Box>
           <Stack alignItems={{ xs: "stretch", sm: "center" }} direction={{ xs: "column", sm: "row" }} spacing={1}>
             <Chip label={`${leads.length.toLocaleString()} loaded`} sx={{ fontWeight: 700 }} />
+            <Button disabled={isLoading} onClick={() => { forceNextRequestRef.current = true; setRefreshKey((key) => key + 1); }} variant="outlined">
+              Refresh leads
+            </Button>
             <Button disabled={!visibleLeads.length || isLoading} onClick={exportVisibleLeads} variant="outlined">
               Export filtered CSV
             </Button>
           </Stack>
         </Stack>
+        <Typography color="text.secondary" sx={{ px: { xs: 2, md: 3 }, pb: 1 }} variant="caption">
+          Results are cached for up to 5 minutes. Refresh leads to check for newer data.
+        </Typography>
         <Box
           sx={{
             borderBottom: "1px solid",
