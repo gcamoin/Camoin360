@@ -1,5 +1,8 @@
 import asyncio
 import re
+import os
+import hashlib
+import hmac
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
@@ -7,10 +10,13 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
-from .database import initialize_database
+from .database import get_auth_database_connection
+from .application_users_schema import verify_application_users_schema
+from .services.application_auth_configuration import require_auth_configuration
 from .routes.accounts import router as accounts_router
 from .routes.ai import router as ai_router
 from .routes.auth import get_user_from_token, router as auth_router, user_has_module
@@ -30,6 +36,14 @@ from .services.newsletter import run_snapshot_scheduler
 
 @asynccontextmanager
 async def lifespan(app):
+    configuration = require_auth_configuration(os.environ)
+    def verify_auth():
+        with get_auth_database_connection() as connection:
+            verify_application_users_schema(connection, expected_schema=os.getenv("AUTH_DATABASE_SCHEMA", "public"))
+            marker = connection.execute("SELECT signing_key_digest FROM application_auth_bootstrap WHERE singleton=1").fetchone()
+            if marker and not hmac.compare_digest(marker["signing_key_digest"], hashlib.sha256(configuration.secret_key.encode()).hexdigest()):
+                raise RuntimeError("Authentication signing configuration does not match bootstrap")
+    await asyncio.to_thread(verify_auth)
     newsletter_task = asyncio.create_task(run_snapshot_scheduler())
     try:
         yield
@@ -40,7 +54,6 @@ async def lifespan(app):
 
 
 app = FastAPI(lifespan=lifespan)
-initialize_database()
 
 MODULE_PATH_RULES = [
     ("prospecting", ("/leadfeeder-visits", "/accounts/leadfeeder-visits", "/pe-clients", "/pe-qualified-leads", "/marketing-lists", "/organizations", "/users")),
@@ -81,7 +94,7 @@ async def enforce_module_access(request, call_next):
         return JSONResponse(status_code=401, content={"detail": "Missing token"})
 
     try:
-        user = get_user_from_token(token)
+        user = await run_in_threadpool(get_user_from_token, token)
     except Exception as exc:
         status_code = getattr(exc, "status_code", 401)
         detail = getattr(exc, "detail", "Invalid token")

@@ -2,6 +2,9 @@
 
 This repo has a FastAPI backend and a React frontend for the Sophie Maintenance dashboard.
 
+Application authentication uses persistent PostgreSQL. Legacy JSON accounts are
+not imported. See [fresh-account deployment](#postgresql-authentication-fresh-account-deployment).
+
 ## Backend Files
 
 - `backend/app/main.py` creates the FastAPI app, enables CORS for the React dev server, and registers route modules.
@@ -11,7 +14,7 @@ This repo has a FastAPI backend and a React frontend for the Sophie Maintenance 
 - `backend/app/routes/metrics.py` owns the dashboard metrics API:
   - `GET /metrics`
 - `backend/app/routes/accounts.py` owns account enrichment/update routes.
-- `backend/app/services/users.json` is the local development user store and is ignored by Git.
+- `backend/app/services/users.json` is an inactive legacy artifact, ignored by Git and never read by authentication.
 
 ## Frontend Files
 
@@ -1050,3 +1053,183 @@ and the existing recent/attention Account table. The Needs Enrichment card has
 no link because the Enrichment workspace does not yet filter by the same
 persisted Data Health Choice definition. The sector chart component/API remain
 available internally but are no longer mounted on Home.
+
+## PostgreSQL authentication: fresh-account deployment
+
+This is the current deployment procedure. Existing JSON login accounts and their old sessions are intentionally
+abandoned. **Do not import JSON accounts.** Neither `users.json` nor the historical
+encrypted-backup utilities are deleted. Authentication never reads those files,
+falls back to them, or provisions an administrator during startup or login.
+The `client_users` business directory remains separate and unchanged.
+
+### Runtime behavior and configuration
+
+All `/auth` operations and token-user resolution use the shared PostgreSQL
+`application_users` service. Normalized email uniqueness is database-enforced.
+User IDs are stable and included in signed claims, so deleting and recreating an
+email does not reactivate a token issued to the old identity. Permissions are
+reloaded from PostgreSQL on each authenticated request. A missing/unavailable
+store fails closed; it cannot be replaced by an empty local file.
+
+Login responses retain token/name/email/role/modules and now also return
+`organization_id`, fixing the frontend's previous fallback to organization 1.
+JWTs are standard three-part HS256 tokens with a fixed algorithm, issuer,
+audience, issued-at time, account ID, and 12-hour expiry. The React token parser
+was updated accordingly. Old two-part sessions must log in again. Administrators
+are authorized by their database role, with all existing module options; no
+person's email or credentials are hardcoded. Admin editing/deletion through the
+normal account API remains forbidden. Public signup remains disabled.
+
+Required runtime settings:
+
+- `DATABASE_URL`: the reviewed persistent PostgreSQL target shared by every
+  backend instance. Review TLS/certificate settings and existing business-service
+  privileges; authentication introduces no alternative database URL or SQLite.
+- `AUTH_SECRET_KEY`: one securely generated random secret with at least 32 bytes
+  of entropy, delivered through a secret manager to every backend instance and
+  the bootstrap operator. There is no default or per-process generated key.
+  The validator rejects missing, short, whitespace-padded, or trivially repetitive
+  values. Length/diversity validation cannot substitute for random generation.
+- `AUTH_DATABASE_SCHEMA`: defaults to `public`; set it explicitly when using a
+  different reviewed schema/search path. Operator target and runtime must match.
+- `CAMOIN360_ORGANIZATION_ID`: optional default association for ordinary new users;
+  review it against business ownership. Bootstrap requires its own explicit ID.
+- Frontend `REACT_APP_API_BASE_URL`: keep it set to the reviewed production API
+  (`https://api.camoin360.com`); build and deploy the JWT-aware frontend with the
+  backend during the coordinated authentication cutover.
+
+The durable `application_auth_bootstrap` singleton records completion and a
+signing-key digest. Startup validates schema and any existing signing binding;
+JWT signing/verification also checks that binding. A backend configured with a
+different key cannot issue incompatible sessions. Do not change the key on one
+instance or rerun bootstrap to rotate it. Coordinated key rotation requires an
+explicitly reviewed binding/configuration change; it invalidates existing sessions.
+Only the digest is stored; neither it nor credentials are returned by the API or
+printed by operator commands.
+
+### Additive preparation and explicit one-time bootstrap
+
+The commands below are a **future operator runbook**, not commands executed or
+authorized against production during implementation. No production records,
+schema, bootstrap, configuration, deploy, or push was performed here.
+
+1. Review the intended release and production database/schema identity. Provision
+   the shared signing key and database connection through approved secret storage.
+   Keep credential values out of command arguments, terminal output, transcripts,
+   repository files, SQL-parameter logging, debug locals, and shell tracing.
+2. With separate approval for additive auth schema preparation, run the new
+   operator command from the reviewed release on an approved workstation/job.
+   Have the secret manager populate `CAMOIN360_AUTH_OPERATOR_DATABASE_URL`; it
+   must point at the same database/schema used by runtime `DATABASE_URL`.
+
+```bash
+venv/bin/python -m backend.app.workers.application_auth_admin prepare-schema \
+  --database-url-env CAMOIN360_AUTH_OPERATOR_DATABASE_URL \
+  --expected-database REVIEWED_DATABASE_NAME --expected-schema public
+
+venv/bin/python -m backend.app.workers.application_auth_admin verify-schema \
+  --database-url-env CAMOIN360_AUTH_OPERATOR_DATABASE_URL \
+  --expected-database REVIEWED_DATABASE_NAME --expected-schema public
+```
+
+   Preparation creates only the two auth tables and the single-admin unique
+   index. It does not call the business initializer, seed business rows, read
+   JSON, drop/recreate existing tables, overwrite users, or repair unknown drift.
+   Repeated preparation preserves all existing records. If unexpected existing
+   auth rows or multiple administrators cause refusal, stop for review; do not
+   delete them automatically. Verification reads catalogs only and checks actual
+   CHECK expressions/enforcement, required columns/types/nullability/defaults,
+   valid immediate primary/unique indexes and their predicates, the bootstrap
+   foreign key, and absence of unexpected triggers/rules/RLS. Name-only checks
+   are no longer accepted. Runtime startup requires successful verification;
+   missing schema/configuration prevents serving authentication.
+3. Obtain deployment approval and deploy the reviewed backend and JWT-aware
+   frontend in one coordinated authentication maintenance window. No JSON-account
+   preservation is required under the new requirements. Avoid routing requests
+   between old JSON backends and new PostgreSQL backends during rollout. Startup
+   is allowed with no administrator and never creates one; login remains
+   unavailable until explicit bootstrap succeeds. Confirm every instance points
+   at the intended persistent database and shares the signing key.
+4. Obtain explicit approval for the **one-time production administrator write**.
+   Supply all five values through the secret manager, without shell defaults:
+   `AUTH_SECRET_KEY`, `CAMOIN360_BOOTSTRAP_NAME`, `CAMOIN360_BOOTSTRAP_EMAIL`,
+   `CAMOIN360_BOOTSTRAP_PASSWORD`, `CAMOIN360_BOOTSTRAP_ORGANIZATION_ID`.
+   The administrator password must contain 16–1024 characters and should be
+   randomly generated and stored in the organization's password manager.
+
+```bash
+venv/bin/python -m backend.app.workers.application_auth_admin bootstrap-admin \
+  --database-url-env CAMOIN360_AUTH_OPERATOR_DATABASE_URL \
+  --expected-database REVIEWED_DATABASE_NAME --expected-schema public \
+  --confirm-bootstrap
+```
+
+   Bootstrap validates the target/schema, serializes concurrent attempts, and
+   commits the account and completion/key marker in one transaction. It refuses
+   any existing administrator, matching email, or completed marker. A unique
+   partial index also prevents duplicate administrators. Repeating the command
+   cannot reset a password, replace privileges, or create another administrator.
+   Deleting/demoting an administrator does not reset the one-time marker. There
+   are no default credentials or public provisioning endpoints. Errors and
+   success output contain fixed status/operation values only. Exit 0 means
+   committed success; 2 means refused/failed; 130 means interrupted. If the
+   result is uncertain, verify login/state rather than deleting rows or forcing
+   a retry around the safeguards.
+5. Remove bootstrap-specific credentials from the operator environment/job and
+   secret delivery scope. They need not exist in the long-running backend.
+   Retain runtime `AUTH_SECRET_KEY` and `DATABASE_URL`. Log in through the new
+   frontend, create fresh users in Admin, assign their modules, and verify access
+   through more than one instance and after a planned restart/deploy. Do not use
+   account API responses or logs to print credential material. Protected admin
+   password recovery/rotation must be a separate approved operator operation;
+   bootstrap cannot be reused as a reset mechanism.
+
+### Rollback and validation
+
+Rollback must retain PostgreSQL authentication and the latest account data. A
+rollback to the old JSON implementation would hide all freshly created accounts
+and is not a supported recovery strategy. Use database backups/PITR under the
+reviewed recovery plan; pre-cutover JSON snapshots contain none of the fresh
+accounts. No recovery operation should drop existing business tables.
+
+Local regressions use only disposable loopback PostgreSQL and synthetic
+credentials. Auth schema preparation was also tested in a separate schema with
+a business sentinel: only auth tables were added and the sentinel was unchanged.
+Tests cover HTTP contracts, normalized-email conflicts, module/admin enforcement,
+expiry and malformed JWTs, current permission resolution, deleted/recreated
+identity isolation, fresh-process/multiple-instance persistence, signing-key
+mismatch, empty startup without provisioning, concurrent/one-time bootstrap,
+rollback on interruption, and schema/default/index/constraint drift. Password-format compatibility tests use synthetic data; no JSON accounts are
+imported automatically.
+
+Production target, runtime settings, and deployment revision remain unverified
+until the approved operator checks them. Historical snapshot-inventory gaps are
+not prerequisites for this fresh-account deployment, because no snapshots are
+used by live authentication or bootstrap.
+
+### Render and Vercel release prerequisites
+
+The operator module must be included in the deployed release; it is not present
+in an older running Render build. Do not try to execute the new module from that
+old build. Run auth-only preparation from the reviewed new checkout with an
+approved reachable database connection, or from an approved pre-deploy job using
+the new built artifact, before the new backend's lifespan verification starts.
+Do not put administrator bootstrap in the application start command.
+
+Supported native-Python entrypoints, without changing the current root setting:
+
+- Repository root: `python -m uvicorn backend.app.main:app --host 0.0.0.0 --port "$PORT"`.
+  Operator module: `python -m backend.app.workers.application_auth_admin`.
+- Backend root: `python -m uvicorn app.main:app --host 0.0.0.0 --port "$PORT"`.
+  Operator module: `python -m app.workers.application_auth_admin`.
+
+Both entrypoints and operator module paths were smoke-tested locally on PostgreSQL
+18. Actual Render branch/root/build/start settings, environment values, and the
+Vercel Production Branch must still be confirmed in their dashboards. Git branch
+names and historical deployments are evidence, not provider configuration.
+Prepare and verify the schema before activating the new backend; its startup
+intentionally fails if auth schema or configuration is missing. Use a coordinated
+JWT-aware frontend/backend authentication window, keeping old JSON backend
+instances out of the new traffic pool. Bootstrap once after approval, then verify
+administrator login and a newly created test user's module permissions. Pin a
+PostgreSQL-capable rollback artifact; the previous JSON backend is not safe rollback.

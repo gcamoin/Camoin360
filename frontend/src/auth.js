@@ -22,7 +22,10 @@ const DASHBOARD_VIEWS = new Set(MODULE_OPTIONS.map((option) => option.value));
 
 function decodeTokenPayload(token) {
   try {
-    const [body] = token.split(".");
+    const parts = token.split(".");
+    // PostgreSQL auth issues standard JWTs; old local sessions must log in again.
+    if (parts.length !== 3) return null;
+    const body = parts[1];
     const normalizedBody = body.replace(/-/g, "+").replace(/_/g, "/");
     const paddedBody = normalizedBody.padEnd(
       normalizedBody.length + ((4 - (normalizedBody.length % 4)) % 4),

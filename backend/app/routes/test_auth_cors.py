@@ -1,4 +1,6 @@
 import unittest
+import asyncio
+import os
 from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
@@ -6,9 +8,26 @@ from fastapi.testclient import TestClient
 
 from backend.app import main
 from backend.app.routes import accounts
+from backend.app.testing_support import temporary_database
+from psycopg.conninfo import conninfo_to_dict
 
 
 class AuthenticationCorsTest(unittest.TestCase):
+    def setUp(self):
+        isolated = temporary_database()
+        isolated.start()
+        self.addCleanup(isolated.stop)
+        from backend.app import database
+        schema = conninfo_to_dict(database.DATABASE_URL)["options"].split("=", 1)[1]
+        environment = patch.dict(os.environ, {"AUTH_SECRET_KEY": "synthetic-cors-signing-secret-0123456789", "AUTH_DATABASE_SCHEMA": schema})
+        environment.start()
+        self.addCleanup(environment.stop)
+        async def idle_scheduler():
+            await asyncio.Event().wait()
+        scheduler = patch.object(main, "run_snapshot_scheduler", idle_scheduler)
+        scheduler.start()
+        self.addCleanup(scheduler.stop)
+
     def test_authentication_errors_are_readable_by_allowed_browser_origins(self):
         with TestClient(main.app) as client, patch.object(main, "get_user_from_token", side_effect=HTTPException(401, "Invalid token")), patch.object(accounts, "search_accounts_data_quality_from_dynamics", new=AsyncMock()) as search:
             for origin in ("http://localhost:3000", "http://127.0.0.1:3106", "https://camoin360.com"):
