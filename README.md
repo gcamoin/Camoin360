@@ -1154,7 +1154,7 @@ venv/bin/python -m backend.app.workers.application_auth_admin verify-schema \
    Supply all five values through the secret manager, without shell defaults:
    `AUTH_SECRET_KEY`, `CAMOIN360_BOOTSTRAP_NAME`, `CAMOIN360_BOOTSTRAP_EMAIL`,
    `CAMOIN360_BOOTSTRAP_PASSWORD`, `CAMOIN360_BOOTSTRAP_ORGANIZATION_ID`.
-   The administrator password must contain 16–1024 characters and should be
+   The administrator password must contain 8–1024 characters and should be
    randomly generated and stored in the organization's password manager.
 
 ```bash

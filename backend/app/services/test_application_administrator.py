@@ -42,6 +42,33 @@ def test_explicit_bootstrap_and_reruns_never_overwrite(pg):
         assert marker["signing_key_digest"] == hashlib.sha256(SECRET.encode()).hexdigest()
 
 
+@pytest.mark.parametrize("length", range(8))
+def test_bootstrap_rejects_short_passwords_without_creating_accounts(pg, length):
+    with pytest.raises(ValueError, match="Administrator password must contain 8 to 1024 characters"):
+        bootstrap(password="x" * length)
+    assert users.list_users() == []
+    with database.get_auth_database_connection() as connection:
+        assert connection.execute("SELECT COUNT(*) AS count FROM application_auth_bootstrap").fetchone()["count"] == 0
+
+
+@pytest.mark.parametrize("length", [8, 15, 16, 1024])
+def test_bootstrap_password_boundaries_allow_login_and_preserve_one_time_guard(pg, length):
+    password = "x" * length
+    admin = bootstrap(password=password)
+    assert users.authenticate(admin.email, password) == admin
+    with pytest.raises(users.AccountConflict):
+        bootstrap(password=password)
+    assert users.list_users() == [admin]
+
+
+def test_bootstrap_still_rejects_oversized_passwords_and_short_signing_keys(pg):
+    with pytest.raises(ValueError, match="8 to 1024 characters"):
+        bootstrap(password="x" * 1025)
+    with pytest.raises(ValueError, match="Secure shared signing key required"):
+        bootstrap(password="x" * 8, signing_key="x" * 31)
+    assert users.list_users() == []
+
+
 def test_bootstrap_is_one_time_even_if_administrator_is_demoted(pg):
     bootstrap()
     with database.get_auth_database_connection() as connection:
@@ -126,13 +153,14 @@ def test_operator_requires_confirmation_target_and_explicit_credentials(pg, monk
     assert operator.main(["bootstrap-admin", *common]) == 2
     assert operator.main(["bootstrap-admin", *common, "--confirm-bootstrap"]) == 2
     monkeypatch.setenv("AUTH_SECRET_KEY", SECRET)
-    for name, value in {"NAME": "Synthetic", "EMAIL": "operator@synthetic.invalid", "PASSWORD": "synthetic-administrator-password", "ORGANIZATION_ID": "5"}.items():
+    password = "x" * 8
+    for name, value in {"NAME": "Synthetic", "EMAIL": "operator@synthetic.invalid", "PASSWORD": password, "ORGANIZATION_ID": "5"}.items():
         monkeypatch.setenv("CAMOIN360_BOOTSTRAP_" + name, value)
     assert operator.main(["bootstrap-admin", *common, "--confirm-bootstrap"]) == 0
     assert operator.main(["bootstrap-admin", *common, "--confirm-bootstrap"]) == 2
     output = capsys.readouterr()
     assert "operator@synthetic.invalid" not in output.out + output.err
-    assert "synthetic-administrator-password" not in output.out + output.err
+    assert password not in output.out + output.err
     assert SECRET not in output.out + output.err
 
 

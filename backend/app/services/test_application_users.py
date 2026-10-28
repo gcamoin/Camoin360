@@ -137,6 +137,22 @@ def test_updates_preserve_identity_and_independent_concurrent_edits(pg):
     assert users.authenticate(original.email, "replacement-password") is not None
 
 
+def test_service_password_creation_and_updates_enforce_eight_character_minimum(pg):
+    for length in range(8):
+        with pytest.raises(ValueError, match="Password must contain at least 8 characters"):
+            create(password="x" * length)
+    assert users.list_users() == []
+    original = create(password="x" * 8)
+    assert users.authenticate(original.email, "x" * 8) == original
+    for length in range(8):
+        with pytest.raises(ValueError, match="Password must contain at least 8 characters"):
+            users.update_user(original.email, password="y" * length)
+        assert users.get_user(original.email) == original
+    updated = users.update_user(original.email, password="y" * 8)
+    assert users.authenticate(original.email, "x" * 8) is None
+    assert users.authenticate(original.email, "y" * 8) == updated
+
+
 def test_delete_and_missing_account_operations(pg):
     created = create()
     users.delete_user(created.email)

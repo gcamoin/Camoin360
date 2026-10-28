@@ -10,8 +10,8 @@ from ..application_users_schema import verify_application_users_schema
 
 def bootstrap_administrator(connection, *, name, email, password, organization_id, signing_key):
     """Caller owns the transaction. Failure rolls back both account and marker."""
-    if not isinstance(password, str) or not 16 <= len(password) <= 1024:
-        raise ValueError("Administrator password must contain 16 to 1024 characters")
+    if not isinstance(password, str) or not 8 <= len(password) <= 1024:
+        raise ValueError("Administrator password must contain 8 to 1024 characters")
     if not isinstance(signing_key, str) or len(signing_key.encode()) < 32:
         raise ValueError("Secure shared signing key required")
     name, role, organization_id, modules = _metadata(name.strip(), "admin", organization_id, list(MODULES))

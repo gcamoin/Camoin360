@@ -10,12 +10,14 @@ from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from backend.app import database, main
 from backend.app.routes import auth
 from backend.app.services import application_users as users
 from backend.app.services.application_administrator import bootstrap_administrator
 from backend.app.services.test_application_users import pg
+from backend.app.schemas.client_user import ClientUserCreate, OrganizationClientUserCreate, ClientUserPasswordReset
 from psycopg.conninfo import conninfo_to_dict
 
 SECRET = "synthetic-shared-signing-key-0123456789-abcdefghijklmno"
@@ -99,6 +101,34 @@ def test_admin_crud_normalized_emails_and_safe_api_contract(client):
     assert login(client, "member@synthetic.invalid", "replacement-password")["name"] == "Changed"
     assert client.delete("/auth/users/member@synthetic.invalid", headers=authorization).status_code == 204
     assert client.patch("/auth/users/missing@synthetic.invalid", headers=authorization, json={"name": "Missing"}).status_code == 404
+
+
+def test_password_creation_and_updates_enforce_eight_character_minimum(client):
+    authorization = headers(client)
+    for length in range(8):
+        assert create(client, authorization, password="x" * length).status_code == 422
+    assert users.get_user("member@synthetic.invalid") is None
+    assert create(client, authorization, password="x" * 8).status_code == 201
+    original = users.get_user("member@synthetic.invalid")
+    assert login(client, original.email, "x" * 8)["role"] == "user"
+    for length in range(8):
+        response = client.patch(f"/auth/users/{original.email}", headers=authorization,
+                                json={"password": "y" * length})
+        assert response.status_code == 422
+        assert users.get_user(original.email) == original
+    assert client.patch(f"/auth/users/{original.email}", headers=authorization,
+                        json={"password": "y" * 8}).status_code == 200
+    assert client.post("/auth/login", json={"email": original.email, "password": "x" * 8}).status_code == 401
+    assert login(client, original.email, "y" * 8)["role"] == "user"
+
+
+@pytest.mark.parametrize("model", [ClientUserCreate, OrganizationClientUserCreate, ClientUserPasswordReset])
+def test_client_creation_and_password_reset_models_share_eight_character_minimum(model):
+    details = {"name": "Synthetic", "username": "synthetic@example.invalid", "organization_id": 1}
+    for length in range(8):
+        with pytest.raises(ValidationError):
+            model(**details, password="x" * length)
+    assert len(model(**details, password="x" * 8).password) == 8
 
 
 def test_non_admin_cannot_manage_accounts_even_with_admin_module(client):

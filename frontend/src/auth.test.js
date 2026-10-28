@@ -1,5 +1,5 @@
 import axios from "axios";
-import { getAuthToken, getCurrentUser, isTokenExpired, loginUser } from "./auth";
+import { API_BASE_URL, createAppUser, getAuthToken, getCurrentUser, isTokenExpired, loginUser, updateAppUser } from "./auth";
 
 jest.mock("axios");
 const jwt = (claims) => `${btoa(JSON.stringify({ alg: "HS256", typ: "JWT" }))}.${btoa(JSON.stringify(claims))}.synthetic-signature`;
@@ -29,4 +29,17 @@ it("preserves organization associations and existing login response fields", asy
   await loginUser({ email: user.email, password: "synthetic-password" });
   expect(getCurrentUser().organization_id).toBe(31);
   expect(getCurrentUser().modules).toEqual(["main"]);
+});
+
+it("passes eight-character passwords unchanged for login, account creation, and password updates", async () => {
+  const password = "x".repeat(8);
+  const user = { email: "synthetic@example.invalid", name: "Synthetic", role: "user", modules: ["main"], organization_id: 31 };
+  axios.post.mockResolvedValue({ data: user });
+  axios.patch.mockResolvedValue({ data: user });
+  await loginUser({ email: user.email, password });
+  expect(axios.post).toHaveBeenLastCalledWith(`${API_BASE_URL}/auth/login`, { email: user.email, password });
+  await createAppUser({ ...user, password });
+  expect(axios.post).toHaveBeenLastCalledWith(`${API_BASE_URL}/auth/users`, { ...user, password }, expect.any(Object));
+  await updateAppUser(user.email, { password });
+  expect(axios.patch).toHaveBeenLastCalledWith(`${API_BASE_URL}/auth/users/${encodeURIComponent(user.email)}`, { password }, expect.any(Object));
 });
